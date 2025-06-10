@@ -4,3 +4,4 @@ plotly
 openpyxl
 toml
 pywhatkit
+janitor
