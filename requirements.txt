@@ -3,4 +3,4 @@ pandas
 plotly
 openpyxl
 toml
-
+pywhatkit
