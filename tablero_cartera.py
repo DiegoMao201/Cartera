@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from janitor import clean_names
+import janitor
 import toml
 
 # --- Autenticación por contraseña usando carterasecrets.toml ---
