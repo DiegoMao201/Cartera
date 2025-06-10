@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import pywhatkit
 from janitor import clean_names
 import toml
 
@@ -97,13 +96,17 @@ if cliente_sel != "Todos" and not cartera_cliente.empty:
         f"Si tienes alguna duda aquí estoy yo, {vendedor_real}, para ayudarte."
     )
     if st.button("Enviar mensaje de cobro por WhatsApp Web"):
-        if telefono and telefono != 'nan' and telefono != '':
-            try:
-                pywhatkit.sendwhatmsg_instantly(f"+57{telefono[-10:]}", mensaje, wait_time=10, tab_close=True)
-                st.success(f"Mensaje de cobro enviado a {telefono}")
-            except Exception as e:
-                st.error(f"No se pudo enviar el mensaje por WhatsApp: {e}")
-        else:
-            st.error("No encontramos teléfono para enviar el mensaje. Por favor ingresa al fichero del cliente y anexa un teléfono válido.")
+        try:
+            import pywhatkit
+            if telefono and telefono != 'nan' and telefono != '':
+                try:
+                    pywhatkit.sendwhatmsg_instantly(f"+57{telefono[-10:]}", mensaje, wait_time=10, tab_close=True)
+                    st.success(f"Mensaje de cobro enviado a {telefono}")
+                except Exception as e:
+                    st.error(f"No se pudo enviar el mensaje por WhatsApp: {e}")
+            else:
+                st.error("No encontramos teléfono para enviar el mensaje. Por favor ingresa al fichero del cliente y anexa un teléfono válido.")
+        except Exception as e:
+            st.error("La función de WhatsApp solo está disponible en equipos con entorno gráfico y navegador. Intenta desde tu computador personal.")
 else:
     st.info("Selecciona un cliente para habilitar el envío de mensaje de cobro.")
