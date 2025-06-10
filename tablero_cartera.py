@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import janitor
 import toml
 
 # --- Autenticación por contraseña usando carterasecrets.toml ---
@@ -31,8 +30,13 @@ elif vendedor_autenticado is None:
 st.title("📊 Tablero de Cartera Ferreinox SAS BIC")
 
 # --- Cargar y limpiar datos ---
-cartera = pd.read_excel("Cartera.xlsx")
-cartera = cartera.clean_names()
+try:
+    import janitor
+    cartera = pd.read_excel("Cartera.xlsx")
+    cartera = cartera.clean_names()
+except ImportError:
+    st.error("Falta la librería pyjanitor. Instálala con: pip install pyjanitor")
+    st.stop()
 
 # --- Filtros de vendedor y cliente ---
 vendedores = sorted(cartera['nomvendedor'].dropna().unique())
@@ -65,9 +69,14 @@ col1.metric("Cartera Total", f"${total_cartera:,.0f}")
 col2.metric("Cartera Vencida", f"${cartera_vencida:,.0f}")
 
 # --- Tabla de cartera filtrada ---
-st.dataframe(cartera_cliente[[
+columnas_deseadas = [
     'nombrecliente', 'serie', 'numero', 'fecha_documento', 'fecha_vencimiento', 'importe', 'dias_vencido', 'telefono', 'cod_cliente', 'nomvendedor'
-]].sort_values(['nombrecliente', 'dias_vencido'], ascending=[True, False]), use_container_width=True)
+]
+columnas_existentes = [col for col in columnas_deseadas if col in cartera_cliente.columns]
+st.dataframe(
+    cartera_cliente[columnas_existentes].sort_values(['nombrecliente', 'dias_vencido'], ascending=[True, False]),
+    use_container_width=True
+)
 
 # --- Botón de WhatsApp ---
 link_pago_base = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
