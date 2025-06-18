@@ -6,3 +6,4 @@ toml
 pywhatkit
 pyjanitor
 plotly
+fpdf2
