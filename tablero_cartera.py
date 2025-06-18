@@ -284,5 +284,3 @@ columnas_a_ocultar = [
 cartera_para_mostrar = cartera_filtrada.drop(columns=columnas_a_ocultar, errors='ignore')
 
 st.dataframe(cartera_para_mostrar, use_container_width=True, hide_index=True)
-cartera_para_mostrar = cartera_filtrada.drop(columns=columnas_a_ocultar, errors='ignore')
-st.dataframe(cartera_para_mostrar, use_container_width=True, hide_index=True)
