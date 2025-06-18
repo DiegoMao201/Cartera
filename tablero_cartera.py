@@ -242,9 +242,6 @@ with col_tabla_resumen:
 st.markdown("---")
 st.subheader(f"Detalle de la Cartera - {vendedor_sel}")
 st.download_button(label="📥 Descargar Reporte en Excel con Formato", data=generar_excel_formateado(cartera_filtrada), file_name=f'Cartera_{normalizar_nombre(vendedor_sel).replace(" ", "_")}.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-columnas_a_ocultar = ['provincia', 'telefono1', 'telefono2', 'entidad_autoriza', 'e-mail', 'descuento', 'cupo_aprobado', 'castigada', 'edad_cartera', 'nomvendedor_norm'] # Ocultamos también la columna normalizada
+columnas_a_ocultar = ['provincia', 'telefono1', 'telefono2', 'entidad_autoriza', 'e_mail', 'descuento', 'cupo_aprobado', 'nomvendedor_norm'] # Ocultamos también la columna normalizada
 cartera_para_mostrar = cartera_filtrada.drop(columns=columnas_a_ocultar, errors='ignore')
 st.dataframe(cartera_para_mostrar, use_container_width=True, hide_index=True)
-
-# Mostrar la tabla detallada
-st.dataframe(cartera_filtrada, use_container_width=True, hide_index=True)
