@@ -233,11 +233,44 @@ cartera_vencida = cartera_filtrada[cartera_filtrada['dias_vencido'] > 0]
 total_vencido = cartera_vencida['importe'].sum()
 porcentaje_vencido = (total_vencido / total_cartera) * 100 if total_cartera > 0 else 0
 
-col1, col2, col3 = st.columns(3)
-col1.metric("💰 Cartera Total", f"${total_cartera:,.0f}")
-col2.metric("🔥 Cartera Vencida", f"${total_vencido:,.0f}")
-col3.metric("📈 % Vencido s/ Total", f"{porcentaje_vencido:.1f}%")
+# Calculamos la Edad Promedio Ponderada de la Cartera.
+if total_cartera > 0:
+    dias_ponderados = (cartera_filtrada['importe'] * cartera_filtrada['dias_vencido']).sum()
+    rotacion_dias = dias_ponderados / total_cartera
+else:
+    rotacion_dias = 0
 
+# --- NUEVO: Lógica para calificar la rotación ---
+if rotacion_dias <= 15:
+    salud_rotacion = "✅ Salud: Excelente"
+    color_salud = "green"
+elif rotacion_dias <= 30:
+    salud_rotacion = "👍 Salud: Buena"
+    color_salud = "blue"
+elif rotacion_dias <= 45:
+    salud_rotacion = "⚠️ Salud: Regular"
+    color_salud = "orange"
+else:
+    salud_rotacion = "🚨 Salud: Alerta"
+    color_salud = "red"
+
+# Ahora usamos 4 columnas para los 4 indicadores
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    st.metric("💰 Cartera Total", f"${total_cartera:,.0f}")
+with col2:
+    st.metric("🔥 Cartera Vencida", f"${total_vencido:,.0f}")
+with col3:
+    st.metric("📈 % Vencido s/ Total", f"{porcentaje_vencido:.1f}%")
+with col4:
+    st.metric(
+        label="🔄 Rotación (Días Promedio)",
+        value=f"{rotacion_dias:.0f} días",
+        help="Edad promedio de la cartera ponderada por el importe de cada factura. Un número bajo es mejor."
+    )
+    # --- NUEVO: Mensaje automático de estado ---
+    st.markdown(f"<p style='color:{color_salud}; font-weight:bold; text-align:center;'>{salud_rotacion}</p>", unsafe_allow_html=True)
 st.markdown("---")
 
 # --- Gráficos y Resumen por Antigüedad ---
