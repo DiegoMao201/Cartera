@@ -90,7 +90,7 @@ else:
     # Verificamos si el vendedor autenticado realmente existe en los datos de Excel
     if vendedor_sel not in vendedores_en_excel:
         st.error(f"El vendedor '{vendedor_sel}' (autenticado) no se encontró en los datos de la columna 'nomvendedor' de 'Cartera.xlsx'.")
-        st.info("Por favor, verifica que el nombre de usuario en 'carterasecrets.toml' sea EXACTAMENTE igual a algún nombre en la columna 'nomvendedor' de tu 'Cartera.xlsx', incluyendo mayúsculas, minúsculas y espacios.")
+        st.info("Por favor, verifica que el nombre de usuario en 'carterasecrets.toml' sea EXACTAMENTE igual a algún nombre en la columna 'nomvendedor' de tu 'Cartera.xlsx', incluyendo mayúsculas, m[...]")
         st.stop() # Detenemos la ejecución si el vendedor no se encuentra
     st.info(f"Acceso restringido: solo puedes ver tu propia cartera ({vendedor_sel})")
 
@@ -110,4 +110,9 @@ else:
 # --- Depuración - Filtrado por Vendedor ---
 st.sidebar.subheader("Depuración de Filtrado Final")
 st.sidebar.write(f"Número de filas en cartera_filtrada después del filtro de vendedor: {len(cartera_filtrada)}")
-if cartera
+
+# Puedes agregar aquí una comprobación adicional, por ejemplo:
+if cartera_filtrada.empty:
+    st.warning("No hay datos en la cartera filtrada para el vendedor seleccionado.")
+else:
+    st.success("Datos cargados y filtrados correctamente.")
