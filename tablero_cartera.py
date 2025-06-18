@@ -19,7 +19,7 @@ else:
 try:
     secrets = toml.load("carterasecrets.toml")
     general_password = secrets["general"]["password"]
-    vendedores_secrets = secrets["vendedores"]
+    general_password = secrets["general"]["password_general"]
 except FileNotFoundError:
     st.error("Archivo 'carterasecrets.toml' no encontrado. Contacta al administrador.")
     st.stop()
