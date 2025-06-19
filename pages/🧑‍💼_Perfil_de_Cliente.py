@@ -1,5 +1,5 @@
 # ======================================================================================
-# ARCHIVO: pages/🧑‍💼_Perfil_de_Cliente.py (Versión Final Definitiva)
+# ARCHIVO: pages/🧑‍💼_Perfil_de_Cliente.py (Versión Final Corregida)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -125,8 +125,6 @@ def cargar_datos_historicos():
         df_historico_unico = pd.merge(df_historico_unico, df_pagadas[['numero', 'dias_de_pago']], on='numero', how='left')
     return df_historico_unico
 
-# --- CÓDIGO PRINCIPAL DE LA PÁGINA ---
-
 df_historico_completo = cargar_datos_historicos()
 
 if df_historico_completo.empty:
@@ -134,7 +132,6 @@ if df_historico_completo.empty:
 
 acceso_general = st.session_state.get('acceso_general', False)
 vendedor_autenticado = st.session_state.get('vendedor_autenticado', None)
-
 if not acceso_general:
     df_historico_filtrado = df_historico_completo[df_historico_completo['nomvendedor_norm'] == normalizar_nombre(vendedor_autenticado)].copy()
 else:
@@ -144,7 +141,7 @@ lista_clientes = sorted(df_historico_filtrado['nombrecliente'].dropna().unique()
 if not lista_clientes:
     st.info("No tienes clientes asignados en el historial de datos."); st.stop()
     
-cliente_sel = st.selectbox("Busca y selecciona un cliente para analizar y gestionar su cuenta:", [""] + lista_clientes)
+cliente_sel = st.selectbox("Selecciona un cliente para analizar y gestionar su cuenta:", [""] + lista_clientes)
 
 if cliente_sel:
     df_cliente = df_historico_filtrado[df_historico_filtrado['nombrecliente'] == cliente_sel].copy()
@@ -165,12 +162,13 @@ if cliente_sel:
             with col2: st.metric("Calificación", calificacion)
         else:
             st.info("Este cliente no tiene un historial de facturas de VENTA pagadas para calcular su comportamiento.")
+        
         st.subheader("Historial Completo de Transacciones")
         st.dataframe(df_cliente[['numero', 'fecha_documento', 'fecha_vencimiento', 'fecha_saldado', 'dias_de_pago', 'importe']].sort_values(by="fecha_documento", ascending=False))
 
     with tab2:
         st.subheader(f"Herramientas de Comunicación para: {cliente_sel}")
-        df_vencidas_cliente = df_cliente[(df_cliente['dias_vencido'].fillna(0) > 0) & (df_cliente['fecha_saldado'].isnull())]
+        df_vencidas_cliente = df_cliente[(df_cliente.get('dias_vencido', 0) > 0) & (df_cliente['fecha_saldado'].isnull())]
         total_vencido_cliente = df_vencidas_cliente['importe'].sum()
 
         col1, col2 = st.columns(2)
@@ -182,28 +180,12 @@ if cliente_sel:
                 file_name=f"Estado_Cuenta_{normalizar_nombre(cliente_sel).replace(' ', '_')}.pdf",
                 mime="application/pdf"
             )
+
         with col2:
-            # --- MODIFICACIÓN: Se elimina la búsqueda de email y se muestra directamente el generador de mensaje ---
             st.write("#### 2. Preparar Email de Cobro")
             asunto_sugerido = f"Recordatorio de pago y estado de cuenta - Ferreinox SAS BIC"
-            cuerpo_mensaje = f"""Estimados Sres. de {cliente_sel},
-
-Le saludamos cordialmente desde Ferreinox SAS BIC.
-
-Nos ponemos en contacto con usted para recordarle amablemente sobre su saldo pendiente. Actualmente, sus facturas vencidas suman un total de **${total_vencido_cliente:,.0f}**.
-
-Adjuntamos a este correo su estado de cuenta detallado para su revisión.
-
-Puede realizar su pago de forma fácil y segura a través de nuestro portal en línea:
-https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/
-
-Para ingresar, por favor utilice su NIT como 'usuario' y su Código de Cliente como 'código único interno'.
-
-Agradecemos de antemano su pronta atención a este asunto. Si ya ha realizado el pago, por favor haga caso omiso de este mensaje.
-
-Atentamente,
-Equipo de Cartera
-Ferreinox SAS BIC
-"""
-            st.text_area("Asunto del Correo:", value=asunto_sugerido, height=50)
+            cuerpo_mensaje = f"""Estimados Sres. de {cliente_sel},\n\nLe saludamos cordialmente desde Ferreinox SAS BIC.\n\nNos ponemos en contacto con usted para recordarle amablemente sobre su saldo pendiente. Actualmente, sus facturas vencidas suman un total de **${total_vencido_cliente:,.0f}**.\n\nAdjuntamos a este correo su estado de cuenta detallado para su revisión.\n\nPuede realizar su pago de forma fácil y segura a través de nuestro portal en línea:\nhttps://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/\n\nPara ingresar, por favor utilice su NIT como 'usuario' y su Código de Cliente como 'código único interno'.\n\nAgradecemos de antemano su pronta atención a este asunto. Si ya ha realizado el pago, por favor haga caso omiso de este mensaje.\n\nAtentamente,\nEquipo de Cartera\nFerreinox SAS BIC"""
+            
+            # --- CORRECCIÓN: Cambiar st.text_area por st.text_input para el asunto ---
+            st.text_input("Asunto del Correo:", value=asunto_sugerido)
             st.text_area("Cuerpo del Correo (listo para copiar):", value=cuerpo_mensaje, height=350)
