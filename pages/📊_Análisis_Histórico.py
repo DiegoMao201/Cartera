@@ -1,5 +1,5 @@
 # ======================================================================================
-# ARCHIVO: pages/📊_Análisis_Histórico.py (Versión Corregida)
+# ARCHIVO: pages/📊_Análisis_Histórico.py (Versión con Corrección Final)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -30,6 +30,7 @@ def cargar_y_procesar_historicos():
     for archivo in lista_archivos:
         try:
             df = pd.read_excel(archivo)
+            # Asegurarse de que la columna 'Serie' es de tipo texto antes de filtrar
             df['Serie'] = df['Serie'].astype(str)
             df = df[~df['Serie'].str.contains('W|X', case=False, na=False)]
             df.rename(columns=mapa_columnas, inplace=True)
@@ -47,10 +48,14 @@ def cargar_y_procesar_historicos():
     
     df_historico['importe'] = pd.to_numeric(df_historico['importe'], errors='coerce').fillna(0)
     
+    # Se calcula 'dias_de_pago' solo donde sea posible
     df_historico_pagadas = df_historico.dropna(subset=['fecha_saldado', 'fecha_documento']).copy()
-    df_historico_pagadas['dias_de_pago'] = (df_historico_pagadas['fecha_saldado'] - df_historico_pagadas['fecha_documento']).dt.days
-    
-    return df_historico_pagadas
+    if not df_historico_pagadas.empty:
+        df_historico_pagadas['dias_de_pago'] = (df_historico_pagadas['fecha_saldado'] - df_historico_pagadas['fecha_documento']).dt.days
+        # Unimos el cálculo al dataframe principal
+        df_historico = pd.merge(df_historico, df_historico_pagadas[['numero', 'dias_de_pago']], on='numero', how='left')
+
+    return df_historico
 
 df_historico = cargar_y_procesar_historicos()
 
@@ -111,11 +116,9 @@ st.subheader("Análisis de Evolución Mensual")
 
 df_graficos = df_historico.copy()
 
-# --- MODIFICACIÓN: Forma más robusta de agrupar por mes ---
-# La línea anterior (.dt.to_period('M').to_timestamp()) causaba un error de tipo.
-# Esta nueva forma es más estable y logra el mismo resultado.
-df_graficos['mes_documento'] = df_graficos['fecha_documento'].dt.to_period('M').start_time
-df_graficos['mes_saldado'] = df_graficos['fecha_saldado'].dt.to_period('M').start_time
+# --- MODIFICACIÓN DEFINITIVA: Forma más robusta y compatible de agrupar por mes ---
+df_graficos['mes_documento'] = pd.to_datetime(df_graficos['fecha_documento'].dt.strftime('%Y-%m-01'), errors='coerce')
+df_graficos['mes_saldado'] = pd.to_datetime(df_graficos['fecha_saldado'].dt.strftime('%Y-%m-01'), errors='coerce')
 
 ventas_mes = df_graficos.groupby('mes_documento')['importe'].sum().reset_index().rename(columns={'mes_documento': 'mes', 'importe': 'Ventas'})
 cobros_mes = df_graficos.groupby('mes_saldado')['importe'].sum().reset_index().rename(columns={'mes_saldado': 'mes', 'importe': 'Cobros'})
