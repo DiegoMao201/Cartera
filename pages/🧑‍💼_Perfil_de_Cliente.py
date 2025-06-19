@@ -10,7 +10,6 @@ st.set_page_config(page_title="Perfil de Cliente", page_icon="🧑‍💼", layo
 
 st.title("🧑‍💼 Perfil de Pagador por Cliente")
 
-# --- Usamos la misma función de carga de datos históricos ---
 @st.cache_data
 def cargar_datos_historicos():
     mapa_columnas = {
@@ -26,6 +25,8 @@ def cargar_datos_historicos():
     for archivo in lista_archivos:
         try:
             df = pd.read_excel(archivo)
+            df['Serie'] = df['Serie'].astype(str)
+            df = df[~df['Serie'].str.contains('W|X', case=False, na=False)]
             df.rename(columns=mapa_columnas, inplace=True)
             lista_df.append(df)
         except Exception as e:
@@ -47,22 +48,20 @@ cliente_sel = st.selectbox("Selecciona un cliente para analizar su comportamient
 if cliente_sel:
     df_cliente = df_historico_completo[df_historico_completo['nombrecliente'] == cliente_sel].copy()
     
-    # Convertir fechas
     df_cliente['fecha_documento'] = pd.to_datetime(df_cliente['fecha_documento'], errors='coerce')
     df_cliente['fecha_saldado'] = pd.to_datetime(df_cliente['fecha_saldado'], errors='coerce')
     
-    # Calcular días de pago solo para facturas que han sido saldadas
     df_pagadas = df_cliente.dropna(subset=['fecha_saldado'])
-    df_pagadas['dias_de_pago'] = (df_pagadas['fecha_saldado'] - df_pagadas['fecha_documento']).dt.days
-
+    if not df_pagadas.empty:
+        df_pagadas['dias_de_pago'] = (df_pagadas['fecha_saldado'] - df_pagadas['fecha_documento']).dt.days
+    
     # --- Mostrar KPIs del Cliente ---
     st.markdown("---")
     st.subheader(f"Análisis de {cliente_sel}")
 
-    if not df_pagadas.empty:
+    if not df_pagadas.empty and df_pagadas['dias_de_pago'].notna().any():
         avg_dias_pago = df_pagadas['dias_de_pago'].mean()
         
-        # Calificación del cliente
         if avg_dias_pago <= 30: calificacion = "✅ Pagador Excelente"
         elif avg_dias_pago <= 60: calificacion = "👍 Pagador Bueno"
         elif avg_dias_pago <= 90: calificacion = "⚠️ Pagador Lento"
