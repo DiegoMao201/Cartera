@@ -1,5 +1,5 @@
 # ======================================================================================
-# ARCHIVO: pages/📊_Análisis_Histórico.py (Versión con Corrección Final)
+# ARCHIVO: pages/📊_Análisis_Histórico.py (Versión con Cálculos Corregidos)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -30,7 +30,11 @@ def cargar_y_procesar_historicos():
     for archivo in lista_archivos:
         try:
             df = pd.read_excel(archivo)
-            # Asegurarse de que la columna 'Serie' es de tipo texto antes de filtrar
+            
+            # --- CORRECCIÓN 1: Eliminar la fila de total de CADA archivo histórico ---
+            if not df.empty:
+                df = df.iloc[:-1]
+
             df['Serie'] = df['Serie'].astype(str)
             df = df[~df['Serie'].str.contains('W|X', case=False, na=False)]
             df.rename(columns=mapa_columnas, inplace=True)
@@ -48,11 +52,9 @@ def cargar_y_procesar_historicos():
     
     df_historico['importe'] = pd.to_numeric(df_historico['importe'], errors='coerce').fillna(0)
     
-    # Se calcula 'dias_de_pago' solo donde sea posible
     df_historico_pagadas = df_historico.dropna(subset=['fecha_saldado', 'fecha_documento']).copy()
     if not df_historico_pagadas.empty:
         df_historico_pagadas['dias_de_pago'] = (df_historico_pagadas['fecha_saldado'] - df_historico_pagadas['fecha_documento']).dt.days
-        # Unimos el cálculo al dataframe principal
         df_historico = pd.merge(df_historico, df_historico_pagadas[['numero', 'dias_de_pago']], on='numero', how='left')
 
     return df_historico
@@ -61,13 +63,11 @@ df_historico = cargar_y_procesar_historicos()
 
 if df_historico.empty:
     st.warning("No se encontraron archivos de datos históricos con el formato 'Cartera_AAAA-MM.xlsx'.")
-    st.info("Asegúrate de tener al menos dos archivos históricos en la carpeta principal para poder ver las tendencias.")
     st.stop()
 
-# --- Filtros de Fecha ---
 st.sidebar.header("Filtros de Análisis")
 min_date = df_historico['fecha_documento'].min().date()
-max_date = df_historico['fecha_documento'].max().date()
+max_date = df_historico['fecha_saldado'].max().date() if df_historico['fecha_saldado'].notna().any() else datetime.now().date()
 
 default_start_date = max(min_date, max_date - relativedelta(months=12))
 
@@ -79,8 +79,7 @@ fecha_inicio, fecha_fin = st.sidebar.date_input(
 )
 
 if not fecha_inicio or not fecha_fin or fecha_inicio > fecha_fin:
-    st.error("Por favor, selecciona un rango de fechas válido.")
-    st.stop()
+    st.error("Por favor, selecciona un rango de fechas válido."); st.stop()
 
 fecha_inicio = pd.to_datetime(fecha_inicio)
 fecha_fin = pd.to_datetime(fecha_fin)
@@ -94,29 +93,30 @@ total_cobrado = cobros_periodo['importe'].sum()
 
 dso_periodo = cobros_periodo['dias_de_pago'].mean() if not cobros_periodo.empty else 0
 
+# --- CORRECCIÓN 2: Lógica robusta para calcular el saldo vencido al final del período ---
+# Facturas emitidas ANTES del final del período...
 snapshot_final = df_historico[df_historico['fecha_documento'] <= fecha_fin]
-saldo_vencido_final = snapshot_final[snapshot_final['fecha_saldado'].isnull() & (snapshot_final['fecha_vencimiento'] < fecha_fin)]['importe'].sum()
+# ...que al final del período, o no se habían pagado o se pagaron DESPUÉS.
+facturas_abiertas_al_final = snapshot_final[
+    (snapshot_final['fecha_saldado'].isnull()) | (snapshot_final['fecha_saldado'] > fecha_fin)
+]
+# De esas facturas abiertas, ¿cuáles estaban vencidas en esa fecha?
+facturas_vencidas_al_final = facturas_abiertas_al_final[
+    facturas_abiertas_al_final['fecha_vencimiento'] < fecha_fin
+]
+saldo_vencido_final = facturas_vencidas_al_final['importe'].sum()
 
-# --- Renderizado de KPIs ---
 st.markdown("### Resumen del Período Seleccionado")
 col1, col2, col3, col4 = st.columns(4)
-with col1:
-    st.metric("📈 Ventas Emitidas", f"${total_ventas:,.0f}")
-with col2:
-    st.metric("✅ Total Cobrado", f"${total_cobrado:,.0f}")
-with col3:
-    st.metric("🔄 Rotación de Cartera (DSO)", f"{dso_periodo:.0f} días", help="Días promedio que se tardó en cobrar las facturas saldadas en este período.")
-with col4:
-    st.metric("🔥 Saldo Vencido al Final", f"${saldo_vencido_final:,.0f}", help=f"Cartera que quedó vencida al {fecha_fin.strftime('%Y-%m-%d')}")
+with col1: st.metric("📈 Ventas Emitidas", f"${total_ventas:,.0f}")
+with col2: st.metric("✅ Total Cobrado", f"${total_cobrado:,.0f}")
+with col3: st.metric("🔄 Rotación de Cartera (DSO)", f"{dso_periodo:.0f} días", help="Días promedio que se tardó en cobrar las facturas saldadas en este período.")
+with col4: st.metric("🔥 Saldo Vencido al Final", f"${saldo_vencido_final:,.0f}", help=f"Cartera que quedó vencida al {fecha_fin.strftime('%Y-%m-%d')}")
 
 st.markdown("---")
-
-# --- Gráficos de Evolución Mensual ---
 st.subheader("Análisis de Evolución Mensual")
 
 df_graficos = df_historico.copy()
-
-# --- MODIFICACIÓN DEFINITIVA: Forma más robusta y compatible de agrupar por mes ---
 df_graficos['mes_documento'] = pd.to_datetime(df_graficos['fecha_documento'].dt.strftime('%Y-%m-01'), errors='coerce')
 df_graficos['mes_saldado'] = pd.to_datetime(df_graficos['fecha_saldado'].dt.strftime('%Y-%m-01'), errors='coerce')
 
