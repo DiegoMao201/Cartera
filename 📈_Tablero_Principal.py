@@ -24,9 +24,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# ======================================================================================
-# --- CLASE PDF Y FUNCIONES AUXILIARES ---
-# ======================================================================================
+# --- CLASE PDF Y FUNCIONES AUXILIARES (Sin cambios) ---
 class PDF(FPDF):
     def header(self):
         try:
@@ -146,24 +144,14 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
 
 @st.cache_data
 def cargar_y_procesar_datos():
-    """Lee el archivo Excel del día, lo limpia y procesa."""
     df = pd.read_excel("Cartera.xlsx")
-    
-    if not df.empty:
-        df = df.iloc[:-1]
-
-    # --- CORRECCIÓN: Renombrar columnas ANTES de intentar usarlas ---
+    if not df.empty: df = df.iloc[:-1]
+    df['Serie'] = df['serie'].astype(str)
+    df = df[~df['serie'].str.contains('W|X', case=False, na=False)]
     df_renamed = df.rename(columns=lambda x: normalizar_nombre(x).lower().replace(' ', '_'))
-
-    # Ahora, aplicar el filtro sobre la columna ya normalizada 'serie'
-    df_renamed['serie'] = df_renamed['serie'].astype(str)
-    df_filtrado = df_renamed[~df_renamed['serie'].str.contains('W|X', case=False, na=False)]
-
-    # Continuar con el resto del procesamiento sobre el DataFrame ya filtrado
-    df_filtrado['fecha_documento'] = pd.to_datetime(df_filtrado['fecha_documento'], errors='coerce')
-    df_filtrado['fecha_vencimiento'] = pd.to_datetime(df_filtrado['fecha_vencimiento'], errors='coerce')
-    
-    return procesar_cartera(df_filtrado)
+    df_renamed['fecha_documento'] = pd.to_datetime(df_renamed['fecha_documento'], errors='coerce')
+    df_renamed['fecha_vencimiento'] = pd.to_datetime(df_renamed['fecha_vencimiento'], errors='coerce')
+    return procesar_cartera(df_renamed)
 
 # ======================================================================================
 # --- BLOQUE PRINCIPAL DE LA APP ---
@@ -171,112 +159,133 @@ def cargar_y_procesar_datos():
 def main():
     st.set_page_config(page_title="Tablero Principal", page_icon="📈", layout="wide")
 
-    try:
-        general_password = st.secrets["general"]["password"]
-        vendedores_secrets = st.secrets["vendedores"]
-    except Exception:
-        st.error("Error al cargar las contraseñas desde los secretos.")
-        st.info("Asegúrate de tener el archivo .streamlit/secrets.toml configurado.")
-        st.stop()
+    # --- LÓGICA DE LOGIN Y SESSION STATE ---
+    if 'authentication_status' not in st.session_state:
+        st.session_state['authentication_status'] = False
+        st.session_state['acceso_general'] = False
+        st.session_state['vendedor_autenticado'] = None
 
-    password = st.text_input("Introduce la contraseña:", type="password")
-    if not password:
-        st.warning("Debes ingresar una contraseña para continuar."); st.stop()
+    if not st.session_state['authentication_status']:
+        try:
+            general_password = st.secrets["general"]["password"]
+            vendedores_secrets = st.secrets["vendedores"]
+        except Exception:
+            st.error("Error al cargar las contraseñas desde los secretos.")
+            st.stop()
 
-    acceso_general, vendedor_autenticado = False, None
-    if password == str(general_password): acceso_general = True
+        password = st.text_input("Introduce la contraseña:", type="password")
+        if st.button("Ingresar"):
+            if password == str(general_password):
+                st.session_state['authentication_status'] = True
+                st.session_state['acceso_general'] = True
+                st.session_state['vendedor_autenticado'] = "General"
+                st.rerun()
+            else:
+                for vendedor_key, pass_vendedor in vendedores_secrets.items():
+                    if password == str(pass_vendedor):
+                        st.session_state['authentication_status'] = True
+                        st.session_state['acceso_general'] = False
+                        st.session_state['vendedor_autenticado'] = vendedor_key
+                        st.rerun()
+                        break
+                if not st.session_state['authentication_status']:
+                    st.error("Contraseña incorrecta.")
     else:
-        for vendedor_key, pass_vendedor in vendedores_secrets.items():
-            if password == str(pass_vendedor): vendedor_autenticado = vendedor_key; break
-    if not acceso_general and vendedor_autenticado is None:
-        st.warning("Contraseña incorrecta."); st.stop()
+        # --- Si el usuario está autenticado, muestra el tablero ---
+        st.title("📊 Tablero de Cartera Ferreinox SAS BIC")
 
-    st.title("📊 Tablero de Cartera Ferreinox SAS BIC")
-    try:
-        cartera_procesada = cargar_y_procesar_datos()
-    except FileNotFoundError: st.error("No se encontró el archivo 'Cartera.xlsx'."); st.stop()
-    except Exception as e: st.error(f"Error al cargar o procesar 'Cartera.xlsx': {e}."); st.stop()
+        with st.sidebar:
+            st.success(f"Usuario: {st.session_state['vendedor_autenticado']}")
+            if st.button("Cerrar Sesión"):
+                st.session_state['authentication_status'] = False
+                st.session_state['acceso_general'] = False
+                st.session_state['vendedor_autenticado'] = None
+                st.rerun()
+        
+        try:
+            cartera_procesada = cargar_y_procesar_datos()
+        except FileNotFoundError: st.error("No se encontró el archivo 'Cartera.xlsx'."); st.stop()
+        except Exception as e: st.error(f"Error al cargar o procesar 'Cartera.xlsx': {e}."); st.stop()
 
-    st.sidebar.title("Filtros")
-    vendedores_en_excel_display = sorted(cartera_procesada['nomvendedor'].dropna().unique())
-    if acceso_general:
-        vendedor_sel = st.sidebar.selectbox("Filtrar por Vendedor:", ["Todos"] + vendedores_en_excel_display)
-    else:
-        vendedor_autenticado_norm = normalizar_nombre(vendedor_autenticado)
-        if vendedor_autenticado_norm not in cartera_procesada['nomvendedor_norm'].dropna().unique():
-            st.error(f"Error de coincidencia: El vendedor '{vendedor_autenticado}' no se encontró."); st.stop()
-        vendedor_sel = vendedor_autenticado
-        st.sidebar.success(f"Mostrando cartera de:"); st.sidebar.write(f"**{vendedor_sel}**")
+        # --- Filtros en la barra lateral ---
+        st.sidebar.title("Filtros")
+        
+        # Filtro de Vendedor (solo para admin)
+        if st.session_state['acceso_general']:
+            vendedores_en_excel_display = ["Todos"] + sorted(cartera_procesada['nomvendedor'].dropna().unique())
+            vendedor_sel = st.sidebar.selectbox("Filtrar por Vendedor:", vendedores_en_excel_display)
+        else:
+            vendedor_sel = st.session_state['vendedor_autenticado']
+        
+        # Filtros de Zona y Población
+        lista_zonas = ["Todas las Zonas"] + list(ZONAS_SERIE.keys())
+        zona_sel = st.sidebar.selectbox("Filtrar por Zona:", lista_zonas)
+        
+        lista_poblaciones = ["Todas"] + sorted(cartera_procesada['poblacion'].dropna().unique())
+        poblacion_sel = st.sidebar.selectbox("Filtrar por Población:", lista_poblaciones)
 
-    lista_zonas = ["Todas las Zonas"] + list(ZONAS_SERIE.keys())
-    zona_sel = st.sidebar.selectbox("Filtrar por Zona:", lista_zonas)
-    
-    lista_poblaciones = ["Todas"] + sorted(cartera_procesada['poblacion'].dropna().unique())
-    poblacion_sel = st.sidebar.selectbox("Filtrar por Población:", lista_poblaciones)
+        # --- Lógica de Filtrado Acumulativa ---
+        if vendedor_sel == "Todos": cartera_filtrada = cartera_procesada.copy()
+        else: cartera_filtrada = cartera_procesada[cartera_procesada['nomvendedor_norm'] == normalizar_nombre(vendedor_sel)].copy()
+        if zona_sel != "Todas las Zonas": cartera_filtrada = cartera_filtrada[cartera_filtrada['zona'] == zona_sel]
+        if poblacion_sel != "Todas": cartera_filtrada = cartera_filtrada[cartera_filtrada['poblacion'] == poblacion_sel]
 
-    if vendedor_sel == "Todos": cartera_filtrada = cartera_procesada.copy()
-    else: cartera_filtrada = cartera_procesada[cartera_procesada['nomvendedor_norm'] == normalizar_nombre(vendedor_sel)].copy()
-    if zona_sel != "Todas las Zonas": cartera_filtrada = cartera_filtrada[cartera_filtrada['zona'] == zona_sel]
-    if poblacion_sel != "Todas": cartera_filtrada = cartera_filtrada[cartera_filtrada['poblacion'] == poblacion_sel]
+        # --- Renderizado del Tablero ---
+        if cartera_filtrada.empty:
+            st.warning(f"No se encontraron datos para los filtros seleccionados."); st.stop()
 
-    if cartera_filtrada.empty:
-        st.warning(f"No se encontraron datos para los filtros seleccionados."); st.stop()
-
-    st.markdown("---")
-    total_cartera = cartera_filtrada['importe'].sum()
-    cartera_vencida_df = cartera_filtrada[cartera_filtrada['dias_vencido'] > 0]
-    total_vencido = cartera_vencida_df['importe'].sum()
-    porcentaje_vencido = (total_vencido / total_cartera) * 100 if total_cartera > 0 else 0
-    if total_cartera > 0: rotacion_dias_general = (cartera_filtrada['importe'] * cartera_filtrada['dias_vencido']).sum() / total_cartera
-    else: rotacion_dias_general = 0
-    if total_vencido > 0: antiguedad_prom_vencida = (cartera_vencida_df['importe'] * cartera_vencida_df['dias_vencido']).sum() / total_vencido
-    else: antiguedad_prom_vencida = 0
-    if rotacion_dias_general <= 15: salud_rotacion, color_salud = "✅ Salud: Excelente", "green"
-    elif rotacion_dias_general <= 30: salud_rotacion, color_salud = "👍 Salud: Buena", "blue"
-    elif rotacion_dias_general <= 45: salud_rotacion, color_salud = "⚠️ Salud: Regular", "orange"
-    else: salud_rotacion, color_salud = "🚨 Salud: Alerta", "red"
-    col1, col2, col3, col4, col5 = st.columns(5)
-    with col1: st.metric("💰 Cartera Total", f"${total_cartera:,.0f}")
-    with col2: st.metric("🔥 Cartera Vencida", f"${total_vencido:,.0f}", help="Suma del importe de facturas con días de vencimiento > 0.")
-    with col3: st.metric("📈 % Vencido s/ Total", f"{porcentaje_vencido:.1f}%")
-    with col4: st.metric(label="⏳ Antigüedad Prom. Vencida", value=f"{antiguedad_prom_vencida:.0f} días", help="Edad promedio ponderada, solo de facturas YA VENCIDAS.")
-    with col5:
-        st.metric(label="🔄 Rotación General", value=f"{rotacion_dias_general:.0f} días", help="Edad promedio ponderada de TODA la cartera.")
-        st.markdown(f"<p style='color:{color_salud}; font-weight:bold; text-align:center; font-size:14px;'>{salud_rotacion}</p>", unsafe_allow_html=True)
-
-    st.markdown("---")
-    col_grafico, col_tabla_resumen = st.columns([2, 1])
-    with col_grafico:
-        st.subheader("Distribución de Cartera por Antigüedad")
-        df_edades = cartera_filtrada.groupby('edad_cartera')['importe'].sum().reset_index()
-        fig = px.bar(df_edades, x='edad_cartera', y='importe', text_auto='.2s', title='Monto de Cartera por Rango de Días', labels={'edad_cartera': 'Antigüedad', 'importe': 'Monto Total'}, color='edad_cartera', color_discrete_map={'Al día': 'green', '1-15 días': '#FFD700', '16-30 días': 'orange', '31-60 días': 'darkorange', 'Más de 60 días': 'red'})
-        st.plotly_chart(fig, use_container_width=True)
-    with col_tabla_resumen:
-        st.subheader("Resumen por Antigüedad")
-        df_edades['Porcentaje'] = (df_edades['importe'] / total_cartera * 100).map('{:.1f}%'.format)
-        df_edades['importe'] = df_edades['importe'].map('${:,.0f}'.format)
-        st.dataframe(df_edades.rename(columns={'edad_cartera': 'Rango', 'importe': 'Monto'}), use_container_width=True, hide_index=True)
-
-    st.markdown("---")
-    st.subheader(f"Detalle: {vendedor_sel} / {zona_sel} / {poblacion_sel}")
-    st.download_button(label="📥 Descargar Reporte en Excel con Formato", data=generar_excel_formateado(cartera_filtrada), file_name=f'Cartera_{normalizar_nombre(vendedor_sel)}_{zona_sel}_{poblacion_sel}.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-    columnas_a_ocultar = ['provincia', 'telefono1', 'telefono2', 'entidad_autoriza', 'e_mail', 'descuento', 'cupo_aprobado', 'nomvendedor_norm', 'zona']
-    cartera_para_mostrar = cartera_filtrada.drop(columns=columnas_a_ocultar, errors='ignore')
-    st.dataframe(cartera_para_mostrar, use_container_width=True, hide_index=True)
-
-    st.markdown("---")
-    st.header("⚙️ Herramientas de Gestión")
-    st.subheader("Generar Estado de Cuenta por Cliente")
-    lista_clientes = sorted(cartera_filtrada['nombrecliente'].dropna().unique())
-    if not lista_clientes:
-        st.warning("No hay clientes para mostrar con los filtros actuales.")
-    else:
-        cliente_seleccionado = st.selectbox("Busca y selecciona un cliente para generar su estado de cuenta en PDF:", [""] + lista_clientes, format_func=lambda x: 'Selecciona un cliente...' if x == "" else x)
-        if cliente_seleccionado:
-            datos_cliente_seleccionado = cartera_filtrada[cartera_filtrada['nombrecliente'] == cliente_seleccionado].copy()
-            st.write(f"**Facturas para {cliente_seleccionado}:**")
-            st.dataframe(datos_cliente_seleccionado[['numero', 'fecha_documento', 'fecha_vencimiento', 'dias_vencido', 'importe']], use_container_width=True, hide_index=True)
-            st.download_button(label="📄 Descargar Estado de Cuenta (PDF)", data=generar_pdf_estado_cuenta(datos_cliente_seleccionado), file_name=f"Estado_Cuenta_{normalizar_nombre(cliente_seleccionado).replace(' ', '_')}.pdf", mime="application/pdf")
+        st.markdown("---")
+        total_cartera = cartera_filtrada['importe'].sum()
+        cartera_vencida_df = cartera_filtrada[cartera_filtrada['dias_vencido'] > 0]
+        total_vencido = cartera_vencida_df['importe'].sum()
+        porcentaje_vencido = (total_vencido / total_cartera) * 100 if total_cartera > 0 else 0
+        if total_cartera > 0: rotacion_dias_general = (cartera_filtrada['importe'] * cartera_filtrada['dias_vencido']).sum() / total_cartera
+        else: rotacion_dias_general = 0
+        if total_vencido > 0: antiguedad_prom_vencida = (cartera_vencida_df['importe'] * cartera_vencida_df['dias_vencido']).sum() / total_vencido
+        else: antiguedad_prom_vencida = 0
+        if rotacion_dias_general <= 15: salud_rotacion, color_salud = "✅ Salud: Excelente", "green"
+        elif rotacion_dias_general <= 30: salud_rotacion, color_salud = "👍 Salud: Buena", "blue"
+        elif rotacion_dias_general <= 45: salud_rotacion, color_salud = "⚠️ Salud: Regular", "orange"
+        else: salud_rotacion, color_salud = "🚨 Salud: Alerta", "red"
+        col1, col2, col3, col4, col5 = st.columns(5)
+        with col1: st.metric("💰 Cartera Total", f"${total_cartera:,.0f}")
+        with col2: st.metric("🔥 Cartera Vencida", f"${total_vencido:,.0f}", help="Suma del importe de facturas con días de vencimiento > 0.")
+        with col3: st.metric("📈 % Vencido s/ Total", f"{porcentaje_vencido:.1f}%")
+        with col4: st.metric(label="⏳ Antigüedad Prom. Vencida", value=f"{antiguedad_prom_vencida:.0f} días", help="Edad promedio ponderada, solo de facturas YA VENCIDAS.")
+        with col5:
+            st.metric(label="🔄 Rotación General", value=f"{rotacion_dias_general:.0f} días", help="Edad promedio ponderada de TODA la cartera.")
+            st.markdown(f"<p style='color:{color_salud}; font-weight:bold; text-align:center; font-size:14px;'>{salud_rotacion}</p>", unsafe_allow_html=True)
+        st.markdown("---")
+        col_grafico, col_tabla_resumen = st.columns([2, 1])
+        with col_grafico:
+            st.subheader("Distribución de Cartera por Antigüedad")
+            df_edades = cartera_filtrada.groupby('edad_cartera')['importe'].sum().reset_index()
+            fig = px.bar(df_edades, x='edad_cartera', y='importe', text_auto='.2s', title='Monto de Cartera por Rango de Días', labels={'edad_cartera': 'Antigüedad', 'importe': 'Monto Total'}, color='edad_cartera', color_discrete_map={'Al día': 'green', '1-15 días': '#FFD700', '16-30 días': 'orange', '31-60 días': 'darkorange', 'Más de 60 días': 'red'})
+            st.plotly_chart(fig, use_container_width=True)
+        with col_tabla_resumen:
+            st.subheader("Resumen por Antigüedad")
+            df_edades['Porcentaje'] = (df_edades['importe'] / total_cartera * 100).map('{:.1f}%'.format)
+            df_edades['importe'] = df_edades['importe'].map('${:,.0f}'.format)
+            st.dataframe(df_edades.rename(columns={'edad_cartera': 'Rango', 'importe': 'Monto'}), use_container_width=True, hide_index=True)
+        st.markdown("---")
+        st.subheader(f"Detalle: {vendedor_sel} / {zona_sel} / {poblacion_sel}")
+        st.download_button(label="📥 Descargar Reporte en Excel con Formato", data=generar_excel_formateado(cartera_filtrada), file_name=f'Cartera_{normalizar_nombre(vendedor_sel)}_{zona_sel}_{poblacion_sel}.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        columnas_a_ocultar = ['provincia', 'telefono1', 'telefono2', 'entidad_autoriza', 'e_mail', 'descuento', 'cupo_aprobado', 'nomvendedor_norm', 'zona']
+        cartera_para_mostrar = cartera_filtrada.drop(columns=columnas_a_ocultar, errors='ignore')
+        st.dataframe(cartera_para_mostrar, use_container_width=True, hide_index=True)
+        st.markdown("---")
+        st.header("⚙️ Herramientas de Gestión")
+        st.subheader("Generar Estado de Cuenta por Cliente")
+        lista_clientes = sorted(cartera_filtrada['nombrecliente'].dropna().unique())
+        if not lista_clientes:
+            st.warning("No hay clientes para mostrar con los filtros actuales.")
+        else:
+            cliente_seleccionado = st.selectbox("Busca y selecciona un cliente para generar su estado de cuenta en PDF:", [""] + lista_clientes, format_func=lambda x: 'Selecciona un cliente...' if x == "" else x)
+            if cliente_seleccionado:
+                datos_cliente_seleccionado = cartera_filtrada[cartera_filtrada['nombrecliente'] == cliente_seleccionado].copy()
+                st.write(f"**Facturas para {cliente_seleccionado}:**")
+                st.dataframe(datos_cliente_seleccionado[['numero', 'fecha_documento', 'fecha_vencimiento', 'dias_vencido', 'importe']], use_container_width=True, hide_index=True)
+                st.download_button(label="📄 Descargar Estado de Cuenta (PDF)", data=generar_pdf_estado_cuenta(datos_cliente_seleccionado), file_name=f"Estado_Cuenta_{normalizar_nombre(cliente_seleccionado).replace(' ', '_')}.pdf", mime="application/pdf")
 
 if __name__ == '__main__':
     main()
