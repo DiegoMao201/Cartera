@@ -1,5 +1,5 @@
 # ======================================================================================
-# ARCHIVO: pages/🧑‍💼_Perfil_de_Cliente.py (Versión Corregida)
+# ARCHIVO: pages/🧑‍💼_Perfil_de_Cliente.py (Versión con Mapeo de Email Corregido)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -47,15 +47,11 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
         return bytes(pdf.output())
     datos_cliente_ordenados = datos_cliente.sort_values(by='fecha_vencimiento', ascending=True)
     info_cliente = datos_cliente_ordenados.iloc[0]
-    
     pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Cliente:', 0, 0); pdf.set_font('Arial', '', 11); pdf.cell(0, 10, info_cliente['nombrecliente'], 0, 1)
-    
-    # --- CORRECCIÓN: Usar .get() para que no falle si la columna no existe ---
     cod_cliente_val = info_cliente.get('cod_cliente')
     cod_cliente_str = str(int(cod_cliente_val)) if pd.notna(cod_cliente_val) else "N/A"
     pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Codigo de Cliente:', 0, 0); pdf.set_font('Arial', '', 11)
     pdf.cell(0, 10, cod_cliente_str, 0, 1); pdf.ln(5)
-
     pdf.set_font('Arial', '', 10); mensaje = "Apreciado cliente, a continuacion encontrara el detalle de su estado de cuenta a la fecha. Le agradecemos por su continua confianza en Ferreinox SAS BIC y le invitamos a revisar los vencimientos para mantener su cartera al dia."
     pdf.set_text_color(128, 128, 128); pdf.multi_cell(0, 5, mensaje, 0, 'J'); pdf.set_text_color(0, 0, 0); pdf.ln(10)
     pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(0, 56, 101); pdf.set_text_color(255, 255, 255)
@@ -90,14 +86,15 @@ st.title("🧑‍💼 Perfil de Pagador por Cliente")
 
 @st.cache_data
 def cargar_datos_historicos():
-    # --- CORRECCIÓN: Añadir 'Cod. Cliente' al mapa de columnas ---
+    # --- CORRECCIÓN: Añadir 'E-Mail' al mapa de columnas ---
     mapa_columnas = {
         'Serie': 'serie', 'Número': 'numero', 'Fecha Documento': 'fecha_documento',
         'Fecha Vencimiento': 'fecha_vencimiento', 'Fecha Saldado': 'fecha_saldado',
         'NOMBRECLIENTE': 'nombrecliente', 'Población': 'poblacion', 'Provincia': 'provincia',
         'IMPORTE': 'importe', 'RIESGOCONCEDIDO': 'riesgoconcedido', 'NOMVENDEDOR': 'nomvendedor',
-        'DIAS_VENCIDO': 'dias_vencido', 'Estado': 'estado', 'E-Mail': 'e_mail',
-        'Cod. Cliente': 'cod_cliente' # <-- Columna que faltaba
+        'DIAS_VENCIDO': 'dias_vencido', 'Estado': 'estado', 
+        'Cod. Cliente': 'cod_cliente',
+        'E-Mail': 'e_mail' # <-- Columna que faltaba
     }
     lista_archivos = sorted(glob.glob("Cartera_*.xlsx"))
     if not lista_archivos: return pd.DataFrame()
@@ -106,8 +103,10 @@ def cargar_datos_historicos():
         try:
             df = pd.read_excel(archivo)
             if not df.empty: df = df.iloc[:-1]
+            # --- CORRECCIÓN: Asegurarse de que las columnas opcionales existan ---
             if 'E-Mail' not in df.columns: df['E-Mail'] = None
             if 'Cod. Cliente' not in df.columns: df['Cod. Cliente'] = None
+            
             df['Serie'] = df['Serie'].astype(str)
             df = df[~df['Serie'].str.contains('W|X', case=False, na=False)]
             df.rename(columns=mapa_columnas, inplace=True)
@@ -188,7 +187,7 @@ if cliente_sel:
         with col2:
             st.write("#### 2. Preparar Email de Cobro")
             email_cliente = df_cliente['e_mail'].dropna().unique()
-            if not email_cliente.any():
+            if not email_cliente.any() or email_cliente[0] == '':
                 st.warning("Este cliente no tiene un email registrado en los datos.")
             else:
                 st.info(f"**Email del Cliente:** {email_cliente[0]}")
