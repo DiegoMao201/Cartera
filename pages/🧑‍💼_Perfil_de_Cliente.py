@@ -1,11 +1,11 @@
 # ======================================================================================
-# ARCHIVO: pages/🧑‍💼_Perfil_de_Cliente.py (Versión Corregida)
+# ARCHIVO: pages/🧑‍💼_Perfil_de_Cliente.py (Versión con corrección de Notas de Crédito)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
 import glob
 import re
-import unicodedata # <-- Import necesario para la función
+import unicodedata
 
 st.set_page_config(page_title="Perfil de Cliente", page_icon="🧑‍💼", layout="wide")
 
@@ -14,9 +14,8 @@ if 'authentication_status' not in st.session_state or not st.session_state['auth
     st.warning("Por favor, inicie sesión en el 📈 Tablero Principal para acceder a esta página.")
     st.stop()
 
-# --- FUNCIÓN AUXILIAR REQUERIDA (CORRECCIÓN) ---
+# --- FUNCIÓN AUXILIAR REQUERIDA ---
 def normalizar_nombre(nombre: str) -> str:
-    """Limpia y estandariza un nombre para consistencia."""
     if not isinstance(nombre, str): return ""
     nombre = nombre.upper().strip().replace('.', '')
     nombre = ''.join(c for c in unicodedata.normalize('NFD', nombre) if unicodedata.category(c) != 'Mn')
@@ -27,7 +26,6 @@ st.title("🧑‍💼 Perfil de Pagador por Cliente")
 
 @st.cache_data
 def cargar_datos_historicos():
-    # Esta función es idéntica a la del archivo de Análisis Histórico
     mapa_columnas = {
         'Serie': 'serie', 'Número': 'numero', 'Fecha Documento': 'fecha_documento',
         'Fecha Vencimiento': 'fecha_vencimiento', 'Fecha Saldado': 'fecha_saldado',
@@ -71,7 +69,6 @@ if df_historico_completo.empty:
 acceso_general = st.session_state.get('acceso_general', False)
 vendedor_autenticado = st.session_state.get('vendedor_autenticado', None)
 if not acceso_general:
-    # Usar la columna normalizada para el filtro
     df_historico_filtrado = df_historico_completo[df_historico_completo['nomvendedor_norm'] == normalizar_nombre(vendedor_autenticado)].copy()
 else:
     df_historico_filtrado = df_historico_completo.copy()
@@ -84,20 +81,33 @@ cliente_sel = st.selectbox("Selecciona un cliente para analizar su comportamient
 
 if cliente_sel:
     df_cliente = df_historico_filtrado[df_historico_filtrado['nombrecliente'] == cliente_sel].copy()
-    df_pagadas = df_cliente.dropna(subset=['dias_de_pago'])
+    
+    # --- MODIFICACIÓN: Excluir Notas de Crédito (importe <= 0) del cálculo del promedio ---
+    df_pagadas_reales = df_cliente[
+        (df_cliente['dias_de_pago'].notna()) & (df_cliente['importe'] > 0)
+    ]
+    
     st.markdown("---")
     st.subheader(f"Análisis de {cliente_sel}")
-    if not df_pagadas.empty and df_pagadas['dias_de_pago'].notna().any():
-        avg_dias_pago = df_pagadas['dias_de_pago'].mean()
+
+    # El resto del análisis se basa en este nuevo DataFrame 'df_pagadas_reales'
+    if not df_pagadas_reales.empty:
+        avg_dias_pago = df_pagadas_reales['dias_de_pago'].mean()
+        
         if avg_dias_pago <= 30: calificacion = "✅ Pagador Excelente"
         elif avg_dias_pago <= 60: calificacion = "👍 Pagador Bueno"
         elif avg_dias_pago <= 90: calificacion = "⚠️ Pagador Lento"
         else: calificacion = "🚨 Pagador de Riesgo"
+
         col1, col2 = st.columns(2)
-        with col1: st.metric("Días Promedio de Pago", f"{avg_dias_pago:.0f} días", help="Promedio de días que tarda el cliente en pagar una factura desde su emisión.")
-        with col2: st.metric("Calificación", calificacion)
+        with col1:
+            st.metric("Días Promedio de Pago (Ventas)", f"{avg_dias_pago:.0f} días", help="Promedio de días que tarda el cliente en pagar las facturas de VENTA (excluye notas de crédito).")
+        with col2:
+            st.metric("Calificación", calificacion)
     else:
-        st.info("Este cliente no tiene un historial de facturas pagadas para calcular su comportamiento.")
+        st.info("Este cliente no tiene un historial de facturas de VENTA pagadas para calcular su comportamiento.")
+
     st.markdown("---")
-    st.subheader("Historial Completo de Facturas del Cliente")
+    st.subheader("Historial Completo de Transacciones")
+    # Mostramos el historial completo, incluyendo notas de crédito para una visión total
     st.dataframe(df_cliente[['numero', 'fecha_documento', 'fecha_vencimiento', 'fecha_saldado', 'dias_de_pago', 'importe']].sort_values(by="fecha_documento", ascending=False))
