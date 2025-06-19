@@ -48,7 +48,6 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
     datos_cliente_ordenados = datos_cliente.sort_values(by='fecha_vencimiento', ascending=True)
     info_cliente = datos_cliente_ordenados.iloc[0]
     
-    # Recalcular días vencido para el PDF basado en la fecha actual
     hoy = pd.to_datetime(datetime.now())
     datos_cliente_ordenados['dias_vencido_hoy'] = (hoy - datos_cliente_ordenados['fecha_vencimiento']).dt.days
 
@@ -57,7 +56,6 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
     cod_cliente_str = str(int(cod_cliente_val)) if pd.notna(cod_cliente_val) else "N/A"
     pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Codigo de Cliente:', 0, 0); pdf.set_font('Arial', '', 11)
     pdf.cell(0, 10, cod_cliente_str, 0, 1); pdf.ln(5)
-    
     pdf.set_font('Arial', '', 10); mensaje = "Apreciado cliente, a continuacion encontrara el detalle de su estado de cuenta a la fecha. Le agradecemos por su continua confianza en Ferreinox SAS BIC y le invitamos a revisar los vencimientos para mantener su cartera al dia."
     pdf.set_text_color(128, 128, 128); pdf.multi_cell(0, 5, mensaje, 0, 'J'); pdf.set_text_color(0, 0, 0); pdf.ln(10)
     
@@ -69,7 +67,6 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
     total_importe = 0
     for _, row in datos_cliente_ordenados.iterrows():
         pdf.set_text_color(0, 0, 0)
-        # Usar el valor recalculado para el color
         if row.get('dias_vencido_hoy', 0) > 0 and pd.isnull(row.get('fecha_saldado')):
             pdf.set_fill_color(248, 241, 241)
         else:
@@ -105,8 +102,7 @@ def cargar_datos_historicos():
         'Fecha Vencimiento': 'fecha_vencimiento', 'Fecha Saldado': 'fecha_saldado',
         'NOMBRECLIENTE': 'nombrecliente', 'Población': 'poblacion', 'Provincia': 'provincia',
         'IMPORTE': 'importe', 'RIESGOCONCEDIDO': 'riesgoconcedido', 'NOMVENDEDOR': 'nomvendedor',
-        'DIAS_VENCIDO': 'dias_vencido', 'Estado': 'estado', 'Cod. Cliente': 'cod_cliente',
-        'e-mail': 'e_mail'
+        'DIAS_VENCIDO': 'dias_vencido', 'Estado': 'estado', 'Cod. Cliente': 'cod_cliente', 'e-mail': 'e_mail'
     }
     lista_archivos = sorted(glob.glob("Cartera_*.xlsx"))
     if not lista_archivos: return pd.DataFrame()
@@ -154,37 +150,53 @@ if not lista_clientes:
     st.info("No tienes clientes asignados en el historial de datos."); st.stop()
     
 cliente_sel = st.selectbox("Selecciona un cliente para analizar y gestionar su cuenta:", [""] + lista_clientes)
+
 if cliente_sel:
     df_cliente = df_historico_filtrado[df_historico_filtrado['nombrecliente'] == cliente_sel].copy()
+    
+    # --- Pestañas para organizar la información ---
     tab1, tab2 = st.tabs(["📊 Análisis del Cliente", "✉️ Gestión y Comunicación"])
+
+    # --- Lógica de Cálculos (se hace una sola vez aquí) ---
+    hoy = pd.to_datetime(datetime.now())
+    df_abiertas_cliente = df_cliente[df_cliente['fecha_saldado'].isnull()]
+    total_vencido_cliente = 0
+    if not df_abiertas_cliente.empty:
+        df_vencidas_hoy = df_abiertas_cliente[df_abiertas_cliente['fecha_vencimiento'] < hoy].copy()
+        total_vencido_cliente = df_vencidas_hoy['importe'].sum()
+
     with tab1:
         st.subheader(f"Análisis de Comportamiento: {cliente_sel}")
         df_pagadas_reales = df_cliente[(df_cliente['dias_de_pago'].notna()) & (df_cliente['importe'] > 0)]
-        if not df_pagadas_reales.empty:
-            avg_dias_pago = df_pagadas_reales['dias_de_pago'].mean()
-            if avg_dias_pago <= 30: calificacion = "✅ Pagador Excelente"
-            elif avg_dias_pago <= 60: calificacion = "👍 Pagador Bueno"
-            elif avg_dias_pago <= 90: calificacion = "⚠️ Pagador Lento"
-            else: calificacion = "🚨 Pagador de Riesgo"
-            col1, col2 = st.columns(2)
-            with col1: st.metric("Días Promedio de Pago (Ventas)", f"{avg_dias_pago:.0f} días", help="Promedio de días que tarda el cliente en pagar las facturas de VENTA.")
-            with col2: st.metric("Calificación", calificacion)
-        else:
-            st.info("Este cliente no tiene un historial de facturas de VENTA pagadas para calcular su comportamiento.")
+        
+        # --- MODIFICACIÓN: Se añaden 3 columnas y el nuevo KPI de deuda vencida ---
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if not df_pagadas_reales.empty:
+                avg_dias_pago = df_pagadas_reales['dias_de_pago'].mean()
+                st.metric("Días Promedio de Pago (Ventas)", f"{avg_dias_pago:.0f} días", help="Promedio de días que tarda el cliente en pagar las facturas de VENTA.")
+            else:
+                st.metric("Días Promedio de Pago (Ventas)", "N/A", help="No hay facturas de venta pagadas para calcular el promedio.")
+
+        with col2:
+            if not df_pagadas_reales.empty:
+                avg_dias_pago = df_pagadas_reales['dias_de_pago'].mean()
+                if avg_dias_pago <= 30: calificacion = "✅ Pagador Excelente"
+                elif avg_dias_pago <= 60: calificacion = "👍 Pagador Bueno"
+                elif avg_dias_pago <= 90: calificacion = "⚠️ Pagador Lento"
+                else: calificacion = "🚨 Pagador de Riesgo"
+                st.metric("Calificación", calificacion)
+            else:
+                st.metric("Calificación", "N/A")
+        
+        with col3:
+            st.metric("🔥 Deuda Vencida Actual", f"${total_vencido_cliente:,.0f}", help="Suma del importe de las facturas de este cliente que están vencidas a día de hoy.")
+
         st.subheader("Historial Completo de Transacciones")
         st.dataframe(df_cliente[['numero', 'fecha_documento', 'fecha_vencimiento', 'fecha_saldado', 'dias_de_pago', 'importe']].sort_values(by="fecha_documento", ascending=False))
+
     with tab2:
         st.subheader(f"Herramientas de Comunicación para: {cliente_sel}")
-        
-        # --- LÓGICA CORREGIDA PARA CALCULAR DEUDA VENCIDA ACTUAL ---
-        hoy = pd.to_datetime(datetime.now())
-        df_abiertas_cliente = df_cliente[df_cliente['fecha_saldado'].isnull()]
-        if not df_abiertas_cliente.empty:
-            df_vencidas_hoy = df_abiertas_cliente[df_abiertas_cliente['fecha_vencimiento'] < hoy].copy()
-            total_vencido_cliente = df_vencidas_hoy['importe'].sum()
-        else:
-            total_vencido_cliente = 0
-            
         col1, col2 = st.columns(2)
         with col1:
             st.write("#### 1. Generar Estado de Cuenta en PDF")
