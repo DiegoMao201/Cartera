@@ -1,5 +1,5 @@
 # ======================================================================================
-# ARCHIVO: pages/🧑‍💼_Perfil_de_Cliente.py (Versión con funciones de PDF incluidas)
+# ARCHIVO: pages/🧑‍💼_Perfil_de_Cliente.py (Versión Corregida)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -7,8 +7,8 @@ import glob
 import re
 import unicodedata
 from datetime import datetime
-from fpdf import FPDF # Import necesario para PDF
-from io import BytesIO # Import necesario para PDF
+from fpdf import FPDF
+from io import BytesIO
 
 st.set_page_config(page_title="Perfil de Cliente", page_icon="🧑‍💼", layout="wide")
 
@@ -17,9 +17,7 @@ if 'authentication_status' not in st.session_state or not st.session_state['auth
     st.warning("Por favor, inicie sesión en el 📈 Tablero Principal para acceder a esta página.")
     st.stop()
 
-# --- FUNCIONES AUXILIARES REQUERIDAS (CORRECCIÓN) ---
-# Se añaden aquí las funciones que faltaban para generar el PDF
-
+# --- FUNCIONES AUXILIARES ---
 class PDF(FPDF):
     def header(self):
         try:
@@ -49,10 +47,15 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
         return bytes(pdf.output())
     datos_cliente_ordenados = datos_cliente.sort_values(by='fecha_vencimiento', ascending=True)
     info_cliente = datos_cliente_ordenados.iloc[0]
+    
     pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Cliente:', 0, 0); pdf.set_font('Arial', '', 11); pdf.cell(0, 10, info_cliente['nombrecliente'], 0, 1)
+    
+    # --- CORRECCIÓN: Usar .get() para que no falle si la columna no existe ---
+    cod_cliente_val = info_cliente.get('cod_cliente')
+    cod_cliente_str = str(int(cod_cliente_val)) if pd.notna(cod_cliente_val) else "N/A"
     pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Codigo de Cliente:', 0, 0); pdf.set_font('Arial', '', 11)
-    cod_cliente_str = str(int(info_cliente['cod_cliente'])) if pd.notna(info_cliente['cod_cliente']) else "N/A"
     pdf.cell(0, 10, cod_cliente_str, 0, 1); pdf.ln(5)
+
     pdf.set_font('Arial', '', 10); mensaje = "Apreciado cliente, a continuacion encontrara el detalle de su estado de cuenta a la fecha. Le agradecemos por su continua confianza en Ferreinox SAS BIC y le invitamos a revisar los vencimientos para mantener su cartera al dia."
     pdf.set_text_color(128, 128, 128); pdf.multi_cell(0, 5, mensaje, 0, 'J'); pdf.set_text_color(0, 0, 0); pdf.ln(10)
     pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(0, 56, 101); pdf.set_text_color(255, 255, 255)
@@ -87,12 +90,14 @@ st.title("🧑‍💼 Perfil de Pagador por Cliente")
 
 @st.cache_data
 def cargar_datos_historicos():
+    # --- CORRECCIÓN: Añadir 'Cod. Cliente' al mapa de columnas ---
     mapa_columnas = {
         'Serie': 'serie', 'Número': 'numero', 'Fecha Documento': 'fecha_documento',
         'Fecha Vencimiento': 'fecha_vencimiento', 'Fecha Saldado': 'fecha_saldado',
         'NOMBRECLIENTE': 'nombrecliente', 'Población': 'poblacion', 'Provincia': 'provincia',
         'IMPORTE': 'importe', 'RIESGOCONCEDIDO': 'riesgoconcedido', 'NOMVENDEDOR': 'nomvendedor',
-        'DIAS_VENCIDO': 'dias_vencido', 'Estado': 'estado', 'E-Mail': 'e_mail'
+        'DIAS_VENCIDO': 'dias_vencido', 'Estado': 'estado', 'E-Mail': 'e_mail',
+        'Cod. Cliente': 'cod_cliente' # <-- Columna que faltaba
     }
     lista_archivos = sorted(glob.glob("Cartera_*.xlsx"))
     if not lista_archivos: return pd.DataFrame()
@@ -102,6 +107,7 @@ def cargar_datos_historicos():
             df = pd.read_excel(archivo)
             if not df.empty: df = df.iloc[:-1]
             if 'E-Mail' not in df.columns: df['E-Mail'] = None
+            if 'Cod. Cliente' not in df.columns: df['Cod. Cliente'] = None
             df['Serie'] = df['Serie'].astype(str)
             df = df[~df['Serie'].str.contains('W|X', case=False, na=False)]
             df.rename(columns=mapa_columnas, inplace=True)
