@@ -1,5 +1,5 @@
 # ======================================================================================
-# ARCHIVO: pages/🧑‍💼_Perfil_de_Cliente.py (Versión con Deuda Actual Precisa)
+# ARCHIVO: pages/🧑‍💼_Perfil_de_Cliente.py (Versión Final Definitiva)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -68,7 +68,6 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
     total_importe = 0
     for _, row in datos_cliente_ordenados.iterrows():
         pdf.set_text_color(0, 0, 0)
-        # Usamos el valor recalculado para el color, y verificamos que no esté saldada
         if row.get('dias_vencido_hoy', 0) > 0 and pd.isnull(row.get('fecha_saldado')):
             pdf.set_fill_color(248, 241, 241)
         else:
@@ -100,30 +99,76 @@ st.title("🧑‍💼 Perfil de Pagador por Cliente")
 # --- Carga de Datos ---
 @st.cache_data
 def cargar_datos_historicos():
-    # ... (Esta función no cambia, la omito por brevedad)
-    pass
+    mapa_columnas = {
+        'Serie': 'serie', 'Número': 'numero', 'Fecha Documento': 'fecha_documento',
+        'Fecha Vencimiento': 'fecha_vencimiento', 'Fecha Saldado': 'fecha_saldado',
+        'NOMBRECLIENTE': 'nombrecliente', 'Población': 'poblacion', 'Provincia': 'provincia',
+        'IMPORTE': 'importe', 'RIESGOCONCEDIDO': 'riesgoconcedido', 'NOMVENDEDOR': 'nomvendedor',
+        'DIAS_VENCIDO': 'dias_vencido', 'Estado': 'estado', 'Cod. Cliente': 'cod_cliente', 'e-mail': 'e_mail'
+    }
+    lista_archivos = sorted(glob.glob("Cartera_*.xlsx"))
+    if not lista_archivos: return pd.DataFrame()
+    lista_df = []
+    for archivo in lista_archivos:
+        try:
+            df = pd.read_excel(archivo)
+            if not df.empty: df = df.iloc[:-1]
+            for col in ['e-mail', 'Cod. Cliente']:
+                if col not in df.columns: df[col] = None
+            df['Serie'] = df['Serie'].astype(str)
+            df = df[~df['Serie'].str.contains('W|X', case=False, na=False)]
+            df.rename(columns=mapa_columnas, inplace=True)
+            lista_df.append(df)
+        except Exception as e:
+            st.warning(f"No se pudo procesar el archivo {archivo}: {e}")
+    if not lista_df: return pd.DataFrame()
+    df_completo = pd.concat(lista_df, ignore_index=True)
+    df_completo.dropna(subset=['numero', 'nombrecliente'], inplace=True)
+    df_completo['nomvendedor_norm'] = df_completo['nomvendedor'].apply(normalizar_nombre)
+    df_completo.sort_values(by=['fecha_documento', 'fecha_saldado'], ascending=[True, True], na_position='first', inplace=True)
+    df_historico_unico = df_completo.drop_duplicates(subset=['numero'], keep='last')
+    for col in ['fecha_documento', 'fecha_vencimiento', 'fecha_saldado']:
+        df_historico_unico[col] = pd.to_datetime(df_historico_unico[col], errors='coerce')
+    df_historico_unico['importe'] = pd.to_numeric(df_historico_unico['importe'], errors='coerce').fillna(0)
+    df_pagadas = df_historico_unico.dropna(subset=['fecha_saldado', 'fecha_documento']).copy()
+    if not df_pagadas.empty:
+        df_pagadas['dias_de_pago'] = (df_pagadas['fecha_saldado'] - df_pagadas['fecha_documento']).dt.days
+        df_historico_unico = pd.merge(df_historico_unico, df_pagadas[['numero', 'dias_de_pago']], on='numero', how='left')
+    return df_historico_unico
 
-# --- NUEVO: Función para cargar solo el archivo del día ---
+# --- CORRECCIÓN: Definición de la función que faltaba ---
 @st.cache_data
 def cargar_datos_actuales():
     try:
         df = pd.read_excel("Cartera.xlsx")
         if not df.empty: df = df.iloc[:-1]
+        
+        # Usar una función de normalización de nombres de columnas local para evitar NameError
         df_renamed = df.rename(columns=lambda x: normalizar_nombre(x).lower().replace(' ', '_'))
-        df_renamed['serie'] = df_renamed['serie'].astype(str)
-        df_filtrado = df_renamed[~df_renamed['serie'].str.contains('W|X', case=False, na=False)]
+        
+        # Asegurarse que la columna 'serie' exista antes de usarla
+        if 'serie' in df_renamed.columns:
+            df_renamed['serie'] = df_renamed['serie'].astype(str)
+            df_filtrado = df_renamed[~df_renamed['serie'].str.contains('W|X', case=False, na=False)]
+        else:
+            df_filtrado = df_renamed
+            
         for col in ['fecha_documento', 'fecha_vencimiento']:
-            df_filtrado[col] = pd.to_datetime(df_filtrado[col], errors='coerce')
+            if col in df_filtrado.columns:
+                df_filtrado[col] = pd.to_datetime(df_filtrado[col], errors='coerce')
+        
         # Recalcular días vencido con la fecha actual para precisión
         hoy = pd.to_datetime(datetime.now())
-        df_filtrado['dias_vencido'] = (hoy - df_filtrado['fecha_vencimiento']).dt.days
+        if 'fecha_vencimiento' in df_filtrado.columns:
+            df_filtrado['dias_vencido'] = (hoy - df_filtrado['fecha_vencimiento']).dt.days
+        
         return df_filtrado
     except FileNotFoundError:
-        return pd.DataFrame() # Devuelve un df vacío si no existe
+        return pd.DataFrame()
 
 # --- CÓDIGO PRINCIPAL DE LA PÁGINA ---
 df_historico_completo = cargar_datos_historicos()
-df_cartera_actual = cargar_datos_actuales() # Cargamos los datos del día
+df_cartera_actual = cargar_datos_actuales()
 
 if df_historico_completo.empty and df_cartera_actual.empty:
     st.warning("No se encontraron archivos de datos (ni históricos ni actuales)."); st.stop()
@@ -144,11 +189,10 @@ cliente_sel = st.selectbox("Selecciona un cliente para analizar y gestionar su c
 if cliente_sel:
     df_cliente_historico = df_historico_filtrado[df_historico_filtrado['nombrecliente'] == cliente_sel].copy()
     
-    # --- Lógica de Cálculos Corregida ---
-    # Para la deuda vencida, usamos el archivo del día
     total_vencido_cliente = 0
     if not df_cartera_actual.empty:
-        df_cliente_actual = df_cartera_actual[df_cartera_actual['nombrecliente'] == cliente_sel].copy()
+        df_cliente_actual = df_cartera_actual.dropna(subset=['nombrecliente'])
+        df_cliente_actual = df_cliente_actual[df_cliente_actual['nombrecliente'] == cliente_sel].copy()
         if not df_cliente_actual.empty:
             df_vencidas_actual_cliente = df_cliente_actual[df_cliente_actual['dias_vencido'] > 0]
             total_vencido_cliente = df_vencidas_actual_cliente['importe'].sum()
@@ -165,7 +209,7 @@ if cliente_sel:
                 avg_dias_pago = df_pagadas_reales['dias_de_pago'].mean()
                 st.metric("Días Promedio de Pago (Ventas)", f"{avg_dias_pago:.0f} días", help="Promedio de días que tarda el cliente en pagar las facturas de VENTA.")
             else:
-                st.metric("Días Promedio de Pago (Ventas)", "N/A", help="No hay facturas de venta pagadas para calcular el promedio.")
+                st.metric("Días Promedio de Pago (Ventas)", "N/A")
         with col2:
             if not df_pagadas_reales.empty:
                 avg_dias_pago = df_pagadas_reales['dias_de_pago'].mean()
@@ -189,7 +233,7 @@ if cliente_sel:
             st.write("#### 1. Generar Estado de Cuenta en PDF")
             st.download_button(
                 label="📄 Descargar Estado de Cuenta (PDF)",
-                data=generar_pdf_estado_cuenta(df_cliente_historico), # El PDF usa el historial completo
+                data=generar_pdf_estado_cuenta(df_cliente_historico),
                 file_name=f"Estado_Cuenta_{normalizar_nombre(cliente_sel).replace(' ', '_')}.pdf",
                 mime="application/pdf"
             )
