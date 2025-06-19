@@ -1,27 +1,33 @@
 # ======================================================================================
-# ARCHIVO: pages/🧑‍💼_Perfil_de_Cliente.py
+# ARCHIVO: pages/🧑‍💼_Perfil_de_Cliente.py (Versión Corregida)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
 import glob
 import re
+import unicodedata # <-- Import necesario para la función
 
 st.set_page_config(page_title="Perfil de Cliente", page_icon="🧑‍💼", layout="wide")
 
+# --- GUARDIA DE SEGURIDAD ---
 if 'authentication_status' not in st.session_state or not st.session_state['authentication_status']:
     st.warning("Por favor, inicie sesión en el 📈 Tablero Principal para acceder a esta página.")
     st.stop()
 
-st.title("🧑‍💼 Perfil de Pagador por Cliente")
-
+# --- FUNCIÓN AUXILIAR REQUERIDA (CORRECCIÓN) ---
 def normalizar_nombre(nombre: str) -> str:
+    """Limpia y estandariza un nombre para consistencia."""
     if not isinstance(nombre, str): return ""
     nombre = nombre.upper().strip().replace('.', '')
     nombre = ''.join(c for c in unicodedata.normalize('NFD', nombre) if unicodedata.category(c) != 'Mn')
     return ' '.join(nombre.split())
 
+# --- CÓDIGO DE LA PÁGINA ---
+st.title("🧑‍💼 Perfil de Pagador por Cliente")
+
 @st.cache_data
 def cargar_datos_historicos():
+    # Esta función es idéntica a la del archivo de Análisis Histórico
     mapa_columnas = {
         'Serie': 'serie', 'Número': 'numero', 'Fecha Documento': 'fecha_documento',
         'Fecha Vencimiento': 'fecha_vencimiento', 'Fecha Saldado': 'fecha_saldado',
@@ -65,6 +71,7 @@ if df_historico_completo.empty:
 acceso_general = st.session_state.get('acceso_general', False)
 vendedor_autenticado = st.session_state.get('vendedor_autenticado', None)
 if not acceso_general:
+    # Usar la columna normalizada para el filtro
     df_historico_filtrado = df_historico_completo[df_historico_completo['nomvendedor_norm'] == normalizar_nombre(vendedor_autenticado)].copy()
 else:
     df_historico_filtrado = df_historico_completo.copy()
