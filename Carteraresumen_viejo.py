@@ -122,44 +122,55 @@ def generar_excel_formateado(df: pd.DataFrame):
     return output.getvalue()
 
 def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
+    """Crea un PDF con el estado de cuenta de un cliente específico."""
     pdf = PDF()
+    pdf.set_auto_page_break(auto=True, margin=45)
     pdf.add_page()
+
     if datos_cliente.empty:
-        pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, 'No se encontraron facturas para este cliente.', 0, 1, 'C')
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(0, 10, 'No se encontraron facturas para este cliente.', 0, 1, 'C')
         return bytes(pdf.output())
 
     datos_cliente_ordenados = datos_cliente.sort_values(by='fecha_vencimiento', ascending=True)
     info_cliente = datos_cliente_ordenados.iloc[0]
-    
+
     pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Cliente:', 0, 0); pdf.set_font('Arial', '', 11); pdf.cell(0, 10, info_cliente['nombrecliente'], 0, 1)
     pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Codigo de Cliente:', 0, 0); pdf.set_font('Arial', '', 11)
     cod_cliente_str = str(int(info_cliente['cod_cliente'])) if pd.notna(info_cliente['cod_cliente']) else "N/A"
     pdf.cell(0, 10, cod_cliente_str, 0, 1); pdf.ln(5)
-    
+
     pdf.set_font('Arial', '', 10); mensaje = "Apreciado cliente, a continuacion encontrara el detalle de su estado de cuenta a la fecha. Le agradecemos por su continua confianza en Ferreinox SAS BIC y le invitamos a revisar los vencimientos para mantener su cartera al dia."
     pdf.set_text_color(128, 128, 128); pdf.multi_cell(0, 5, mensaje, 0, 'J'); pdf.set_text_color(0, 0, 0); pdf.ln(10)
 
     pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(0, 56, 101); pdf.set_text_color(255, 255, 255)
     pdf.cell(30, 10, 'Factura', 1, 0, 'C', 1); pdf.cell(40, 10, 'Fecha Factura', 1, 0, 'C', 1)
     pdf.cell(40, 10, 'Fecha Vencimiento', 1, 0, 'C', 1); pdf.cell(40, 10, 'Importe', 1, 1, 'C', 1)
-    pdf.set_text_color(0, 0, 0)
 
-    pdf.set_font('Arial', '', 10)
+    # --- INICIO DE LA MODIFICACIÓN DE ESTILO ---
     total_importe = 0
     for _, row in datos_cliente_ordenados.iterrows():
-        # --- MODIFICACIÓN: Fondo de color sutil para facturas vencidas ---
-        if row['dias_vencido'] > 0:
-            pdf.set_fill_color(255, 221, 221) # Rojo rosado muy sutil
-        else:
-            pdf.set_fill_color(255, 255, 255) # Fondo blanco para las que están al día
+        # Aseguramos que el texto siempre sea negro
+        pdf.set_text_color(0, 0, 0)
         
+        # Asignamos el color de fondo sutil solo a las filas vencidas
+        if row['dias_vencido'] > 0:
+            # Usamos el color #f8f1f1 en su equivalente RGB
+            pdf.set_fill_color(248, 241, 241)
+        else:
+            # Fondo blanco para las facturas al día
+            pdf.set_fill_color(255, 255, 255)
+
         total_importe += row['importe']
         numero_factura_str = str(int(row['numero'])) if pd.notna(row['numero']) else "N/A"
-        # El último parámetro '1' en pdf.cell activa el color de fondo
+        
+        # El último parámetro '1' en pdf.cell() activa el color de fondo
         pdf.cell(30, 10, numero_factura_str, 1, 0, 'C', 1)
         pdf.cell(40, 10, row['fecha_documento'].strftime('%d/%m/%Y'), 1, 0, 'C', 1)
         pdf.cell(40, 10, row['fecha_vencimiento'].strftime('%d/%m/%Y'), 1, 0, 'C', 1)
         pdf.cell(40, 10, f"${row['importe']:,.0f}", 1, 1, 'R', 1)
+
+    # --- FIN DE LA MODIFICACIÓN DE ESTILO ---
         
     pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(0, 56, 101); pdf.set_text_color(255, 255, 255)
     pdf.cell(110, 10, 'TOTAL ADEUDADO', 1, 0, 'R', 1)
