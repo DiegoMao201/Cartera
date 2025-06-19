@@ -1,5 +1,5 @@
 # ======================================================================================
-# ARCHIVO: pages/🧑‍💼_Perfil_de_Cliente.py (Versión con corrección de Notas de Crédito)
+# ARCHIVO: pages/🧑‍💼_Perfil_de_Cliente.py (Versión con Asistente de Email)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -31,7 +31,7 @@ def cargar_datos_historicos():
         'Fecha Vencimiento': 'fecha_vencimiento', 'Fecha Saldado': 'fecha_saldado',
         'NOMBRECLIENTE': 'nombrecliente', 'Población': 'poblacion', 'Provincia': 'provincia',
         'IMPORTE': 'importe', 'RIESGOCONCEDIDO': 'riesgoconcedido', 'NOMVENDEDOR': 'nomvendedor',
-        'DIAS_VENCIDO': 'dias_vencido', 'Estado': 'estado'
+        'DIAS_VENCIDO': 'dias_vencido', 'Estado': 'estado', 'E-Mail': 'e_mail'
     }
     lista_archivos = sorted(glob.glob("Cartera_*.xlsx"))
     if not lista_archivos: return pd.DataFrame()
@@ -40,6 +40,9 @@ def cargar_datos_historicos():
         try:
             df = pd.read_excel(archivo)
             if not df.empty: df = df.iloc[:-1]
+            # Asegurarse de que la columna 'E-Mail' exista, si no, crearla vacía
+            if 'E-Mail' not in df.columns:
+                df['E-Mail'] = None
             df['Serie'] = df['Serie'].astype(str)
             df = df[~df['Serie'].str.contains('W|X', case=False, na=False)]
             df.rename(columns=mapa_columnas, inplace=True)
@@ -77,37 +80,78 @@ lista_clientes = sorted(df_historico_filtrado['nombrecliente'].dropna().unique()
 if not lista_clientes:
     st.info("No tienes clientes asignados en el historial de datos."); st.stop()
     
-cliente_sel = st.selectbox("Selecciona un cliente para analizar su comportamiento de pago:", [""] + lista_clientes)
+cliente_sel = st.selectbox("Selecciona un cliente para analizar su comportamiento y gestionar su cuenta:", [""] + lista_clientes)
 
 if cliente_sel:
     df_cliente = df_historico_filtrado[df_historico_filtrado['nombrecliente'] == cliente_sel].copy()
     
-    # --- MODIFICACIÓN: Excluir Notas de Crédito (importe <= 0) del cálculo del promedio ---
-    df_pagadas_reales = df_cliente[
-        (df_cliente['dias_de_pago'].notna()) & (df_cliente['importe'] > 0)
-    ]
-    
-    st.markdown("---")
-    st.subheader(f"Análisis de {cliente_sel}")
+    # --- Pestañas para organizar la información ---
+    tab1, tab2 = st.tabs(["📊 Análisis del Cliente", "✉️ Gestión y Comunicación"])
 
-    # El resto del análisis se basa en este nuevo DataFrame 'df_pagadas_reales'
-    if not df_pagadas_reales.empty:
-        avg_dias_pago = df_pagadas_reales['dias_de_pago'].mean()
+    with tab1:
+        st.subheader(f"Análisis de Comportamiento: {cliente_sel}")
+        df_pagadas_reales = df_cliente[(df_cliente['dias_de_pago'].notna()) & (df_cliente['importe'] > 0)]
+        if not df_pagadas_reales.empty:
+            avg_dias_pago = df_pagadas_reales['dias_de_pago'].mean()
+            if avg_dias_pago <= 30: calificacion = "✅ Pagador Excelente"
+            elif avg_dias_pago <= 60: calificacion = "👍 Pagador Bueno"
+            elif avg_dias_pago <= 90: calificacion = "⚠️ Pagador Lento"
+            else: calificacion = "🚨 Pagador de Riesgo"
+            col1, col2 = st.columns(2)
+            with col1: st.metric("Días Promedio de Pago (Ventas)", f"{avg_dias_pago:.0f} días", help="Promedio de días que tarda el cliente en pagar las facturas de VENTA.")
+            with col2: st.metric("Calificación", calificacion)
+        else:
+            st.info("Este cliente no tiene un historial de facturas de VENTA pagadas para calcular su comportamiento.")
         
-        if avg_dias_pago <= 30: calificacion = "✅ Pagador Excelente"
-        elif avg_dias_pago <= 60: calificacion = "👍 Pagador Bueno"
-        elif avg_dias_pago <= 90: calificacion = "⚠️ Pagador Lento"
-        else: calificacion = "🚨 Pagador de Riesgo"
+        st.subheader("Historial Completo de Transacciones")
+        st.dataframe(df_cliente[['numero', 'fecha_documento', 'fecha_vencimiento', 'fecha_saldado', 'dias_de_pago', 'importe']].sort_values(by="fecha_documento", ascending=False))
+
+    with tab2:
+        st.subheader(f"Herramientas de Comunicación para: {cliente_sel}")
+        
+        # Obtener email y deudas del cliente
+        email_cliente = df_cliente['e_mail'].dropna().unique()
+        df_vencidas_cliente = df_cliente[(df_cliente['dias_vencido'] > 0) & (df_cliente['fecha_saldado'].isnull())]
+        total_vencido_cliente = df_vencidas_cliente['importe'].sum()
 
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("Días Promedio de Pago (Ventas)", f"{avg_dias_pago:.0f} días", help="Promedio de días que tarda el cliente en pagar las facturas de VENTA (excluye notas de crédito).")
-        with col2:
-            st.metric("Calificación", calificacion)
-    else:
-        st.info("Este cliente no tiene un historial de facturas de VENTA pagadas para calcular su comportamiento.")
+            st.write("#### 1. Generar Estado de Cuenta en PDF")
+            st.download_button(
+                label="📄 Descargar Estado de Cuenta (PDF)",
+                data=generar_pdf_estado_cuenta(df_cliente), # Usa el df_cliente completo
+                file_name=f"Estado_Cuenta_{normalizar_nombre(cliente_sel).replace(' ', '_')}.pdf",
+                mime="application/pdf"
+            )
 
-    st.markdown("---")
-    st.subheader("Historial Completo de Transacciones")
-    # Mostramos el historial completo, incluyendo notas de crédito para una visión total
-    st.dataframe(df_cliente[['numero', 'fecha_documento', 'fecha_vencimiento', 'fecha_saldado', 'dias_de_pago', 'importe']].sort_values(by="fecha_documento", ascending=False))
+        with col2:
+            st.write("#### 2. Preparar Email de Cobro")
+            if not email_cliente.any():
+                st.warning("Este cliente no tiene un email registrado en los datos.")
+            else:
+                st.info(f"**Email del Cliente:** {email_cliente[0]}")
+
+                asunto_sugerido = f"Recordatorio de pago y estado de cuenta - Ferreinox SAS BIC"
+                
+                cuerpo_mensaje = f"""
+Estimados Sres. de {cliente_sel},
+
+Le saludamos cordialmente desde Ferreinox SAS BIC.
+
+Nos ponemos en contacto con usted para recordarle amablemente sobre su saldo pendiente. Actualmente, sus facturas vencidas suman un total de **${total_vencido_cliente:,.0f}**.
+
+Adjuntamos a este correo su estado de cuenta detallado para su revisión.
+
+Puede realizar su pago de forma fácil y segura a través de nuestro portal en línea:
+https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/
+
+Para ingresar, por favor utilice su NIT como 'usuario' y su Código de Cliente como 'código único interno'.
+
+Agradecemos de antemano su pronta atención a este asunto. Si ya ha realizado el pago, por favor haga caso omiso de este mensaje.
+
+Atentamente,
+Equipo de Cartera
+Ferreinox SAS BIC
+"""
+                st.text_area("Asunto del Correo:", value=asunto_sugerido, height=50)
+                st.text_area("Cuerpo del Correo (listo para copiar):", value=cuerpo_mensaje, height=400)
