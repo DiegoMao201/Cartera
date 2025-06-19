@@ -45,10 +45,13 @@ class PDF(FPDF):
         self.ln(10)
 
     def footer(self):
-        self.set_y(-35)
+        self.set_y(-40)
+        self.set_font('Arial', 'I', 9)
+        self.set_text_color(100, 100, 100)
+        self.cell(0, 6, "Para ingresar al portal de pagos, utiliza el NIT como 'usuario' y el Codigo de Cliente como 'codigo unico interno'.", 0, 1, 'C')
         self.set_font('Arial', 'B', 11)
         self.set_text_color(0, 0, 0)
-        self.cell(0, 8, 'Para realizar su pago de forma facil y segura, por favor ingrese al siguiente enlace:', 0, 1, 'C')
+        self.cell(0, 8, 'Realiza tu pago de forma facil y segura aqui:', 0, 1, 'C')
         self.set_font('Arial', 'BU', 12)
         self.set_text_color(4, 88, 167)
         link = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
@@ -124,30 +127,44 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
     if datos_cliente.empty:
         pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, 'No se encontraron facturas para este cliente.', 0, 1, 'C')
         return bytes(pdf.output())
-    info_cliente = datos_cliente.iloc[0]
+
+    datos_cliente_ordenados = datos_cliente.sort_values(by='fecha_vencimiento', ascending=True)
+    info_cliente = datos_cliente_ordenados.iloc[0]
+    
     pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Cliente:', 0, 0); pdf.set_font('Arial', '', 11); pdf.cell(0, 10, info_cliente['nombrecliente'], 0, 1)
     pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Codigo de Cliente:', 0, 0); pdf.set_font('Arial', '', 11)
     cod_cliente_str = str(int(info_cliente['cod_cliente'])) if pd.notna(info_cliente['cod_cliente']) else "N/A"
     pdf.cell(0, 10, cod_cliente_str, 0, 1); pdf.ln(5)
+    
     pdf.set_font('Arial', '', 10); mensaje = "Apreciado cliente, a continuacion encontrara el detalle de su estado de cuenta a la fecha. Le agradecemos por su continua confianza en Ferreinox SAS BIC y le invitamos a revisar los vencimientos para mantener su cartera al dia."
     pdf.set_text_color(128, 128, 128); pdf.multi_cell(0, 5, mensaje, 0, 'J'); pdf.set_text_color(0, 0, 0); pdf.ln(10)
+
     pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(0, 56, 101); pdf.set_text_color(255, 255, 255)
     pdf.cell(30, 10, 'Factura', 1, 0, 'C', 1); pdf.cell(40, 10, 'Fecha Factura', 1, 0, 'C', 1)
     pdf.cell(40, 10, 'Fecha Vencimiento', 1, 0, 'C', 1); pdf.cell(40, 10, 'Importe', 1, 1, 'C', 1)
     pdf.set_text_color(0, 0, 0)
+
     pdf.set_font('Arial', '', 10)
-    total_importe, fill = 0, False
-    for _, row in datos_cliente.iterrows():
-        pdf.set_fill_color(240, 240, 240) if fill else pdf.set_fill_color(255, 255, 255); fill = not fill
+    total_importe = 0
+    for _, row in datos_cliente_ordenados.iterrows():
+        # --- MODIFICACIÓN: Fondo de color sutil para facturas vencidas ---
+        if row['dias_vencido'] > 0:
+            pdf.set_fill_color(255, 221, 221) # Rojo rosado muy sutil
+        else:
+            pdf.set_fill_color(255, 255, 255) # Fondo blanco para las que están al día
+        
         total_importe += row['importe']
         numero_factura_str = str(int(row['numero'])) if pd.notna(row['numero']) else "N/A"
+        # El último parámetro '1' en pdf.cell activa el color de fondo
         pdf.cell(30, 10, numero_factura_str, 1, 0, 'C', 1)
         pdf.cell(40, 10, row['fecha_documento'].strftime('%d/%m/%Y'), 1, 0, 'C', 1)
         pdf.cell(40, 10, row['fecha_vencimiento'].strftime('%d/%m/%Y'), 1, 0, 'C', 1)
         pdf.cell(40, 10, f"${row['importe']:,.0f}", 1, 1, 'R', 1)
+        
     pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(0, 56, 101); pdf.set_text_color(255, 255, 255)
     pdf.cell(110, 10, 'TOTAL ADEUDADO', 1, 0, 'R', 1)
     pdf.cell(40, 10, f"${total_importe:,.0f}", 1, 1, 'R', 1)
+    
     return bytes(pdf.output())
 
 @st.cache_data
@@ -162,113 +179,113 @@ def cargar_y_procesar_datos():
 # ======================================================================================
 # --- BLOQUE PRINCIPAL DE LA APP ---
 # ======================================================================================
-try:
-    general_password = st.secrets["general"]["password"]
-    vendedores_secrets = st.secrets["vendedores"]
-except Exception: st.error("Error al cargar las contraseñas desde los secretos."); st.stop()
+def main():
+    try:
+        general_password = st.secrets["general"]["password"]
+        vendedores_secrets = st.secrets["vendedores"]
+    except Exception:
+        st.error("Error al cargar las contraseñas desde los secretos.")
+        st.info("Asegúrate de tener el archivo .streamlit/secrets.toml configurado correctamente si pruebas en local.")
+        st.stop()
 
-password = st.text_input("Introduce la contraseña para acceder a la cartera:", type="password")
-if not password: st.warning("Debes ingresar una contraseña para continuar."); st.stop()
+    password = st.text_input("Introduce la contraseña para acceder a la cartera:", type="password")
+    if not password:
+        st.warning("Debes ingresar una contraseña para continuar."); st.stop()
 
-acceso_general, vendedor_autenticado = False, None
-if password == str(general_password): acceso_general = True
-else:
-    for vendedor_key, pass_vendedor in vendedores_secrets.items():
-        if password == str(pass_vendedor): vendedor_autenticado = vendedor_key; break
-if not acceso_general and vendedor_autenticado is None: st.warning("Contraseña incorrecta."); st.stop()
+    acceso_general, vendedor_autenticado = False, None
+    if password == str(general_password): acceso_general = True
+    else:
+        for vendedor_key, pass_vendedor in vendedores_secrets.items():
+            if password == str(pass_vendedor): vendedor_autenticado = vendedor_key; break
+    if not acceso_general and vendedor_autenticado is None:
+        st.warning("Contraseña incorrecta."); st.stop()
 
-st.title("📊 Tablero de Cartera Ferreinox SAS BIC")
-try:
-    cartera_procesada = cargar_y_procesar_datos()
-except FileNotFoundError: st.error("No se encontró el archivo 'Cartera.xlsx'."); st.stop()
-except Exception as e: st.error(f"Error al cargar o procesar 'Cartera.xlsx': {e}."); st.stop()
+    st.title("📊 Tablero de Cartera Ferreinox SAS BIC")
+    try:
+        cartera_procesada = cargar_y_procesar_datos()
+    except FileNotFoundError: st.error("No se encontró el archivo 'Cartera.xlsx'."); st.stop()
+    except Exception as e: st.error(f"Error al cargar o procesar 'Cartera.xlsx': {e}."); st.stop()
 
-st.sidebar.title("Filtros")
-vendedores_en_excel_display = sorted(cartera_procesada['nomvendedor'].dropna().unique())
-if acceso_general:
-    vendedor_sel = st.sidebar.selectbox("Filtrar por Vendedor:", ["Todos"] + vendedores_en_excel_display)
-else:
-    vendedor_autenticado_norm = normalizar_nombre(vendedor_autenticado)
-    if vendedor_autenticado_norm not in cartera_procesada['nomvendedor_norm'].dropna().unique():
-        st.error(f"¡Error de coincidencia! El vendedor '{vendedor_autenticado}' no se encontró en 'Cartera.xlsx'."); st.stop()
-    vendedor_sel = vendedor_autenticado
-    st.sidebar.success(f"Mostrando cartera de:"); st.sidebar.write(f"**{vendedor_sel}**")
+    st.sidebar.title("Filtros")
+    vendedores_en_excel_display = sorted(cartera_procesada['nomvendedor'].dropna().unique())
+    if acceso_general:
+        vendedor_sel = st.sidebar.selectbox("Filtrar por Vendedor:", ["Todos"] + vendedores_en_excel_display)
+    else:
+        vendedor_autenticado_norm = normalizar_nombre(vendedor_autenticado)
+        if vendedor_autenticado_norm not in cartera_procesada['nomvendedor_norm'].dropna().unique():
+            st.error(f"¡Error de coincidencia! El vendedor '{vendedor_autenticado}' no se encontró en 'Cartera.xlsx'."); st.stop()
+        vendedor_sel = vendedor_autenticado
+        st.sidebar.success(f"Mostrando cartera de:"); st.sidebar.write(f"**{vendedor_sel}**")
 
-lista_zonas = ["Todas las Zonas"] + list(ZONAS_SERIE.keys())
-zona_sel = st.sidebar.selectbox("Filtrar por Zona:", lista_zonas)
+    lista_zonas = ["Todas las Zonas"] + list(ZONAS_SERIE.keys())
+    zona_sel = st.sidebar.selectbox("Filtrar por Zona:", lista_zonas)
+    
+    lista_poblaciones = ["Todas"] + sorted(cartera_procesada['poblacion'].dropna().unique())
+    poblacion_sel = st.sidebar.selectbox("Filtrar por Población:", lista_poblaciones)
 
-# --- NUEVO: FILTRO POR POBLACIÓN ---
-lista_poblaciones = ["Todas"] + sorted(cartera_procesada['poblacion'].dropna().unique())
-poblacion_sel = st.sidebar.selectbox("Filtrar por Población:", lista_poblaciones)
+    if vendedor_sel == "Todos": cartera_filtrada = cartera_procesada.copy()
+    else: cartera_filtrada = cartera_procesada[cartera_procesada['nomvendedor_norm'] == normalizar_nombre(vendedor_sel)].copy()
+    if zona_sel != "Todas las Zonas": cartera_filtrada = cartera_filtrada[cartera_filtrada['zona'] == zona_sel]
+    if poblacion_sel != "Todas": cartera_filtrada = cartera_filtrada[cartera_filtrada['poblacion'] == poblacion_sel]
 
-# --- Lógica de Filtrado Acumulativa ---
-# 1. Por Vendedor
-if vendedor_sel == "Todos": cartera_filtrada = cartera_procesada.copy()
-else: cartera_filtrada = cartera_procesada[cartera_procesada['nomvendedor_norm'] == normalizar_nombre(vendedor_sel)].copy()
-# 2. Por Zona
-if zona_sel != "Todas las Zonas": cartera_filtrada = cartera_filtrada[cartera_filtrada['zona'] == zona_sel]
-# 3. Por Población
-if poblacion_sel != "Todas": cartera_filtrada = cartera_filtrada[cartera_filtrada['poblacion'] == poblacion_sel]
+    if cartera_filtrada.empty:
+        st.warning(f"No se encontraron datos para la combinación de filtros ('{vendedor_sel}' / '{zona_sel}' / '{poblacion_sel}')."); st.stop()
 
-if cartera_filtrada.empty:
-    st.warning(f"No se encontraron datos para la combinación de filtros ('{vendedor_sel}' / '{zona_sel}' / '{poblacion_sel}')."); st.stop()
+    st.markdown("---")
+    total_cartera = cartera_filtrada['importe'].sum()
+    cartera_vencida_df = cartera_filtrada[cartera_filtrada['dias_vencido'] > 0]
+    total_vencido = cartera_vencida_df['importe'].sum()
+    porcentaje_vencido = (total_vencido / total_cartera) * 100 if total_cartera > 0 else 0
+    if total_cartera > 0: rotacion_dias_general = (cartera_filtrada['importe'] * cartera_filtrada['dias_vencido']).sum() / total_cartera
+    else: rotacion_dias_general = 0
+    if total_vencido > 0: antiguedad_prom_vencida = (cartera_vencida_df['importe'] * cartera_vencida_df['dias_vencido']).sum() / total_vencido
+    else: antiguedad_prom_vencida = 0
+    if rotacion_dias_general <= 15: salud_rotacion, color_salud = "✅ Salud: Excelente", "green"
+    elif rotacion_dias_general <= 30: salud_rotacion, color_salud = "👍 Salud: Buena", "blue"
+    elif rotacion_dias_general <= 45: salud_rotacion, color_salud = "⚠️ Salud: Regular", "orange"
+    else: salud_rotacion, color_salud = "🚨 Salud: Alerta", "red"
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1: st.metric("💰 Cartera Total", f"${total_cartera:,.0f}")
+    with col2: st.metric("🔥 Cartera Vencida", f"${total_vencido:,.0f}", help="Suma del importe de las facturas con días de vencimiento > 0.")
+    with col3: st.metric("📈 % Vencido s/ Total", f"{porcentaje_vencido:.1f}%")
+    with col4: st.metric(label="⏳ Antigüedad Prom. Vencida", value=f"{antiguedad_prom_vencida:.0f} días", help="Edad promedio ponderada, considerando solo las facturas YA VENCIDAS.")
+    with col5:
+        st.metric(label="🔄 Rotación General", value=f"{rotacion_dias_general:.0f} días", help="Edad promedio ponderada de TODA la cartera (vencida y al día).")
+        st.markdown(f"<p style='color:{color_salud}; font-weight:bold; text-align:center; font-size:14px;'>{salud_rotacion}</p>", unsafe_allow_html=True)
 
-st.markdown("---")
-# --- KPIs o Métricas Principales ---
-total_cartera = cartera_filtrada['importe'].sum()
-cartera_vencida_df = cartera_filtrada[cartera_filtrada['dias_vencido'] > 0]
-total_vencido = cartera_vencida_df['importe'].sum()
-porcentaje_vencido = (total_vencido / total_cartera) * 100 if total_cartera > 0 else 0
-if total_cartera > 0: rotacion_dias_general = (cartera_filtrada['importe'] * cartera_filtrada['dias_vencido']).sum() / total_cartera
-else: rotacion_dias_general = 0
-if total_vencido > 0: antiguedad_prom_vencida = (cartera_vencida_df['importe'] * cartera_vencida_df['dias_vencido']).sum() / total_vencido
-else: antiguedad_prom_vencida = 0
-if rotacion_dias_general <= 15: salud_rotacion, color_salud = "✅ Salud: Excelente", "green"
-elif rotacion_dias_general <= 30: salud_rotacion, color_salud = "👍 Salud: Buena", "blue"
-elif rotacion_dias_general <= 45: salud_rotacion, color_salud = "⚠️ Salud: Regular", "orange"
-else: salud_rotacion, color_salud = "🚨 Salud: Alerta", "red"
-col1, col2, col3, col4, col5 = st.columns(5)
-with col1: st.metric("💰 Cartera Total", f"${total_cartera:,.0f}")
-with col2: st.metric("🔥 Cartera Vencida", f"${total_vencido:,.0f}", help="Suma del importe de las facturas con días de vencimiento > 0.")
-with col3: st.metric("📈 % Vencido s/ Total", f"{porcentaje_vencido:.1f}%")
-with col4: st.metric(label="⏳ Antigüedad Prom. Vencida", value=f"{antiguedad_prom_vencida:.0f} días", help="Edad promedio ponderada, considerando solo las facturas YA VENCIDAS.")
-with col5:
-    st.metric(label="🔄 Rotación General", value=f"{rotacion_dias_general:.0f} días", help="Edad promedio ponderada de TODA la cartera (vencida y al día).")
-    st.markdown(f"<p style='color:{color_salud}; font-weight:bold; text-align:center; font-size:14px;'>{salud_rotacion}</p>", unsafe_allow_html=True)
+    st.markdown("---")
+    col_grafico, col_tabla_resumen = st.columns([2, 1])
+    with col_grafico:
+        st.subheader("Distribución de Cartera por Antigüedad")
+        df_edades = cartera_filtrada.groupby('edad_cartera')['importe'].sum().reset_index()
+        fig = px.bar(df_edades, x='edad_cartera', y='importe', text_auto='.2s', title='Monto de Cartera por Rango de Días', labels={'edad_cartera': 'Antigüedad', 'importe': 'Monto Total'}, color='edad_cartera', color_discrete_map={'Al día': 'green', '1-15 días': '#FFD700', '16-30 días': 'orange', '31-60 días': 'darkorange', 'Más de 60 días': 'red'})
+        st.plotly_chart(fig, use_container_width=True)
+    with col_tabla_resumen:
+        st.subheader("Resumen por Antigüedad")
+        df_edades['Porcentaje'] = (df_edades['importe'] / total_cartera * 100).map('{:.1f}%'.format)
+        df_edades['importe'] = df_edades['importe'].map('${:,.0f}'.format)
+        st.dataframe(df_edades.rename(columns={'edad_cartera': 'Rango', 'importe': 'Monto'}), use_container_width=True, hide_index=True)
 
-st.markdown("---")
-# --- Gráficos y Resumen por Antigüedad ---
-col_grafico, col_tabla_resumen = st.columns([2, 1])
-with col_grafico:
-    st.subheader("Distribución de Cartera por Antigüedad")
-    df_edades = cartera_filtrada.groupby('edad_cartera')['importe'].sum().reset_index()
-    fig = px.bar(df_edades, x='edad_cartera', y='importe', text_auto='.2s', title='Monto de Cartera por Rango de Días', labels={'edad_cartera': 'Antigüedad', 'importe': 'Monto Total'}, color='edad_cartera', color_discrete_map={'Al día': 'green', '1-15 días': '#FFD700', '16-30 días': 'orange', '31-60 días': 'darkorange', 'Más de 60 días': 'red'})
-    st.plotly_chart(fig, use_container_width=True)
-with col_tabla_resumen:
-    st.subheader("Resumen por Antigüedad")
-    df_edades['Porcentaje'] = (df_edades['importe'] / total_cartera * 100).map('{:.1f}%'.format)
-    df_edades['importe'] = df_edades['importe'].map('${:,.0f}'.format)
-    st.dataframe(df_edades.rename(columns={'edad_cartera': 'Rango', 'importe': 'Monto'}), use_container_width=True, hide_index=True)
+    st.markdown("---")
+    st.subheader(f"Detalle de la Cartera: {vendedor_sel} / {zona_sel} / {poblacion_sel}")
+    st.download_button(label="📥 Descargar Reporte en Excel con Formato", data=generar_excel_formateado(cartera_filtrada), file_name=f'Cartera_{normalizar_nombre(vendedor_sel)}_{zona_sel}_{poblacion_sel}.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    columnas_a_ocultar = ['provincia', 'telefono1', 'telefono2', 'entidad_autoriza', 'e_mail', 'descuento', 'cupo_aprobado', 'nomvendedor_norm', 'zona']
+    cartera_para_mostrar = cartera_filtrada.drop(columns=columnas_a_ocultar, errors='ignore')
+    st.dataframe(cartera_para_mostrar, use_container_width=True, hide_index=True)
 
-st.markdown("---")
-# --- Tabla de Datos Detallados y Descarga ---
-st.subheader(f"Detalle: {vendedor_sel} / {zona_sel} / {poblacion_sel}")
-st.download_button(label="📥 Descargar Reporte en Excel con Formato", data=generar_excel_formateado(cartera_filtrada), file_name=f'Cartera_{normalizar_nombre(vendedor_sel)}_{zona_sel}_{poblacion_sel}.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-columnas_a_ocultar = ['provincia', 'telefono1', 'telefono2', 'entidad_autoriza', 'e_mail', 'descuento', 'cupo_aprobado', 'nomvendedor_norm', 'zona']
-cartera_para_mostrar = cartera_filtrada.drop(columns=columnas_a_ocultar, errors='ignore')
-st.dataframe(cartera_para_mostrar, use_container_width=True, hide_index=True)
+    st.markdown("---")
+    st.header("⚙️ Herramientas de Gestión")
+    st.subheader("Generar Estado de Cuenta por Cliente")
+    lista_clientes = sorted(cartera_filtrada['nombrecliente'].dropna().unique())
+    if not lista_clientes:
+        st.warning("No hay clientes para mostrar con los filtros actuales.")
+    else:
+        cliente_seleccionado = st.selectbox("Busca y selecciona un cliente para generar su estado de cuenta en PDF:", [""] + lista_clientes, format_func=lambda x: 'Selecciona un cliente...' if x == "" else x)
+        if cliente_seleccionado:
+            datos_cliente_seleccionado = cartera_filtrada[cartera_filtrada['nombrecliente'] == cliente_seleccionado].copy()
+            st.write(f"**Facturas para {cliente_seleccionado}:**")
+            st.dataframe(datos_cliente_seleccionado[['numero', 'fecha_documento', 'fecha_vencimiento', 'dias_vencido', 'importe']], use_container_width=True, hide_index=True)
+            st.download_button(label="📄 Descargar Estado de Cuenta (PDF)", data=generar_pdf_estado_cuenta(datos_cliente_seleccionado), file_name=f"Estado_Cuenta_{normalizar_nombre(cliente_seleccionado).replace(' ', '_')}.pdf", mime="application/pdf")
 
-st.markdown("---")
-# --- Herramientas de Gestión ---
-st.header("⚙️ Herramientas de Gestión")
-st.subheader("Generar Estado de Cuenta por Cliente")
-lista_clientes = sorted(cartera_filtrada['nombrecliente'].dropna().unique())
-if not lista_clientes:
-    st.warning("No hay clientes para mostrar con los filtros actuales.")
-else:
-    cliente_seleccionado = st.selectbox("Busca y selecciona un cliente para generar su estado de cuenta en PDF:", [""] + lista_clientes, format_func=lambda x: 'Selecciona un cliente...' if x == "" else x)
-    if cliente_seleccionado:
-        datos_cliente_seleccionado = cartera_filtrada[cartera_filtrada['nombrecliente'] == cliente_seleccionado].copy()
-        st.write(f"**Facturas para {cliente_seleccionado}:**")
-        st.dataframe(datos_cliente_seleccionado[['numero', 'fecha_documento', 'fecha_vencimiento', 'dias_vencido', 'importe']], use_container_width=True, hide_index=True)
-        st.download_button(label="📄 Descargar Estado de Cuenta (PDF)", data=generar_pdf_estado_cuenta(datos_cliente_seleccionado), file_name=f"Estado_Cuenta_{normalizar_nombre(cliente_seleccionado).replace(' ', '_')}.pdf", mime="application/pdf")
+if __name__ == '__main__':
+    main()
