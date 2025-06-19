@@ -146,15 +146,19 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
 
 @st.cache_data
 def cargar_y_procesar_datos():
-    """Lee el archivo Excel del día, lo limpia y procesa."""
     df = pd.read_excel("Cartera.xlsx")
-    df = df.iloc[:-1]
+    if not df.empty:
+        df = df.iloc[:-1]
+    
     df['serie'] = df['serie'].astype(str)
     df = df[~df['serie'].str.contains('W|X', case=False, na=False)]
-    df = df.rename(columns=lambda x: normalizar_nombre(x).lower().replace(' ', '_'))
-    df['fecha_documento'] = pd.to_datetime(df['fecha_documento'], errors='coerce')
-    df['fecha_vencimiento'] = pd.to_datetime(df['fecha_vencimiento'], errors='coerce')
-    return procesar_cartera(df)
+    
+    df_renamed = df.rename(columns=lambda x: normalizar_nombre(x).lower().replace(' ', '_'))
+    
+    df_renamed['fecha_documento'] = pd.to_datetime(df_renamed['fecha_documento'], errors='coerce')
+    df_renamed['fecha_vencimiento'] = pd.to_datetime(df_renamed['fecha_vencimiento'], errors='coerce')
+    
+    return procesar_cartera(df_renamed)
 
 # ======================================================================================
 # --- BLOQUE PRINCIPAL DE LA APP ---
@@ -162,7 +166,6 @@ def cargar_y_procesar_datos():
 def main():
     st.set_page_config(page_title="Tablero Principal", page_icon="📈", layout="wide")
 
-    # --- Autenticación ---
     try:
         general_password = st.secrets["general"]["password"]
         vendedores_secrets = st.secrets["vendedores"]
@@ -183,14 +186,12 @@ def main():
     if not acceso_general and vendedor_autenticado is None:
         st.warning("Contraseña incorrecta."); st.stop()
 
-    # --- Carga de Datos y Título ---
     st.title("📊 Tablero de Cartera Ferreinox SAS BIC")
     try:
         cartera_procesada = cargar_y_procesar_datos()
     except FileNotFoundError: st.error("No se encontró el archivo 'Cartera.xlsx'."); st.stop()
     except Exception as e: st.error(f"Error al cargar o procesar 'Cartera.xlsx': {e}."); st.stop()
 
-    # --- Barra Lateral con Filtros ---
     st.sidebar.title("Filtros")
     vendedores_en_excel_display = sorted(cartera_procesada['nomvendedor'].dropna().unique())
     if acceso_general:
@@ -208,18 +209,15 @@ def main():
     lista_poblaciones = ["Todas"] + sorted(cartera_procesada['poblacion'].dropna().unique())
     poblacion_sel = st.sidebar.selectbox("Filtrar por Población:", lista_poblaciones)
 
-    # --- Lógica de Filtrado Acumulativa ---
     if vendedor_sel == "Todos": cartera_filtrada = cartera_procesada.copy()
     else: cartera_filtrada = cartera_procesada[cartera_procesada['nomvendedor_norm'] == normalizar_nombre(vendedor_sel)].copy()
     if zona_sel != "Todas las Zonas": cartera_filtrada = cartera_filtrada[cartera_filtrada['zona'] == zona_sel]
     if poblacion_sel != "Todas": cartera_filtrada = cartera_filtrada[cartera_filtrada['poblacion'] == poblacion_sel]
 
-    # --- Renderizado del Tablero ---
     if cartera_filtrada.empty:
         st.warning(f"No se encontraron datos para los filtros seleccionados."); st.stop()
 
     st.markdown("---")
-    # KPIs
     total_cartera = cartera_filtrada['importe'].sum()
     cartera_vencida_df = cartera_filtrada[cartera_filtrada['dias_vencido'] > 0]
     total_vencido = cartera_vencida_df['importe'].sum()
@@ -242,7 +240,6 @@ def main():
         st.markdown(f"<p style='color:{color_salud}; font-weight:bold; text-align:center; font-size:14px;'>{salud_rotacion}</p>", unsafe_allow_html=True)
 
     st.markdown("---")
-    # Gráficos
     col_grafico, col_tabla_resumen = st.columns([2, 1])
     with col_grafico:
         st.subheader("Distribución de Cartera por Antigüedad")
@@ -256,7 +253,6 @@ def main():
         st.dataframe(df_edades.rename(columns={'edad_cartera': 'Rango', 'importe': 'Monto'}), use_container_width=True, hide_index=True)
 
     st.markdown("---")
-    # Tabla de Detalle
     st.subheader(f"Detalle: {vendedor_sel} / {zona_sel} / {poblacion_sel}")
     st.download_button(label="📥 Descargar Reporte en Excel con Formato", data=generar_excel_formateado(cartera_filtrada), file_name=f'Cartera_{normalizar_nombre(vendedor_sel)}_{zona_sel}_{poblacion_sel}.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     columnas_a_ocultar = ['provincia', 'telefono1', 'telefono2', 'entidad_autoriza', 'e_mail', 'descuento', 'cupo_aprobado', 'nomvendedor_norm', 'zona']
@@ -264,7 +260,6 @@ def main():
     st.dataframe(cartera_para_mostrar, use_container_width=True, hide_index=True)
 
     st.markdown("---")
-    # Herramientas de Gestión
     st.header("⚙️ Herramientas de Gestión")
     st.subheader("Generar Estado de Cuenta por Cliente")
     lista_clientes = sorted(cartera_filtrada['nombrecliente'].dropna().unique())
