@@ -1,5 +1,5 @@
 # ======================================================================================
-# ARCHIVO: pages/🧑‍💼_Perfil_de_Cliente.py (Versión con Mapeo de Email Corregido)
+# ARCHIVO: pages/🧑‍💼_Perfil_de_Cliente.py (Versión Final Corregida)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -12,12 +12,10 @@ from io import BytesIO
 
 st.set_page_config(page_title="Perfil de Cliente", page_icon="🧑‍💼", layout="wide")
 
-# --- GUARDIA DE SEGURIDAD ---
 if 'authentication_status' not in st.session_state or not st.session_state['authentication_status']:
     st.warning("Por favor, inicie sesión en el 📈 Tablero Principal para acceder a esta página.")
     st.stop()
 
-# --- FUNCIONES AUXILIARES ---
 class PDF(FPDF):
     def header(self):
         try:
@@ -47,7 +45,7 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
         return bytes(pdf.output())
     datos_cliente_ordenados = datos_cliente.sort_values(by='fecha_vencimiento', ascending=True)
     info_cliente = datos_cliente_ordenados.iloc[0]
-    pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Cliente:', 0, 0); pdf.set_font('Arial', '', 11); pdf.cell(0, 10, info_cliente['nombrecliente'], 0, 1)
+    pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Cliente:', 0, 0); pdf.set_font('Arial', '', 11); pdf.cell(0, 10, info_cliente.get('nombrecliente', ''), 0, 1)
     cod_cliente_val = info_cliente.get('cod_cliente')
     cod_cliente_str = str(int(cod_cliente_val)) if pd.notna(cod_cliente_val) else "N/A"
     pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Codigo de Cliente:', 0, 0); pdf.set_font('Arial', '', 11)
@@ -61,14 +59,16 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
     total_importe = 0
     for _, row in datos_cliente_ordenados.iterrows():
         pdf.set_text_color(0, 0, 0)
-        if row['dias_vencido'] > 0: pdf.set_fill_color(248, 241, 241)
+        if row.get('dias_vencido', 0) > 0: pdf.set_fill_color(248, 241, 241)
         else: pdf.set_fill_color(255, 255, 255)
-        total_importe += row['importe']
-        numero_factura_str = str(int(row['numero'])) if pd.notna(row['numero']) else "N/A"
+        total_importe += row.get('importe', 0)
+        numero_factura_str = str(int(row.get('numero'))) if pd.notna(row.get('numero')) else "N/A"
+        fecha_doc_str = row['fecha_documento'].strftime('%d/%m/%Y') if pd.notna(row.get('fecha_documento')) else "N/A"
+        fecha_ven_str = row['fecha_vencimiento'].strftime('%d/%m/%Y') if pd.notna(row.get('fecha_vencimiento')) else "N/A"
         pdf.cell(30, 10, numero_factura_str, 1, 0, 'C', 1)
-        pdf.cell(40, 10, row['fecha_documento'].strftime('%d/%m/%Y'), 1, 0, 'C', 1)
-        pdf.cell(40, 10, row['fecha_vencimiento'].strftime('%d/%m/%Y'), 1, 0, 'C', 1)
-        pdf.cell(40, 10, f"${row['importe']:,.0f}", 1, 1, 'R', 1)
+        pdf.cell(40, 10, fecha_doc_str, 1, 0, 'C', 1)
+        pdf.cell(40, 10, fecha_ven_str, 1, 0, 'C', 1)
+        pdf.cell(40, 10, f"${row.get('importe', 0):,.0f}", 1, 1, 'R', 1)
     pdf.set_text_color(0, 0, 0)
     pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(0, 56, 101); pdf.set_text_color(255, 255, 255)
     pdf.cell(110, 10, 'TOTAL ADEUDADO', 1, 0, 'R', 1)
@@ -81,20 +81,17 @@ def normalizar_nombre(nombre: str) -> str:
     nombre = ''.join(c for c in unicodedata.normalize('NFD', nombre) if unicodedata.category(c) != 'Mn')
     return ' '.join(nombre.split())
 
-# --- CÓDIGO DE LA PÁGINA ---
 st.title("🧑‍💼 Perfil de Pagador por Cliente")
 
 @st.cache_data
 def cargar_datos_historicos():
-    # --- CORRECCIÓN: Añadir 'E-Mail' al mapa de columnas ---
     mapa_columnas = {
         'Serie': 'serie', 'Número': 'numero', 'Fecha Documento': 'fecha_documento',
         'Fecha Vencimiento': 'fecha_vencimiento', 'Fecha Saldado': 'fecha_saldado',
         'NOMBRECLIENTE': 'nombrecliente', 'Población': 'poblacion', 'Provincia': 'provincia',
         'IMPORTE': 'importe', 'RIESGOCONCEDIDO': 'riesgoconcedido', 'NOMVENDEDOR': 'nomvendedor',
-        'DIAS_VENCIDO': 'dias_vencido', 'Estado': 'estado', 
-        'Cod. Cliente': 'cod_cliente',
-        'E-Mail': 'e_mail' # <-- Columna que faltaba
+        'DIAS_VENCIDO': 'dias_vencido', 'Estado': 'estado', 'Cod. Cliente': 'cod_cliente',
+        'e-mail': 'e_mail'
     }
     lista_archivos = sorted(glob.glob("Cartera_*.xlsx"))
     if not lista_archivos: return pd.DataFrame()
@@ -103,10 +100,8 @@ def cargar_datos_historicos():
         try:
             df = pd.read_excel(archivo)
             if not df.empty: df = df.iloc[:-1]
-            # --- CORRECCIÓN: Asegurarse de que las columnas opcionales existan ---
-            if 'E-Mail' not in df.columns: df['E-Mail'] = None
-            if 'Cod. Cliente' not in df.columns: df['Cod. Cliente'] = None
-            
+            for col in ['e-mail', 'Cod. Cliente']:
+                if col not in df.columns: df[col] = None
             df['Serie'] = df['Serie'].astype(str)
             df = df[~df['Serie'].str.contains('W|X', case=False, na=False)]
             df.rename(columns=mapa_columnas, inplace=True)
@@ -144,7 +139,7 @@ lista_clientes = sorted(df_historico_filtrado['nombrecliente'].dropna().unique()
 if not lista_clientes:
     st.info("No tienes clientes asignados en el historial de datos."); st.stop()
     
-cliente_sel = st.selectbox("Selecciona un cliente para analizar su comportamiento y gestionar su cuenta:", [""] + lista_clientes)
+cliente_sel = st.selectbox("Selecciona un cliente para analizar y gestionar su cuenta:", [""] + lista_clientes)
 
 if cliente_sel:
     df_cliente = df_historico_filtrado[df_historico_filtrado['nombrecliente'] == cliente_sel].copy()
@@ -171,7 +166,7 @@ if cliente_sel:
 
     with tab2:
         st.subheader(f"Herramientas de Comunicación para: {cliente_sel}")
-        df_vencidas_cliente = df_cliente[(df_cliente['dias_vencido'] > 0) & (df_cliente['fecha_saldado'].isnull())]
+        df_vencidas_cliente = df_cliente[(df_cliente.get('dias_vencido', 0) > 0) & (df_cliente['fecha_saldado'].isnull())]
         total_vencido_cliente = df_vencidas_cliente['importe'].sum()
 
         col1, col2 = st.columns(2)
