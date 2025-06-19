@@ -8,18 +8,20 @@ import re
 
 st.set_page_config(page_title="Perfil de Cliente", page_icon="🧑‍💼", layout="wide")
 
-# --- GUARDIA DE SEGURIDAD ---
 if 'authentication_status' not in st.session_state or not st.session_state['authentication_status']:
     st.warning("Por favor, inicie sesión en el 📈 Tablero Principal para acceder a esta página.")
     st.stop()
 
-# --- CÓDIGO DE LA PÁGINA ---
 st.title("🧑‍💼 Perfil de Pagador por Cliente")
+
+def normalizar_nombre(nombre: str) -> str:
+    if not isinstance(nombre, str): return ""
+    nombre = nombre.upper().strip().replace('.', '')
+    nombre = ''.join(c for c in unicodedata.normalize('NFD', nombre) if unicodedata.category(c) != 'Mn')
+    return ' '.join(nombre.split())
 
 @st.cache_data
 def cargar_datos_historicos():
-    # Esta función es idéntica a la del archivo de Análisis Histórico
-    # ... (Pega aquí la función cargar_datos_historicos() completa)
     mapa_columnas = {
         'Serie': 'serie', 'Número': 'numero', 'Fecha Documento': 'fecha_documento',
         'Fecha Vencimiento': 'fecha_vencimiento', 'Fecha Saldado': 'fecha_saldado',
@@ -43,6 +45,7 @@ def cargar_datos_historicos():
     if not lista_df: return pd.DataFrame()
     df_completo = pd.concat(lista_df, ignore_index=True)
     df_completo.dropna(subset=['numero', 'nombrecliente'], inplace=True)
+    df_completo['nomvendedor_norm'] = df_completo['nomvendedor'].apply(normalizar_nombre)
     df_completo.sort_values(by=['fecha_documento', 'fecha_saldado'], ascending=[True, True], na_position='first', inplace=True)
     df_historico_unico = df_completo.drop_duplicates(subset=['numero'], keep='last')
     for col in ['fecha_documento', 'fecha_vencimiento', 'fecha_saldado']:
@@ -59,27 +62,21 @@ df_historico_completo = cargar_datos_historicos()
 if df_historico_completo.empty:
     st.warning("No se encontraron archivos de datos históricos."); st.stop()
 
-# --- Filtrar datos según el usuario logueado ---
 acceso_general = st.session_state.get('acceso_general', False)
 vendedor_autenticado = st.session_state.get('vendedor_autenticado', None)
-
 if not acceso_general:
-    df_historico_filtrado = df_historico_completo[df_historico_completo['nomvendedor'] == vendedor_autenticado].copy()
+    df_historico_filtrado = df_historico_completo[df_historico_completo['nomvendedor_norm'] == normalizar_nombre(vendedor_autenticado)].copy()
 else:
     df_historico_filtrado = df_historico_completo.copy()
 
-# --- Buscador de Clientes (ahora sobre datos filtrados) ---
 lista_clientes = sorted(df_historico_filtrado['nombrecliente'].dropna().unique())
 if not lista_clientes:
-    st.info("No tienes clientes asignados en el historial de datos.")
-    st.stop()
+    st.info("No tienes clientes asignados en el historial de datos."); st.stop()
     
 cliente_sel = st.selectbox("Selecciona un cliente para analizar su comportamiento de pago:", [""] + lista_clientes)
 
 if cliente_sel:
     df_cliente = df_historico_filtrado[df_historico_filtrado['nombrecliente'] == cliente_sel].copy()
-    
-    # ... (El resto del código de la página no cambia, se pega tal cual estaba)
     df_pagadas = df_cliente.dropna(subset=['dias_de_pago'])
     st.markdown("---")
     st.subheader(f"Análisis de {cliente_sel}")
