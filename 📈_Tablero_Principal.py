@@ -146,19 +146,24 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
 
 @st.cache_data
 def cargar_y_procesar_datos():
+    """Lee el archivo Excel del día, lo limpia y procesa."""
     df = pd.read_excel("Cartera.xlsx")
+    
     if not df.empty:
         df = df.iloc[:-1]
-    
-    df['serie'] = df['serie'].astype(str)
-    df = df[~df['serie'].str.contains('W|X', case=False, na=False)]
-    
+
+    # --- CORRECCIÓN: Renombrar columnas ANTES de intentar usarlas ---
     df_renamed = df.rename(columns=lambda x: normalizar_nombre(x).lower().replace(' ', '_'))
+
+    # Ahora, aplicar el filtro sobre la columna ya normalizada 'serie'
+    df_renamed['serie'] = df_renamed['serie'].astype(str)
+    df_filtrado = df_renamed[~df_renamed['serie'].str.contains('W|X', case=False, na=False)]
+
+    # Continuar con el resto del procesamiento sobre el DataFrame ya filtrado
+    df_filtrado['fecha_documento'] = pd.to_datetime(df_filtrado['fecha_documento'], errors='coerce')
+    df_filtrado['fecha_vencimiento'] = pd.to_datetime(df_filtrado['fecha_vencimiento'], errors='coerce')
     
-    df_renamed['fecha_documento'] = pd.to_datetime(df_renamed['fecha_documento'], errors='coerce')
-    df_renamed['fecha_vencimiento'] = pd.to_datetime(df_renamed['fecha_vencimiento'], errors='coerce')
-    
-    return procesar_cartera(df_renamed)
+    return procesar_cartera(df_filtrado)
 
 # ======================================================================================
 # --- BLOQUE PRINCIPAL DE LA APP ---
