@@ -24,7 +24,9 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- CLASE PDF Y FUNCIONES AUXILIARES (Sin cambios) ---
+# ======================================================================================
+# --- CLASE PDF Y FUNCIONES AUXILIARES ---
+# ======================================================================================
 class PDF(FPDF):
     def header(self):
         try:
@@ -142,30 +144,42 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
     pdf.cell(40, 10, f"${total_importe:,.0f}", 1, 1, 'R', 1)
     return bytes(pdf.output())
 
+# --- CORRECCIÓN: Lógica de carga de datos para el tablero principal ---
 @st.cache_data
 def cargar_y_procesar_datos():
+    """Lee el archivo Excel del día, lo limpia y procesa."""
     df = pd.read_excel("Cartera.xlsx")
-    if not df.empty: df = df.iloc[:-1]
-    df['Serie'] = df['serie'].astype(str)
-    df = df[~df['serie'].str.contains('W|X', case=False, na=False)]
+    
+    if not df.empty:
+        df = df.iloc[:-1]
+
+    # Renombrar columnas ANTES de intentar usarlas
     df_renamed = df.rename(columns=lambda x: normalizar_nombre(x).lower().replace(' ', '_'))
-    df_renamed['fecha_documento'] = pd.to_datetime(df_renamed['fecha_documento'], errors='coerce')
-    df_renamed['fecha_vencimiento'] = pd.to_datetime(df_renamed['fecha_vencimiento'], errors='coerce')
-    return procesar_cartera(df_renamed)
+
+    # Ahora, aplicar el filtro sobre la columna ya normalizada 'serie'
+    df_renamed['serie'] = df_renamed['serie'].astype(str)
+    df_filtrado = df_renamed[~df_renamed['serie'].str.contains('W|X', case=False, na=False)]
+
+    # Continuar con el resto del procesamiento
+    df_filtrado['fecha_documento'] = pd.to_datetime(df_filtrado['fecha_documento'], errors='coerce')
+    df_filtrado['fecha_vencimiento'] = pd.to_datetime(df_filtrado['fecha_vencimiento'], errors='coerce')
+    
+    return procesar_cartera(df_filtrado)
 
 # ======================================================================================
 # --- BLOQUE PRINCIPAL DE LA APP ---
 # ======================================================================================
 def main():
-    st.set_page_config(page_title="Tablero Principal", page_icon="📈", layout="wide")
+    # El set_page_config debe ser el primer comando de Streamlit en ejecutarse
+    # st.set_page_config(page_title="Tablero Principal", page_icon="📈", layout="wide") <--- ya está al inicio
 
-    # --- LÓGICA DE LOGIN Y SESSION STATE ---
     if 'authentication_status' not in st.session_state:
         st.session_state['authentication_status'] = False
         st.session_state['acceso_general'] = False
         st.session_state['vendedor_autenticado'] = None
 
     if not st.session_state['authentication_status']:
+        st.title("Acceso al Tablero de Cartera")
         try:
             general_password = st.secrets["general"]["password"]
             vendedores_secrets = st.secrets["vendedores"]
@@ -191,15 +205,12 @@ def main():
                 if not st.session_state['authentication_status']:
                     st.error("Contraseña incorrecta.")
     else:
-        # --- Si el usuario está autenticado, muestra el tablero ---
         st.title("📊 Tablero de Cartera Ferreinox SAS BIC")
-
         with st.sidebar:
             st.success(f"Usuario: {st.session_state['vendedor_autenticado']}")
             if st.button("Cerrar Sesión"):
-                st.session_state['authentication_status'] = False
-                st.session_state['acceso_general'] = False
-                st.session_state['vendedor_autenticado'] = None
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
                 st.rerun()
         
         try:
@@ -207,30 +218,23 @@ def main():
         except FileNotFoundError: st.error("No se encontró el archivo 'Cartera.xlsx'."); st.stop()
         except Exception as e: st.error(f"Error al cargar o procesar 'Cartera.xlsx': {e}."); st.stop()
 
-        # --- Filtros en la barra lateral ---
         st.sidebar.title("Filtros")
-        
-        # Filtro de Vendedor (solo para admin)
         if st.session_state['acceso_general']:
             vendedores_en_excel_display = ["Todos"] + sorted(cartera_procesada['nomvendedor'].dropna().unique())
             vendedor_sel = st.sidebar.selectbox("Filtrar por Vendedor:", vendedores_en_excel_display)
         else:
             vendedor_sel = st.session_state['vendedor_autenticado']
         
-        # Filtros de Zona y Población
         lista_zonas = ["Todas las Zonas"] + list(ZONAS_SERIE.keys())
         zona_sel = st.sidebar.selectbox("Filtrar por Zona:", lista_zonas)
-        
         lista_poblaciones = ["Todas"] + sorted(cartera_procesada['poblacion'].dropna().unique())
         poblacion_sel = st.sidebar.selectbox("Filtrar por Población:", lista_poblaciones)
 
-        # --- Lógica de Filtrado Acumulativa ---
         if vendedor_sel == "Todos": cartera_filtrada = cartera_procesada.copy()
         else: cartera_filtrada = cartera_procesada[cartera_procesada['nomvendedor_norm'] == normalizar_nombre(vendedor_sel)].copy()
         if zona_sel != "Todas las Zonas": cartera_filtrada = cartera_filtrada[cartera_filtrada['zona'] == zona_sel]
         if poblacion_sel != "Todas": cartera_filtrada = cartera_filtrada[cartera_filtrada['poblacion'] == poblacion_sel]
 
-        # --- Renderizado del Tablero ---
         if cartera_filtrada.empty:
             st.warning(f"No se encontraron datos para los filtros seleccionados."); st.stop()
 
@@ -255,6 +259,7 @@ def main():
         with col5:
             st.metric(label="🔄 Rotación General", value=f"{rotacion_dias_general:.0f} días", help="Edad promedio ponderada de TODA la cartera.")
             st.markdown(f"<p style='color:{color_salud}; font-weight:bold; text-align:center; font-size:14px;'>{salud_rotacion}</p>", unsafe_allow_html=True)
+
         st.markdown("---")
         col_grafico, col_tabla_resumen = st.columns([2, 1])
         with col_grafico:
