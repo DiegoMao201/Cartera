@@ -10,15 +10,8 @@ st.set_page_config(page_title="Análisis Histórico", page_icon="📊", layout="
 
 st.title("📊 Análisis Histórico de Cartera")
 
-# --- Función para normalizar nombres (debe ser consistente) ---
-def normalizar_columna(nombre: str) -> str:
-    # Una versión simplificada solo para estandarizar
-    nombre = ''.join(c for c in re.sub(r'[^A-Z0-9_]', '', nombre.upper()) if not c.isdigit())
-    return nombre.replace(' ', '_')
-
 @st.cache_data
 def cargar_datos_historicos():
-    # Mapa de nombres de columnas de los archivos históricos al formato estándar
     mapa_columnas = {
         'Serie': 'serie', 'Número': 'numero', 'Fecha Documento': 'fecha_documento',
         'Fecha Vencimiento': 'fecha_vencimiento', 'Fecha Saldado': 'fecha_saldado',
@@ -29,18 +22,20 @@ def cargar_datos_historicos():
     
     lista_archivos = glob.glob("Cartera_*.xlsx")
     if not lista_archivos:
-        return pd.DataFrame() # Devuelve un DataFrame vacío si no hay archivos históricos
+        return pd.DataFrame()
 
     lista_df = []
     for archivo in lista_archivos:
         try:
-            # Extraer la fecha del nombre del archivo
             match = re.search(r'(\d{4})-(\d{2})', archivo)
             if match:
                 año, mes = map(int, match.groups())
                 fecha_reporte = pd.to_datetime(f'{año}-{mes}-01')
                 
                 df = pd.read_excel(archivo)
+                df['Serie'] = df['Serie'].astype(str)
+                df = df[~df['Serie'].str.contains('W|X', case=False, na=False)]
+                
                 df.rename(columns=mapa_columnas, inplace=True)
                 df['fecha_reporte'] = fecha_reporte
                 lista_df.append(df)
@@ -64,7 +59,6 @@ if df_historico.empty:
     st.stop()
 
 # --- Cálculos para los gráficos ---
-# Agrupamos por fecha de reporte para ver la evolución mensual
 historico_mensual = df_historico.groupby('fecha_reporte').agg(
     cartera_total=('importe', 'sum'),
     cartera_vencida=('importe', lambda x: x[df_historico.loc[x.index, 'dias_vencido'] > 0].sum())
@@ -73,7 +67,7 @@ historico_mensual = df_historico.groupby('fecha_reporte').agg(
 historico_mensual = historico_mensual.sort_values('fecha_reporte')
 
 st.subheader("Evolución de la Cartera Total vs. Vencida")
-st.line_chart(historico_mensual, x='fecha_reporte', y=['cartera_total', 'cartera_vencida'])
+st.line_chart(historico_mensual, x='fecha_reporte', y=['cartera_total', 'cartera_vencida'], color=["#003865", "#ff4b4b"])
 
 st.subheader("Evolución del Porcentaje de Cartera Vencida")
 historico_mensual['porc_vencido'] = (historico_mensual['cartera_vencida'] / historico_mensual['cartera_total'] * 100).fillna(0)
