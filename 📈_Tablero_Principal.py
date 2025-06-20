@@ -115,34 +115,56 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
     if datos_cliente.empty:
         pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, 'No se encontraron facturas para este cliente.', 0, 1, 'C')
         return bytes(pdf.output())
+    
     datos_cliente_ordenados = datos_cliente.sort_values(by='fecha_vencimiento', ascending=True)
     info_cliente = datos_cliente_ordenados.iloc[0]
+    
     pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Cliente:', 0, 0); pdf.set_font('Arial', '', 11); pdf.cell(0, 10, info_cliente['nombrecliente'], 0, 1)
     pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Codigo de Cliente:', 0, 0); pdf.set_font('Arial', '', 11)
     cod_cliente_str = str(int(info_cliente['cod_cliente'])) if pd.notna(info_cliente['cod_cliente']) else "N/A"
     pdf.cell(0, 10, cod_cliente_str, 0, 1); pdf.ln(5)
-    pdf.set_font('Arial', '', 10); mensaje = "Apreciado cliente, a continuacion encontrara el detalle de su estado de cuenta a la fecha. para su revision y pago de lo vencido. Puedes pagar atravez de https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/ Para ingresar al portal de pagos, utiliza el NIT como 'usuario' y el Codigo de Cliente como 'codigo unico interno'. "
+    
+    # --- MENSAJE MODIFICADO ---
+    # Se ha reescrito el mensaje para ser más profesional y dirigir al usuario al footer para el enlace de pago.
+    pdf.set_font('Arial', '', 10)
+    mensaje = (
+        "Apreciado cliente, a continuación encontrará el detalle de su estado de cuenta a la fecha. "
+        "Le invitamos a realizar su revisión y proceder con el pago de los valores vencidos. "
+        "Puede realizar su pago de forma fácil y segura a través de nuestro PORTAL DE PAGOS en línea, "
+    )
     pdf.set_text_color(128, 128, 128); pdf.multi_cell(0, 5, mensaje, 0, 'J'); pdf.set_text_color(0, 0, 0); pdf.ln(10)
+    
+    # --- Encabezados de la tabla ---
     pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(0, 56, 101); pdf.set_text_color(255, 255, 255)
     pdf.cell(30, 10, 'Factura', 1, 0, 'C', 1); pdf.cell(40, 10, 'Fecha Factura', 1, 0, 'C', 1)
     pdf.cell(40, 10, 'Fecha Vencimiento', 1, 0, 'C', 1); pdf.cell(40, 10, 'Importe', 1, 1, 'C', 1)
+    
+    # --- Contenido de la tabla ---
     pdf.set_font('Arial', '', 10)
     total_importe = 0
     for _, row in datos_cliente_ordenados.iterrows():
         pdf.set_text_color(0, 0, 0)
-        if row['dias_vencido'] > 0: pdf.set_fill_color(248, 241, 241)
-        else: pdf.set_fill_color(255, 255, 255)
+        if row['dias_vencido'] > 0:
+            pdf.set_fill_color(248, 241, 241) # Un rojo muy claro para las vencidas
+        else:
+            pdf.set_fill_color(255, 255, 255)
+            
         total_importe += row['importe']
         numero_factura_str = str(int(row['numero'])) if pd.notna(row['numero']) else "N/A"
+        
         pdf.cell(30, 10, numero_factura_str, 1, 0, 'C', 1)
         pdf.cell(40, 10, row['fecha_documento'].strftime('%d/%m/%Y'), 1, 0, 'C', 1)
         pdf.cell(40, 10, row['fecha_vencimiento'].strftime('%d/%m/%Y'), 1, 0, 'C', 1)
         pdf.cell(40, 10, f"${row['importe']:,.0f}", 1, 1, 'R', 1)
+        
+    # --- Fila del total ---
     pdf.set_text_color(0, 0, 0)
     pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(0, 56, 101); pdf.set_text_color(255, 255, 255)
     pdf.cell(110, 10, 'TOTAL ADEUDADO', 1, 0, 'R', 1)
     pdf.cell(40, 10, f"${total_importe:,.0f}", 1, 1, 'R', 1)
+    
     return bytes(pdf.output())
+
 
 # --- CORRECCIÓN: Lógica de carga de datos para el tablero principal ---
 @st.cache_data
