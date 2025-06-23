@@ -57,9 +57,21 @@ ZONAS_SERIE = { "PEREIRA": [155, 189, 158, 439], "MANIZALES": [157, 238], "ARMEN
 
 def procesar_cartera(df: pd.DataFrame) -> pd.DataFrame:
     df_proc = df.copy()
+    
+    # Se asegura que las columnas 'importe' y 'numero' sean numéricas para los cálculos
     df_proc['importe'] = pd.to_numeric(df_proc['importe'], errors='coerce').fillna(0)
+    # --- LÍNEA MODIFICADA/AÑADIDA ---
+    # Es crucial que la columna 'numero' también sea numérica para la comparación.
+    df_proc['numero'] = pd.to_numeric(df_proc['numero'], errors='coerce').fillna(0)
+
+    # --- LÍNEA AÑADIDA ---
+    # IDENTIFICAR NOTAS CRÉDITO Y AJUSTAR IMPORTE
+    # Si el 'numero' del documento es negativo, se multiplica su 'importe' por -1.
+    df_proc.loc[df_proc['numero'] < 0, 'importe'] *= -1
+    
     df_proc['dias_vencido'] = pd.to_numeric(df_proc['dias_vencido'], errors='coerce').fillna(0)
     df_proc['nomvendedor_norm'] = df_proc['nomvendedor'].apply(normalizar_nombre)
+    
     ZONAS_SERIE_STR = {zona: [str(s) for s in series] for zona, series in ZONAS_SERIE.items()}
     def asignar_zona_robusta(valor_serie):
         if pd.isna(valor_serie): return "OTRAS ZONAS"
@@ -68,9 +80,11 @@ def procesar_cartera(df: pd.DataFrame) -> pd.DataFrame:
         for zona, series_clave_str in ZONAS_SERIE_STR.items():
             if set(numeros_en_celda) & set(series_clave_str): return zona
         return "OTRAS ZONAS"
+        
     df_proc['zona'] = df_proc['serie'].apply(asignar_zona_robusta)
     bins = [-float('inf'), 0, 15, 30, 60, float('inf')]; labels = ['Al día', '1-15 días', '16-30 días', '31-60 días', 'Más de 60 días']
     df_proc['edad_cartera'] = pd.cut(df_proc['dias_vencido'], bins=bins, labels=labels, right=True)
+    
     return df_proc
 
 def generar_excel_formateado(df: pd.DataFrame):
