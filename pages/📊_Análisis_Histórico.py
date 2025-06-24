@@ -1,5 +1,5 @@
 # ======================================================================================
-# ARCHIVO: pages/📊_Análisis_Histórico.py (Versión Final Definitiva)
+# ARCHIVO: pages/📊_Análisis_Histórico.py (Con Corrección de Forecast)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -183,16 +183,21 @@ with tab2:
     chart1, chart2 = st.columns(2)
     with chart1:
         st.markdown("#### Proyección de Ventas")
-        if len(df_ventas_mes) >= 12:
+        # --- CORRECCIÓN FORECAST ---
+        # Se requieren 24 meses (2x12) para un modelo estacional
+        if len(df_ventas_mes) >= 24:
             modelo_ventas = ExponentialSmoothing(df_ventas_mes, trend='add', seasonal='add', seasonal_periods=12).fit()
             proyeccion_ventas = modelo_ventas.forecast(periodos_a_proyectar)
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=df_ventas_mes.index, y=df_ventas_mes.values, mode='lines', name='Ventas Históricas'))
             fig.add_trace(go.Scatter(x=proyeccion_ventas.index, y=proyeccion_ventas.values, mode='lines', name='Proyección', line=dict(dash='dash', color='red')))
             st.plotly_chart(fig, use_container_width=True)
-        else: st.warning("Se necesitan al menos 12 meses de datos para una proyección de ventas fiable.")
+        else: 
+            # Mensaje de advertencia mejorado
+            st.warning("Se necesitan al menos 24 meses de datos históricos para una proyección estacional fiable.")
     with chart2:
         st.markdown("#### Proyección de DSO (Rotación)")
+        # El modelo de DSO no es estacional, por lo que 12 meses pueden ser suficientes
         if len(df_dso_mes) >= 12:
             modelo_dso = ExponentialSmoothing(df_dso_mes.ffill(), trend='add', seasonal=None).fit()
             proyeccion_dso = modelo_dso.forecast(periodos_a_proyectar)
@@ -200,7 +205,8 @@ with tab2:
             fig.add_trace(go.Scatter(x=df_dso_mes.index, y=df_dso_mes.values, mode='lines', name='DSO Histórico'))
             fig.add_trace(go.Scatter(x=proyeccion_dso.index, y=proyeccion_dso.values, mode='lines', name='Proyección', line=dict(dash='dash', color='orange')))
             st.plotly_chart(fig, use_container_width=True)
-        else: st.warning("Se necesitan al menos 12 meses de datos de cobros para una proyección de DSO fiable.")
+        else: 
+            st.warning("Se necesitan al menos 12 meses de datos de cobros para una proyección de DSO fiable.")
 
 # PESTAÑA 3: Segmentación Estratégica de Clientes (RFM)
 with tab3:
@@ -218,8 +224,6 @@ with tab3:
         if segmento_sel in recomendaciones: st.info(recomendaciones[segmento_sel])
     with col2:
         st.markdown("#### Visualización de la Base de Clientes")
-        # --- CORRECCIÓN VALUEERROR ---
-        # Filtramos para asegurar que el tamaño de la burbuja sea siempre positivo
         plot_data = rfm_data[rfm_data['Monetario'] > 0].copy()
         if not plot_data.empty:
             fig = px.scatter(plot_data, x='Recencia', y='Frecuencia', size='Monetario', color='Segmento',
