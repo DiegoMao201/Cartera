@@ -1,5 +1,5 @@
 # ======================================================================================
-# ARCHIVO: 📈_Tablero_Principal.py
+# ARCHIVO: 📈_Tablero_Principal.py (v.Final Corregida)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -7,7 +7,7 @@ import toml
 import os
 from io import BytesIO
 import plotly.express as px
-import plotly.graph_objects as go # --- MEJORA ---
+import plotly.graph_objects as go
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils import get_column_letter
@@ -70,7 +70,7 @@ st.markdown(f"""
 
 
 # ======================================================================================
-# --- CLASE PDF Y FUNCIONES AUXILIARES (Sin cambios, tu código original) ---
+# --- CLASE PDF Y FUNCIONES AUXILIARES ---
 # ======================================================================================
 class PDF(FPDF):
     def header(self):
@@ -195,7 +195,6 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
     pdf.cell(40, 10, f"${total_importe:,.0f}", 1, 1, 'R', 1)
     return bytes(pdf.output())
 
-# --- CORRECCIÓN: Lógica de carga de datos para el tablero principal ---
 @st.cache_data
 def cargar_y_procesar_datos():
     df = pd.read_excel("Cartera.xlsx")
@@ -207,12 +206,10 @@ def cargar_y_procesar_datos():
     df_filtrado['fecha_vencimiento'] = pd.to_datetime(df_filtrado['fecha_vencimiento'], errors='coerce')
     return procesar_cartera(df_filtrado)
     
-# --- MEJORA: Función para generar comentarios dinámicos ---
 def generar_analisis_cartera(kpis: dict):
     """Genera un análisis en texto basado en los KPIs calculados."""
     comentarios = []
     
-    # Análisis sobre el porcentaje vencido
     if kpis['porcentaje_vencido'] > 30:
         comentarios.append(f"<li>🔴 **Alerta Crítica:** El <b>{kpis['porcentaje_vencido']:.1f}%</b> de la cartera está vencida. Este nivel es preocupante y requiere acciones inmediatas y contundentes.</li>")
     elif kpis['porcentaje_vencido'] > 15:
@@ -220,13 +217,11 @@ def generar_analisis_cartera(kpis: dict):
     else:
         comentarios.append(f"<li>🟢 **Saludable:** El porcentaje de cartera vencida (<b>{kpis['porcentaje_vencido']:.1f}%</b>) está en un nivel manejable y saludable. ¡Buen trabajo!</li>")
 
-    # Análisis sobre la Antigüedad Promedio de la cartera VENCIDA
     if kpis['antiguedad_prom_vencida'] > 60:
         comentarios.append(f"<li>🔴 **Riesgo Alto:** Las deudas vencidas tienen una antigüedad promedio de <b>{kpis['antiguedad_prom_vencida']:.0f} días</b>. El riesgo de incobrabilidad es alto. Se debe priorizar la recuperación de estas cuentas antiguas.</li>")
     elif kpis['antiguedad_prom_vencida'] > 30:
         comentarios.append(f"<li>🟡 **Atención Requerida:** La antigüedad promedio de la cartera vencida es de <b>{kpis['antiguedad_prom_vencida']:.0f} días</b>. Es vital evitar que estas deudas envejezcan más.</li>")
 
-    # Análisis sobre el Índice de Severidad (CSI)
     if kpis['csi'] > 15:
         comentarios.append(f"<li>🔴 **Severidad Crítica (CSI: {kpis['csi']:.1f}):** El impacto combinado del monto y la antigüedad de la deuda vencida es muy alto. Esto indica un problema estructural que afecta el flujo de caja.</li>")
     elif kpis['csi'] > 5:
@@ -274,7 +269,8 @@ def main():
     else:
         st.title("📊 Tablero de Cartera Ferreinox SAS BIC")
         with st.sidebar:
-            st.image("LOGO FERREINOX SAS BIC 2024.png", use_column_width=True)
+            # --- CORRECCIÓN AQUÍ ---
+            st.image("LOGO FERREINOX SAS BIC 2024.png", use_container_width=True)
             st.success(f"Usuario: {st.session_state['vendedor_autenticado']}")
             if st.button("Cerrar Sesión"):
                 for key in list(st.session_state.keys()):
@@ -306,37 +302,25 @@ def main():
         if cartera_filtrada.empty:
             st.warning(f"No se encontraron datos para los filtros seleccionados."); st.stop()
             
-        # --- CÁLCULO DE KPIs ---
         total_cartera = cartera_filtrada['importe'].sum()
         cartera_vencida_df = cartera_filtrada[cartera_filtrada['dias_vencido'] > 0]
         total_vencido = cartera_vencida_df['importe'].sum()
         porcentaje_vencido = (total_vencido / total_cartera) * 100 if total_cartera > 0 else 0
         if total_cartera > 0:
-            rotacion_dias_general = (cartera_filtrada['importe'] * cartera_filtrada['dias_vencido']).sum() / total_cartera
-            # --- MEJORA: Cálculo del Índice de Severidad (CSI) ---
             csi = (cartera_vencida_df['importe'] * cartera_vencida_df['dias_vencido']).sum() / total_cartera
         else:
-            rotacion_dias_general = 0
             csi = 0
         
         antiguedad_prom_vencida = (cartera_vencida_df['importe'] * cartera_vencida_df['dias_vencido']).sum() / total_vencido if total_vencido > 0 else 0
         
-        if rotacion_dias_general <= 15: salud_rotacion, color_salud = "✅ Excelente", PALETA_COLORES['exito_verde']
-        elif rotacion_dias_general <= 30: salud_rotacion, color_salud = "👍 Buena", PALETA_COLORES['secundario']
-        elif rotacion_dias_general <= 45: salud_rotacion, color_salud = "⚠️ Regular", PALETA_COLORES['alerta_naranja']
-        else: salud_rotacion, color_salud = "🚨 Alerta", PALETA_COLORES['alerta_rojo']
-            
-        # --- KPIs en st.metric ---
         st.header("Indicadores Clave de Rendimiento (KPIs)")
         kpi_cols = st.columns(5)
         kpi_cols[0].metric("💰 Cartera Total", f"${total_cartera:,.0f}")
         kpi_cols[1].metric("🔥 Cartera Vencida", f"${total_vencido:,.0f}", help="Suma del importe de facturas con días de vencimiento > 0.")
         kpi_cols[2].metric("📈 % Vencido s/ Total", f"{porcentaje_vencido:.1f}%")
         kpi_cols[3].metric("⏳ Antigüedad Prom. Vencida", f"{antiguedad_prom_vencida:.0f} días", help="Edad promedio ponderada, solo de facturas YA VENCIDAS.")
-        # --- MEJORA: Métrica para el CSI ---
         kpi_cols[4].metric(label="💥 Índice de Severidad (CSI)", value=f"{csi:.1f}", help="Impacto ponderado de la deuda vencida sobre la cartera total. Un número más alto indica mayor riesgo.")
 
-        # --- MEJORA: Sección de Análisis y Comentarios Dinámicos ---
         with st.expander("🤖 **Análisis y Recomendaciones del Asistente IA**", expanded=True):
             kpis_dict = {
                 'porcentaje_vencido': porcentaje_vencido,
@@ -347,7 +331,6 @@ def main():
             st.markdown(analisis, unsafe_allow_html=True)
         st.markdown("---")
 
-        # --- MEJORA: Pestañas para organizar el contenido visual ---
         tab1, tab2, tab3 = st.tabs(["📊 Visión General de la Cartera", "👥 Análisis por Cliente", "📑 Detalle Completo"])
 
         with tab1:
@@ -370,12 +353,11 @@ def main():
             col_pareto, col_treemap = st.columns(2)
             
             with col_treemap:
-                # --- MEJORA: Gráfico Treemap para visualización de impacto ---
                 st.markdown("**Visualización de Cartera Vencida por Cliente (Treemap)**")
                 df_clientes_vencidos = cartera_vencida_df.groupby('nombrecliente')['importe'].sum().reset_index()
-                df_clientes_vencidos = df_clientes_vencidos[df_clientes_vencidos['importe'] > 0] # Solo clientes con deuda
+                df_clientes_vencidos = df_clientes_vencidos[df_clientes_vencidos['importe'] > 0]
                 
-                fig_treemap = px.treemap(df_clientes_vencidos, path=['nombrecliente'], values='importe',
+                fig_treemap = px.treemap(df_clientes_vencidos, path=[px.Constant("Clientes con Deuda Vencida"), 'nombrecliente'], values='importe',
                                          title='Haga clic en un recuadro para explorar',
                                          color_continuous_scale='Reds',
                                          color='importe')
@@ -383,20 +365,27 @@ def main():
                 st.plotly_chart(fig_treemap, use_container_width=True)
 
             with col_pareto:
-                # --- MEJORA: Análisis de Pareto 80/20 ---
                 st.markdown("**Clientes Clave (Principio de Pareto)**")
                 client_debt = cartera_vencida_df.groupby('nombrecliente')['importe'].sum().sort_values(ascending=False)
-                client_debt_cumsum = client_debt.cumsum()
-                total_debt_vencida = client_debt.sum()
-                pareto_limit = total_debt_vencida * 0.80
-                pareto_clients = client_debt[client_debt_cumsum <= pareto_limit]
-                
-                st.info(f"El **{len(pareto_clients)}**% de los clientes deudores representan aprox. el **80%** del total de la cartera vencida. Estos son:")
-                
-                df_pareto_display = pareto_clients.reset_index()
-                df_pareto_display.columns = ['Cliente', 'Monto Vencido']
-                df_pareto_display['Monto Vencido'] = df_pareto_display['Monto Vencido'].map('${:,.0f}'.format)
-                st.dataframe(df_pareto_display, height=250, hide_index=True, use_container_width=True)
+                if not client_debt.empty:
+                    client_debt_cumsum = client_debt.cumsum()
+                    total_debt_vencida = client_debt.sum()
+                    pareto_limit = total_debt_vencida * 0.80
+                    pareto_clients = client_debt[client_debt_cumsum <= pareto_limit]
+                    
+                    num_total_clientes_deuda = len(client_debt)
+                    num_clientes_pareto = len(pareto_clients)
+                    porcentaje_clientes_pareto = (num_clientes_pareto / num_total_clientes_deuda) * 100 if num_total_clientes_deuda > 0 else 0
+
+                    st.info(f"El **{porcentaje_clientes_pareto:.0f}%** de los clientes ({num_clientes_pareto} de {num_total_clientes_deuda}) representan aprox. el **80%** del total de la cartera vencida. Estos son:")
+                    
+                    df_pareto_display = pareto_clients.reset_index()
+                    df_pareto_display.columns = ['Cliente', 'Monto Vencido']
+                    df_pareto_display['Monto Vencido'] = df_pareto_display['Monto Vencido'].map('${:,.0f}'.format)
+                    st.dataframe(df_pareto_display, height=250, hide_index=True, use_container_width=True)
+                else:
+                    st.info("No hay cartera vencida para analizar.")
+
 
         with tab3:
             st.subheader(f"Detalle Completo: {vendedor_sel} / {zona_sel} / {poblacion_sel}")
