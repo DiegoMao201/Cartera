@@ -1,5 +1,5 @@
 # ======================================================================================
-# ARCHIVO: pages/📊_Análisis_Histórico.py (Versión Final Corregida)
+# ARCHIVO: pages/📊_Análisis_Histórico.py (Versión Mejorada)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -8,6 +8,7 @@ import re
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import unicodedata
+import plotly.graph_objects as go # --- MEJORA ---
 
 st.set_page_config(page_title="Análisis Histórico", page_icon="📊", layout="wide")
 
@@ -23,13 +24,14 @@ def normalizar_nombre(nombre: str) -> str:
 
 @st.cache_data
 def cargar_datos_historicos():
+    # Tu función de carga de datos original (está bien construida)
     mapa_columnas = {
         'Serie': 'serie', 'Número': 'numero', 'Fecha Documento': 'fecha_documento',
         'Fecha Vencimiento': 'fecha_vencimiento', 'Fecha Saldado': 'fecha_saldado',
         'NOMBRECLIENTE': 'nombrecliente', 'Población': 'poblacion', 'Provincia': 'provincia',
         'IMPORTE': 'importe', 'RIESGOCONCEDIDO': 'riesgoconcedido', 'NOMVENDEDOR': 'nomvendedor',
         'DIAS_VENCIDO': 'dias_vencido', 'Estado': 'estado', 'Cod. Cliente': 'cod_cliente',
-        'e-mail': 'e_mail' # <-- CORRECCIÓN FINAL
+        'e-mail': 'e_mail'
     }
     lista_archivos = sorted(glob.glob("Cartera_*.xlsx"))
     if not lista_archivos: return pd.DataFrame()
@@ -70,6 +72,7 @@ df_historico_base = cargar_datos_historicos()
 if df_historico_base.empty:
     st.warning("No se encontraron archivos de datos históricos."); st.stop()
 
+# --- FILTROS (Sin cambios) ---
 st.sidebar.header("Filtros de Análisis")
 acceso_general = st.session_state.get('acceso_general', False)
 vendedor_autenticado = st.session_state.get('vendedor_autenticado', None)
@@ -97,59 +100,113 @@ if not fecha_inicio or not fecha_fin or fecha_inicio > fecha_fin:
     st.error("Por favor, selecciona un rango de fechas válido."); st.stop()
 
 fecha_inicio, fecha_fin = pd.to_datetime(fecha_inicio), pd.to_datetime(fecha_fin)
-df_periodo = df_historico[(df_historico['fecha_documento'].between(fecha_inicio, fecha_fin)) | (df_historico['fecha_saldado'].between(fecha_inicio, fecha_fin))]
+df_periodo = df_historico[
+    (df_historico['fecha_documento'] >= fecha_inicio) & (df_historico['fecha_documento'] <= fecha_fin) |
+    (df_historico['fecha_saldado'] >= fecha_inicio) & (df_historico['fecha_saldado'] <= fecha_fin)
+].copy()
 
 if df_periodo.empty:
     st.warning("No hay datos de facturas emitidas o saldadas en el período de fechas seleccionado."); st.stop()
 
-ventas_periodo = df_periodo[df_periodo['fecha_documento'].between(fecha_inicio, fecha_fin)]
+# --- MEJORA: Cálculo de KPIs Financieros ---
+# Cartera abierta al inicio del período
+snapshot_inicial = df_historico[df_historico['fecha_documento'] < fecha_inicio]
+saldo_inicial = snapshot_inicial[(snapshot_inicial['fecha_saldado'].isnull()) | (snapshot_inicial['fecha_saldado'] >= fecha_inicio)]['importe'].sum()
+
+# Ventas y cobros dentro del período
+ventas_periodo = df_historico[df_historico['fecha_documento'].between(fecha_inicio, fecha_fin)]
 total_ventas = ventas_periodo['importe'].sum()
-cobros_periodo = df_periodo[df_periodo['fecha_saldado'].between(fecha_inicio, fecha_fin)]
+cobros_periodo = df_historico[df_historico['fecha_saldado'].between(fecha_inicio, fecha_fin)]
 total_cobrado = cobros_periodo['importe'].sum()
-dso_periodo = cobros_periodo['dias_de_pago'].mean() if not cobros_periodo.empty else 0
+
+# Cartera abierta al final del período
 snapshot_final = df_historico[df_historico['fecha_documento'] <= fecha_fin]
 facturas_abiertas_al_final = snapshot_final[(snapshot_final['fecha_saldado'].isnull()) | (snapshot_final['fecha_saldado'] > fecha_fin)]
+saldo_final_total = facturas_abiertas_al_final['importe'].sum()
 facturas_vencidas_al_final = facturas_abiertas_al_final[facturas_abiertas_al_final['fecha_vencimiento'] < fecha_fin]
 saldo_vencido_final = facturas_vencidas_al_final['importe'].sum()
-st.markdown("### Resumen del Período Seleccionado")
+
+# KPIs
+dso_periodo = cobros_periodo['dias_de_pago'].mean() if not cobros_periodo.empty else 0
+flujo_neto = total_cobrado - total_ventas
+universo_cobrable = saldo_inicial + total_ventas
+cer = (total_cobrado / universo_cobrable) * 100 if universo_cobrable > 0 else 0
+indice_morosidad = (saldo_vencido_final / saldo_final_total) * 100 if saldo_final_total > 0 else 0
+
+st.markdown("### Diagnóstico Financiero del Período")
 col1, col2, col3, col4 = st.columns(4)
-with col1: st.metric("📈 Ventas Emitidas", f"${total_ventas:,.0f}")
-with col2: st.metric("✅ Total Cobrado", f"${total_cobrado:,.0f}")
-with col3: st.metric("🔄 Rotación de Cartera (DSO)", f"{dso_periodo:.0f} días", help="Días promedio que se tardó en cobrar las facturas saldadas en este período.")
-with col4: st.metric("🔥 Saldo Vencido al Final", f"${saldo_vencido_final:,.0f}", help=f"Cartera que quedó vencida al {fecha_fin.strftime('%Y-%m-%d')}")
-st.markdown("#### Análisis y Conclusiones del Período")
+with col1: st.metric("💰 Eficiencia de Cobro (CER)", f"{cer:.1f}%", help="Porcentaje cobrado del total que se debía cobrar (Saldo Inicial + Ventas). Más alto es mejor.")
+with col2: st.metric("🔥 Índice de Morosidad", f"{indice_morosidad:.1f}%", help="Porcentaje de la cartera pendiente que está vencida al final del período. Más bajo es mejor.")
+with col3: st.metric("🔄 Rotación (DSO)", f"{dso_periodo:.0f} días", help="Días promedio que se tardó en cobrar las facturas saldadas en este período.")
+with col4: st.metric("🌊 Flujo Neto de Cartera", f"${flujo_neto:,.0f}", help="Cobros (-) Ventas. Positivo significa que entró más dinero del que salió en nuevas facturas.")
+
+# --- MEJORA: Diagnóstico con IA más profundo ---
+st.markdown("#### Asistente de Diagnóstico IA")
 st.markdown('<hr style="border:1px solid #e0e0e0">', unsafe_allow_html=True)
-diferencia_flujo = total_cobrado - total_ventas
-if diferencia_flujo >= 0:
-    st.success(f"**✅ Gestión de Flujo Positiva:** En este período se ha cobrado **${diferencia_flujo:,.0f} más** de lo que se ha vendido.")
-else:
-    st.warning(f"**⚠️ Crecimiento de Cartera:** Las ventas han superado a los cobros por **${abs(diferencia_flujo):,.0f}**.")
-if dso_periodo <= 30: st.success(f"**✅ Eficiencia Óptima:** La rotación de cartera de **{dso_periodo:.0f} días** es excelente.")
-elif dso_periodo <= 60: st.info(f"**👍 Eficiencia Aceptable:** La rotación de **{dso_periodo:.0f} días** es buena.")
-else: st.error(f"**🚨 Alerta de Eficiencia:** La rotación de **{dso_periodo:.0f} días** es elevada.")
+if cer > 85: st.success(f"**✅ Excelente Eficiencia de Cobro ({cer:.1f}%):** La gestión ha sido muy efectiva, recuperando una alta proporción de la cartera cobrable.")
+elif cer > 70: st.info(f"**👍 Buena Eficiencia de Cobro ({cer:.1f}%):** Se ha recuperado una parte importante de la cartera. Hay margen para optimizar.")
+else: st.warning(f"**⚠️ Baja Eficiencia de Cobro ({cer:.1f}%):** La recuperación está por debajo de lo óptimo. Es crucial revisar estrategias de cobro.")
+
+if indice_morosidad < 15: st.success(f"**✅ Cartera Saludable ({indice_morosidad:.1f}%):** El nivel de morosidad es bajo, indicando una cartera de clientes de buena calidad.")
+elif indice_morosidad < 30: st.info(f"**👍 Cartera Controlada ({indice_morosidad:.1f}%):** La morosidad es manejable, pero requiere monitoreo constante.")
+else: st.error(f"**🚨 Cartera de Riesgo ({indice_morosidad:.1f}%):** Un alto porcentaje de la cartera está en mora. Requiere acción inmediata para mitigar pérdidas.")
+
+if flujo_neto < 0 and cer < 70:
+    st.error("**🔥 ALERTA CRÍTICA DE FLUJO:** La cartera está creciendo sin un respaldo de cobros eficientes. El riesgo de liquidez es alto.")
+
 st.markdown('<hr style="border:1px solid #e0e0e0">', unsafe_allow_html=True)
-st.subheader("Análisis de Evolución Mensual")
+
+# --- MEJORA: Nueva sección de Análisis de Tendencias Rodantes ---
+st.subheader("Análisis de Tendencias Rodantes (Medias Móviles de 3 Meses)")
+
+# Preparación de datos mensuales
 df_graficos = df_periodo.copy()
 df_graficos['mes_documento'] = pd.to_datetime(df_graficos['fecha_documento'].dt.strftime('%Y-%m-01'), errors='coerce')
 df_graficos['mes_saldado'] = pd.to_datetime(df_graficos['fecha_saldado'].dt.strftime('%Y-%m-01'), errors='coerce')
-ventas_mes = df_graficos.groupby('mes_documento')['importe'].sum().reset_index().rename(columns={'mes_documento': 'mes', 'importe': 'Ventas'})
-cobros_mes = df_graficos.groupby('mes_saldado')['importe'].sum().reset_index().rename(columns={'mes_saldado': 'mes', 'importe': 'Cobros'})
-dso_mes = df_graficos.groupby('mes_saldado')['dias_de_pago'].mean().reset_index().rename(columns={'mes_saldado': 'mes', 'dias_de_pago': 'DSO'})
-df_final_graficos = pd.merge(ventas_mes, cobros_mes, on='mes', how='outer').fillna(0)
-df_final_graficos = pd.merge(df_final_graficos, dso_mes, on='mes', how='outer')
-df_final_graficos = df_final_graficos.sort_values('mes').reset_index(drop=True)
-df_final_graficos_filtrado = df_final_graficos[df_final_graficos['mes'].between(fecha_inicio, fecha_fin)]
-if not df_final_graficos_filtrado.empty:
-    st.markdown("#### Flujo de Caja Mensual (Ventas vs. Cobros)")
-    st.bar_chart(df_final_graficos_filtrado, x='mes', y=['Ventas', 'Cobros'], color=["#1f77b4", "#2ca02c"])
-    st.markdown("#### Eficiencia de Cobro Mensual (Evolución del DSO en días)")
-    st.line_chart(df_final_graficos_filtrado.set_index('mes')['DSO'])
-    if len(df_final_graficos_filtrado['DSO'].dropna()) > 1:
-        dso_filtrado = df_final_graficos_filtrado['DSO'].dropna()
-        if len(dso_filtrado) > 1:
-            dso_inicial, dso_final = dso_filtrado.iloc[0], dso_filtrado.iloc[-1]
-            cambio_dso = dso_final - dso_inicial
-            st.markdown("##### Diagnóstico de la Tendencia de Eficiencia")
-            if cambio_dso < -1: st.success(f"**Tendencia Positiva:** La eficiencia ha **mejorado**, reduciéndose en **{abs(cambio_dso):.0f} días**.")
-            elif cambio_dso > 1: st.warning(f"**Tendencia a Revisar:** La eficiencia ha **disminuido**, tardando **{cambio_dso:.0f} días más** en cobrar.")
-            else: st.info("**Tendencia Estable:** La eficiencia de cobro se ha mantenido estable.")
+
+ventas_mes = df_graficos.groupby('mes_documento')['importe'].sum()
+cobros_mes = df_graficos.groupby('mes_saldado')['importe'].sum()
+dso_mes = df_graficos.groupby('mes_saldado')['dias_de_pago'].mean()
+
+df_final_graficos = pd.concat([ventas_mes, cobros_mes, dso_mes], axis=1).fillna(0)
+df_final_graficos.index.name = 'mes'
+df_final_graficos.columns = ['Ventas', 'Cobros', 'DSO']
+df_final_graficos = df_final_graficos.sort_index().reset_index()
+df_final_graficos = df_final_graficos[df_final_graficos['mes'].between(fecha_inicio, fecha_fin)]
+
+# Calcular tendencias rodantes
+df_final_graficos['DSO_tendencia'] = df_final_graficos['DSO'].replace(0, pd.NA).rolling(window=3, min_periods=1, center=True).mean()
+df_final_graficos['CER_mes'] = (df_final_graficos['Cobros'] / df_final_graficos['Ventas'].replace(0, 1)) * 100 # CER simplificado mensual
+df_final_graficos['CER_tendencia'] = df_final_graficos['CER_mes'].rolling(window=3, min_periods=1, center=True).mean()
+
+if not df_final_graficos.empty:
+    chart1, chart2 = st.columns(2)
+    with chart1:
+        st.markdown("#### Tendencia de Rotación (DSO)")
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=df_final_graficos['mes'], y=df_final_graficos['DSO'], name='DSO Mensual', marker_color='lightblue'))
+        fig.add_trace(go.Scatter(x=df_final_graficos['mes'], y=df_final_graficos['DSO_tendencia'], name='Tendencia (3 Meses)', mode='lines', line=dict(color='darkblue', width=3)))
+        fig.update_layout(title_text='Evolución del DSO vs. Tendencia Rodante', yaxis_title='Días')
+        st.plotly_chart(fig, use_container_width=True)
+
+    with chart2:
+        st.markdown("#### Tendencia de Eficiencia de Cobro")
+        fig2 = go.Figure()
+        fig2.add_trace(go.Bar(x=df_final_graficos['mes'], y=df_final_graficos['CER_mes'], name='Eficiencia Mensual', marker_color='lightgreen'))
+        fig2.add_trace(go.Scatter(x=df_final_graficos['mes'], y=df_final_graficos['CER_tendencia'], name='Tendencia (3 Meses)', mode='lines', line=dict(color='darkgreen', width=3)))
+        fig2.update_layout(title_text='Eficiencia de Cobro vs. Tendencia Rodante', yaxis_title='Eficiencia (%)')
+        st.plotly_chart(fig2, use_container_width=True)
+
+    # Diagnóstico de la tendencia
+    st.markdown("##### Diagnóstico de las Tendencias")
+    dso_tendencia = df_final_graficos['DSO_tendencia'].dropna()
+    if len(dso_tendencia) > 1:
+        cambio_dso = dso_tendencia.iloc[-1] - dso_tendencia.iloc[0]
+        if cambio_dso < -2:
+            st.success(f"**📈 Tendencia de DSO positiva:** La velocidad de cobro está mejorando consistentemente (reducción de {abs(cambio_dso):.0f} días).")
+        elif cambio_dso > 2:
+            st.warning(f"**📉 Tendencia de DSO a revisar:** El tiempo para cobrar está aumentando de forma sostenida (aumento de {cambio_dso:.0f} días).")
+        else:
+            st.info("**⏸️ Tendencia de DSO estable:** La rotación de cartera se mantiene sin cambios significativos.")
+else:
+    st.info("No hay suficientes datos mensuales en el período para generar gráficos de tendencia.")
