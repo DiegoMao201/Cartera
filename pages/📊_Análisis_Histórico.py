@@ -1,5 +1,5 @@
 # ======================================================================================
-# ARCHIVO: pages/📊_Análisis_Histórico.py (Versión "Centro de Comando")
+# ARCHIVO: pages/📊_Análisis_Histórico.py (Versión "Centro de Comando" Corregida)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -11,6 +11,7 @@ import unicodedata
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
+import plotly.express as px # <-- MEJORA: LÍNEA AÑADIDA QUE FALTABA
 
 st.set_page_config(page_title="Centro de Comando Histórico", page_icon="🔮", layout="wide")
 
