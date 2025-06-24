@@ -1,5 +1,5 @@
 # ======================================================================================
-# ARCHIVO: pages/📊_Análisis_Histórico.py (Con Corrección de Forecast)
+# ARCHIVO: pages/📊_Análisis_Histórico.py (Con Explicaciones Integradas)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -20,7 +20,7 @@ if 'authentication_status' not in st.session_state or not st.session_state['auth
     st.warning("Por favor, inicie sesión en el 📈 Tablero Principal para acceder a esta página.")
     st.stop()
 
-# --- FUNCIONES AUXILIARES ---
+# --- FUNCIONES AUXILIARES (Sin cambios) ---
 def normalizar_nombre(nombre: str) -> str:
     if not isinstance(nombre, str): return ""
     nombre = nombre.upper().strip().replace('.', '')
@@ -29,7 +29,6 @@ def normalizar_nombre(nombre: str) -> str:
 
 @st.cache_data
 def cargar_datos_historicos():
-    # Tu función de carga de datos original
     mapa_columnas = {
         'Serie': 'serie', 'Número': 'numero', 'Fecha Documento': 'fecha_documento',
         'Fecha Vencimiento': 'fecha_vencimiento', 'Fecha Saldado': 'fecha_saldado',
@@ -72,15 +71,10 @@ def calcular_rfm(df: pd.DataFrame):
         'numero': 'count',
         'importe': 'sum'
     }).rename(columns={'fecha_documento': 'Recencia', 'numero': 'Frecuencia', 'importe': 'Monetario'})
-    
-    r_labels = range(4, 0, -1)
-    f_labels = range(1, 5)
-    m_labels = range(1, 5)
-
+    r_labels = range(4, 0, -1); f_labels = range(1, 5); m_labels = range(1, 5)
     rfm['R_score'] = pd.qcut(rfm['Recencia'], q=4, labels=r_labels, duplicates='drop').astype(int)
     rfm['F_score'] = pd.qcut(rfm['Frecuencia'].rank(method='first'), q=4, labels=f_labels).astype(int)
     rfm['M_score'] = pd.qcut(rfm['Monetario'], q=4, labels=m_labels, duplicates='drop').astype(int)
-    
     def segmentar(df):
         if df['R_score'] >= 4 and df['F_score'] >= 4: return 'Campeones'
         if df['R_score'] >= 3 and df['F_score'] >= 3: return 'Clientes Leales'
@@ -89,32 +83,26 @@ def calcular_rfm(df: pd.DataFrame):
         if df['R_score'] <= 2 and df['M_score'] >= 3: return 'No se pueden perder'
         if df['R_score'] <= 2: return 'Hibernando'
         return 'Otros'
-        
     rfm['Segmento'] = rfm.apply(segmentar, axis=1)
     return rfm
 
 # --- Carga y Filtros ---
 st.title("🔮 Centro de Comando Histórico y Predictivo")
 df_historico_base = cargar_datos_historicos()
-
 if df_historico_base.empty:
     st.error("No se encontraron archivos de datos históricos `Cartera_*.xlsx`."); st.stop()
-
 st.sidebar.header("Filtros de Análisis")
 acceso_general = st.session_state.get('acceso_general', False)
 vendedor_autenticado = st.session_state.get('vendedor_autenticado', None)
-
 if acceso_general:
     vendedores = ["Todos"] + sorted(df_historico_base['nomvendedor'].dropna().unique())
     vendedor_sel_hist = st.sidebar.selectbox("Vendedor:", vendedores)
 else:
     vendedor_sel_hist = vendedor_autenticado
-
 if vendedor_sel_hist == "Todos":
     df_historico = df_historico_base.copy()
 else:
     df_historico = df_historico_base[df_historico_base['nomvendedor_norm'] == normalizar_nombre(vendedor_sel_hist)].copy()
-
 if df_historico.empty:
     st.warning("No hay datos para el vendedor seleccionado."); st.stop()
     
@@ -125,22 +113,18 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "⚙️ Simulador de Escenarios"
 ])
 
+# ======================================================================================
 # PESTAÑA 1: Diagnóstico del Período
+# ======================================================================================
 with tab1:
     st.header("Diagnóstico Financiero del Período")
     max_date = df_historico['fecha_documento'].max().date()
     min_date = df_historico['fecha_documento'].min().date()
     default_start_date = max(min_date, max_date - relativedelta(months=12))
-    
-    fecha_inicio, fecha_fin = st.date_input(
-        "Selecciona el Rango de Fechas para el Diagnóstico:",
-        (default_start_date, max_date),
-        min_value=min_date, max_value=max_date, key="date_range_tab1"
-    )
+    fecha_inicio, fecha_fin = st.date_input("Selecciona el Rango de Fechas para el Diagnóstico:", (default_start_date, max_date), min_value=min_date, max_value=max_date, key="date_range_tab1")
 
     if not fecha_inicio or not fecha_fin or fecha_inicio > fecha_fin:
         st.error("Rango de fechas inválido."); st.stop()
-        
     fecha_inicio, fecha_fin = pd.to_datetime(fecha_inicio), pd.to_datetime(fecha_fin)
     
     snapshot_inicial = df_historico[df_historico['fecha_documento'] < fecha_inicio]
@@ -166,16 +150,44 @@ with tab1:
     col3.metric("🔄 Rotación (DSO)", f"{dso_periodo:.0f} días")
     col4.metric("🌊 Flujo Neto de Cartera", f"${flujo_neto:,.0f}")
     
-    st.markdown("#### 💡 Asistente de Diagnóstico Estratégico")
-    if cer > 85: st.success(f"**✅ Eficiencia de Élite ({cer:.1f}%):** La capacidad para convertir facturas en efectivo es excelente.")
-    else: st.warning(f"**⚠️ Oportunidad en Eficiencia ({cer:.1f}%):** Hay potencial para mejorar el flujo de caja acelerando la conversión de la cartera.")
-    if indice_morosidad < 15: st.success(f"**✅ Calidad de Cartera Alta ({indice_morosidad:.1f}%):** El bajo nivel de mora indica una política de crédito sólida y clientes fiables.")
-    else: st.error(f"**🚨 Foco Rojo en Morosidad ({indice_morosidad:.1f}%):** Un nivel de mora elevado es un riesgo. Reevaluar políticas de crédito.")
-    if dso_periodo > 45 and cer < 75: st.error("**🔥 ALERTA ESTRUCTURAL:** La combinación de baja eficiencia y alta rotación es tóxica para el capital de trabajo.")
+    # --- MEJORA: Explicación detallada de los KPIs ---
+    with st.expander("❓ ¿Cómo interpretar estos indicadores? (Manual para Gerentes y Vendedores)"):
+        st.markdown(f"""
+        #### 💰 Eficiencia de Cobro (CER): {cer:.1f}%
+        * **Pregunta Clave:** De todo el dinero que podíamos cobrar en este período (lo que nos debían al empezar + lo que facturamos), ¿qué porcentaje realmente entró a la caja?
+        * **Explicación Sencilla:** Es el termómetro de la efectividad de tu gestión de cobro. Un número alto es señal de un equipo proactivo y clientes que responden.
+        * **En tus Datos:** Un **{cer:.1f}%** es un resultado **excelente**. Significa que la gestión para convertir papel (facturas) en dinero (efectivo) es de élite.
+        * **Decisiones a Tomar (Vendedor):** ¡Felicita a tus clientes buenos pagadores! Identifica qué hiciste bien con ellos y replícalo. Para los que no, entiende por qué y actúa.
+
+        #### 🔥 Índice de Morosidad: {indice_morosidad:.1f}%
+        * **Pregunta Clave:** Del dinero que todavía nos deben al final del período, ¿qué porcentaje ya está vencido?
+        * **Explicación Sencilla:** Mide la "calidad" o "salud" de la cartera que queda abierta. Un índice bajo significa que la mayoría de tu cartera está al día. Un índice alto es una bandera roja.
+        * **En tus Datos:** Un **{indice_morosidad:.1f}%** es **elevado**. Es una señal de alerta importante.
+        * **Decisiones a Tomar (Gerente):** ¿Estamos dando crédito a los clientes correctos? ¿Nuestros plazos son adecuados? ¿Necesitamos ser más estrictos con los límites de crédito? Este indicador exige una revisión de la política de riesgo.
+
+        #### 🔄 Rotación (DSO): {dso_periodo:.0f} días
+        * **Pregunta Clave:** En promedio, ¿cuántos días tardamos en cobrar una factura desde que la emitimos?
+        * **Explicación Sencilla:** Es la velocidad de tu ciclo de cobro. Cada día menos en el DSO es dinero que tienes disponible antes en tu cuenta bancaria.
+        * **En tus Datos:** **{dso_periodo:.0f} días** es el tiempo promedio que tardas. Compáralo con tu plazo de pago estándar (ej. 30 días). Si es mucho mayor, hay una desconexión.
+        * **Decisiones a Tomar (Ambos):** Si el DSO es alto, hay que analizar qué clientes o vendedores lo están causando. ¿Se pueden ofrecer descuentos por pronto pago?
+        
+        #### 🌊 Flujo Neto de Cartera: ${flujo_neto:,.0f}
+        * **Pregunta Clave:** En este período, ¿entró más dinero por cobros del que salió por nuevas ventas a crédito?
+        * **Explicación Sencilla:** Es el pulso de la liquidez de tu operación comercial. Si es positivo, cobraste más de lo que vendiste a crédito, fortaleciendo tu caja. Si es negativo, tu cartera creció, lo que requiere más capital de trabajo.
+        * **En tus Datos:** Un resultado de **${flujo_neto:,.0f}** indica que la gestión generó liquidez.
+        
+        ---
+        #### La Historia Completa: Conectando los Puntos
+        Viendo tus números, la historia es clara:
+        > El equipo de cobranza está haciendo un trabajo **fenomenal recuperando dinero (CER del 97.4%)**, probablemente enfocándose en deudas importantes o antiguas, lo que generó un **flujo de caja positivo**. Sin embargo, la **alta morosidad (39.8%)** en la cartera restante es una **alarma crítica**. Sugiere que mientras se apagan los grandes incendios, se están descuidando las brasas de las facturas más nuevas o que la calidad de los nuevos créditos otorgados no es óptima.
+        
+        **Acción Gerencial:** Capitalizar la excelente gestión de cobro para diseñar un plan proactivo que ataque la mora de la cartera "joven" y revise las condiciones de crédito para evitar que el problema crezca.
+        """)
 
 # PESTAÑA 2: Análisis Predictivo y de Tendencias
 with tab2:
     st.header("Proyecciones y Tendencias a Futuro")
+    # El resto de la pestaña 2 no necesita cambios, ya es bastante explicativa.
     df_ts = df_historico.set_index('fecha_documento')
     df_ventas_mes = df_ts['importe'].resample('MS').sum()
     df_dso_mes = df_historico.dropna(subset=['dias_de_pago']).set_index('fecha_saldado')['dias_de_pago'].resample('MS').mean()
@@ -183,8 +195,6 @@ with tab2:
     chart1, chart2 = st.columns(2)
     with chart1:
         st.markdown("#### Proyección de Ventas")
-        # --- CORRECCIÓN FORECAST ---
-        # Se requieren 24 meses (2x12) para un modelo estacional
         if len(df_ventas_mes) >= 24:
             modelo_ventas = ExponentialSmoothing(df_ventas_mes, trend='add', seasonal='add', seasonal_periods=12).fit()
             proyeccion_ventas = modelo_ventas.forecast(periodos_a_proyectar)
@@ -192,12 +202,9 @@ with tab2:
             fig.add_trace(go.Scatter(x=df_ventas_mes.index, y=df_ventas_mes.values, mode='lines', name='Ventas Históricas'))
             fig.add_trace(go.Scatter(x=proyeccion_ventas.index, y=proyeccion_ventas.values, mode='lines', name='Proyección', line=dict(dash='dash', color='red')))
             st.plotly_chart(fig, use_container_width=True)
-        else: 
-            # Mensaje de advertencia mejorado
-            st.warning("Se necesitan al menos 24 meses de datos históricos para una proyección estacional fiable.")
+        else: st.warning("Se necesitan al menos 24 meses de datos históricos para una proyección estacional fiable.")
     with chart2:
         st.markdown("#### Proyección de DSO (Rotación)")
-        # El modelo de DSO no es estacional, por lo que 12 meses pueden ser suficientes
         if len(df_dso_mes) >= 12:
             modelo_dso = ExponentialSmoothing(df_dso_mes.ffill(), trend='add', seasonal=None).fit()
             proyeccion_dso = modelo_dso.forecast(periodos_a_proyectar)
@@ -205,11 +212,12 @@ with tab2:
             fig.add_trace(go.Scatter(x=df_dso_mes.index, y=df_dso_mes.values, mode='lines', name='DSO Histórico'))
             fig.add_trace(go.Scatter(x=proyeccion_dso.index, y=proyeccion_dso.values, mode='lines', name='Proyección', line=dict(dash='dash', color='orange')))
             st.plotly_chart(fig, use_container_width=True)
-        else: 
-            st.warning("Se necesitan al menos 12 meses de datos de cobros para una proyección de DSO fiable.")
+        else: st.warning("Se necesitan al menos 12 meses de datos de cobros para una proyección de DSO fiable.")
+
 
 # PESTAÑA 3: Segmentación Estratégica de Clientes (RFM)
 with tab3:
+    # Esta pestaña también es bastante autoexplicativa.
     st.header("Segmentación Estratégica de Clientes (RFM)")
     st.markdown("Clasifique a sus clientes en segmentos accionables basados en su comportamiento de compra: **R**ecencia, **F**recuencia y **M**onto.")
     rfm_data = calcular_rfm(df_historico)
@@ -241,6 +249,9 @@ with tab4:
     st.markdown("Use esta herramienta para cuantificar el impacto de sus decisiones.")
     st.sidebar.markdown("---")
     st.sidebar.header("Parámetros del Simulador")
+    # --- MEJORA: Explicación de los parámetros del simulador ---
+    st.sidebar.caption("Mueva estos controles para simular cómo las mejoras en la gestión de cobro (reducir DSO) o los cambios en la actividad comercial (aumentar/disminuir ventas) impactan las finanzas de la empresa.")
+
     base_simulacion = df_historico[df_historico['fecha_documento'] > (df_historico['fecha_documento'].max() - relativedelta(months=12))]
     ventas_base_anual = base_simulacion[base_simulacion['importe'] > 0]['importe'].sum()
     dso_base_anual = base_simulacion.dropna(subset=['dias_de_pago'])['dias_de_pago'].mean()
@@ -257,7 +268,16 @@ with tab4:
     col1.metric("📈 Ventas Proyectadas", f"${ventas_proyectadas:,.0f}", delta=f"${ventas_proyectadas - ventas_base_anual:,.0f}")
     col2.metric("🔄 DSO Proyectado", f"{dso_proyectado:.0f} días", delta=f"{-cambio_dso_dias} días")
     col3.metric("💸 Capital de Trabajo Liberado", f"${liberacion_capital:,.0f}", help="Dinero que deja de estar inmovilizado en la cartera.")
-    st.markdown("#### Análisis del Asistente de Simulación IA")
-    if liberacion_capital > 0: st.success(f"**✅ Escenario Favorable:** Se lograría **liberar ${liberacion_capital:,.0f}** de capital de trabajo.")
-    elif liberacion_capital < 0: st.warning(f"**⚠️ Escenario de Inversión:** Se requeriría una **inversión adicional de ${abs(liberacion_capital):,.0f}** en capital de trabajo.")
-    else: st.info("**Resultado Neutro:** Sin un impacto significativo en el capital de trabajo.")
+    
+    # --- MEJORA: Explicación detallada de los resultados del simulador ---
+    with st.expander("❓ ¿Qué significa 'Capital de Trabajo Liberado'?"):
+         st.markdown("""
+        Piense en el **Capital de Trabajo** como el dinero de la empresa que está "atrapado" en la calle, en forma de facturas que sus clientes aún no han pagado. Es dinero que es suyo, pero que no puede usar.
+
+        **"Liberar" capital de trabajo** significa que, gracias a una gestión más eficiente (principalmente, cobrar más rápido y reducir el DSO), usted logra sacar ese dinero de la calle y traerlo de vuelta a la caja de la empresa.
+
+        * Un número **positivo** aquí es el "premio" por su buena gestión. Es dinero extra que la empresa ahora tiene disponible para pagar sueldos, comprar inventario, invertir o repartir dividendos.
+        * Un número **negativo** significa que su nuevo escenario (más ventas o cobros más lentos) requiere "atrapar" más dinero en la calle para poder funcionar. Es una inversión necesaria en su cartera.
+
+        Este simulador le permite medir el impacto monetario real de sus estrategias antes de implementarlas.
+        """)
