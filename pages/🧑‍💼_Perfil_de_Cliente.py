@@ -1,8 +1,10 @@
 # ======================================================================================
-# ARCHIVO: pages/🧑‍💼_Perfil_de_Cliente.py (Versión Final Definitiva)
+# ARCHIVO: pages/🧑‍💼_Perfil_de_Cliente.py (Versión Potenciada)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import glob
 import re
 import unicodedata
@@ -17,7 +19,7 @@ if 'authentication_status' not in st.session_state or not st.session_state['auth
     st.warning("Por favor, inicie sesión en el 📈 Tablero Principal para acceder a esta página.")
     st.stop()
 
-# --- FUNCIONES AUXILIARES ---
+# --- FUNCIONES AUXILIARES (Sin cambios en las funciones PDF) ---
 class PDF(FPDF):
     def header(self):
         try:
@@ -94,9 +96,9 @@ def normalizar_nombre(nombre: str) -> str:
     nombre = ''.join(c for c in unicodedata.normalize('NFD', nombre) if unicodedata.category(c) != 'Mn')
     return ' '.join(nombre.split())
 
-st.title("🧑‍💼 Perfil de Pagador por Cliente")
+st.title("🧑‍💼 Dossier de Inteligencia de Cliente")
 
-# --- Carga de Datos ---
+# --- Carga de Datos (Tu código original, bien hecho) ---
 @st.cache_data
 def cargar_datos_historicos():
     mapa_columnas = {
@@ -136,32 +138,23 @@ def cargar_datos_historicos():
         df_historico_unico = pd.merge(df_historico_unico, df_pagadas[['numero', 'dias_de_pago']], on='numero', how='left')
     return df_historico_unico
 
-# --- CORRECCIÓN: Definición de la función que faltaba ---
 @st.cache_data
 def cargar_datos_actuales():
     try:
         df = pd.read_excel("Cartera.xlsx")
         if not df.empty: df = df.iloc[:-1]
-        
-        # Usar una función de normalización de nombres de columnas local para evitar NameError
         df_renamed = df.rename(columns=lambda x: normalizar_nombre(x).lower().replace(' ', '_'))
-        
-        # Asegurarse que la columna 'serie' exista antes de usarla
         if 'serie' in df_renamed.columns:
             df_renamed['serie'] = df_renamed['serie'].astype(str)
             df_filtrado = df_renamed[~df_renamed['serie'].str.contains('W|X', case=False, na=False)]
         else:
             df_filtrado = df_renamed
-            
         for col in ['fecha_documento', 'fecha_vencimiento']:
             if col in df_filtrado.columns:
                 df_filtrado[col] = pd.to_datetime(df_filtrado[col], errors='coerce')
-        
-        # Recalcular días vencido con la fecha actual para precisión
         hoy = pd.to_datetime(datetime.now())
         if 'fecha_vencimiento' in df_filtrado.columns:
             df_filtrado['dias_vencido'] = (hoy - df_filtrado['fecha_vencimiento']).dt.days
-        
         return df_filtrado
     except FileNotFoundError:
         return pd.DataFrame()
@@ -171,7 +164,7 @@ df_historico_completo = cargar_datos_historicos()
 df_cartera_actual = cargar_datos_actuales()
 
 if df_historico_completo.empty and df_cartera_actual.empty:
-    st.warning("No se encontraron archivos de datos (ni históricos ni actuales)."); st.stop()
+    st.error("No se encontraron archivos de datos (ni históricos `Cartera_*.xlsx` ni actuales `Cartera.xlsx`)."); st.stop()
 
 acceso_general = st.session_state.get('acceso_general', False)
 vendedor_autenticado = st.session_state.get('vendedor_autenticado', None)
@@ -184,62 +177,163 @@ lista_clientes = sorted(df_historico_filtrado['nombrecliente'].dropna().unique()
 if not lista_clientes:
     st.info("No tienes clientes asignados en el historial de datos."); st.stop()
     
-cliente_sel = st.selectbox("Selecciona un cliente para analizar y gestionar su cuenta:", [""] + lista_clientes)
+cliente_sel = st.selectbox("Selecciona un cliente para analizar y gestionar su cuenta:", [""] + lista_clientes, format_func=lambda x: "Seleccione un cliente..." if x == "" else x)
 
 if cliente_sel:
     df_cliente_historico = df_historico_filtrado[df_historico_filtrado['nombrecliente'] == cliente_sel].copy()
     
-    total_vencido_cliente = 0
+    # --- CÁLCULO DE KPIS Y DATOS PARA GRÁFICOS ---
+    # Datos de cartera actual para el cliente
+    df_cliente_actual = pd.DataFrame()
     if not df_cartera_actual.empty:
-        df_cliente_actual = df_cartera_actual.dropna(subset=['nombrecliente'])
-        df_cliente_actual = df_cliente_actual[df_cliente_actual['nombrecliente'] == cliente_sel].copy()
-        if not df_cliente_actual.empty:
-            df_vencidas_actual_cliente = df_cliente_actual[df_cliente_actual['dias_vencido'] > 0]
-            total_vencido_cliente = df_vencidas_actual_cliente['importe'].sum()
+        df_cliente_actual_temp = df_cartera_actual.dropna(subset=['nombrecliente'])
+        df_cliente_actual = df_cliente_actual_temp[df_cliente_actual_temp['nombrecliente'] == cliente_sel].copy()
 
-    tab1, tab2 = st.tabs(["📊 Análisis del Cliente", "✉️ Gestión y Comunicación"])
+    # Deuda vencida actual
+    total_vencido_cliente = 0
+    df_vencidas_actual_cliente = pd.DataFrame()
+    if not df_cliente_actual.empty:
+        df_vencidas_actual_cliente = df_cliente_actual[df_cliente_actual['dias_vencido'] > 0]
+        total_vencido_cliente = df_vencidas_actual_cliente['importe'].sum()
+
+    # KPIs de comportamiento histórico
+    df_pagadas_reales = df_cliente_historico[(df_cliente_historico['dias_de_pago'].notna()) & (df_cliente_historico['importe'] > 0)]
+    avg_dias_pago = df_pagadas_reales['dias_de_pago'].mean() if not df_pagadas_reales.empty else 0
+    std_dias_pago = df_pagadas_reales['dias_de_pago'].std() if not df_pagadas_reales.empty else 0
+    valor_historico = df_cliente_historico['importe'].sum()
+    ultima_compra = df_cliente_historico['fecha_documento'].max()
+    
+    # Calificación de consistencia
+    if std_dias_pago < 7: consistencia = "✅ Muy Consistente"
+    elif std_dias_pago < 15: consistencia = "👍 Consistente"
+    else: consistencia = "⚠️ Inconsistente"
+
+    # --- MEJORA: Pestañas reorganizadas para un mejor flujo de análisis ---
+    tab1, tab2, tab3 = st.tabs(["📊 Resumen y Tendencias", "💳 Cartera Actual", "✉️ Gestión y Comunicación"])
 
     with tab1:
-        st.subheader(f"Análisis de Comportamiento: {cliente_sel}")
-        df_pagadas_reales = df_cliente_historico[(df_cliente_historico['dias_de_pago'].notna()) & (df_cliente_historico['importe'] > 0)]
+        st.subheader(f"Diagnóstico General: {cliente_sel}")
+
+        # --- MEJORA: Fila de KPIs extendida ---
+        kpi_cols = st.columns(5)
+        with kpi_cols[0]:
+            st.metric("Días Promedio de Pago", f"{avg_dias_pago:.0f} días" if avg_dias_pago else "N/A")
+        with kpi_cols[1]:
+            st.metric("Consistencia de Pago", consistencia if avg_dias_pago else "N/A", help="Mide la variabilidad de sus días de pago. Menor es mejor.")
+        with kpi_cols[2]:
+            st.metric("🔥 Deuda Vencida Actual", f"${total_vencido_cliente:,.0f}")
+        with kpi_cols[3]:
+            st.metric("Última Compra", ultima_compra.strftime('%d/%m/%Y') if pd.notna(ultima_compra) else "N/A")
+        with kpi_cols[4]:
+            st.metric("Valor Histórico Total", f"${valor_historico:,.0f}")
         
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if not df_pagadas_reales.empty:
-                avg_dias_pago = df_pagadas_reales['dias_de_pago'].mean()
-                st.metric("Días Promedio de Pago (Ventas)", f"{avg_dias_pago:.0f} días", help="Promedio de días que tarda el cliente en pagar las facturas de VENTA.")
+        # --- MEJORA: Resumen con IA ---
+        with st.expander("🤖 **Análisis del Asistente IA**", expanded=True):
+            resumen_ia = []
+            if avg_dias_pago > 45:
+                resumen_ia.append(f"<li>🔴 **Pagador Lento:** El promedio de pago de <b>{avg_dias_pago:.0f} días</b> supera el plazo de 30 días, indicando un hábito de pago demorado.</li>")
+            elif avg_dias_pago > 30:
+                 resumen_ia.append(f"<li>🟡 **Pagador Oportuno:** Con <b>{avg_dias_pago:.0f} días</b> promedio, el cliente paga ligeramente por encima del plazo, pero de forma aceptable.</li>")
             else:
-                st.metric("Días Promedio de Pago (Ventas)", "N/A")
-        with col2:
-            if not df_pagadas_reales.empty:
-                avg_dias_pago = df_pagadas_reales['dias_de_pago'].mean()
-                if avg_dias_pago <= 30: calificacion = "✅ Pagador Excelente"
-                elif avg_dias_pago <= 60: calificacion = "👍 Pagador Bueno"
-                elif avg_dias_pago <= 90: calificacion = "⚠️ Pagador Lento"
-                else: calificacion = "🚨 Pagador de Riesgo"
-                st.metric("Calificación", calificacion)
-            else:
-                st.metric("Calificación", "N/A")
-        with col3:
-            st.metric("🔥 Deuda Vencida Actual", f"${total_vencido_cliente:,.0f}", help="Suma del importe de las facturas de este cliente que están vencidas a día de hoy (según Cartera.xlsx).")
+                 resumen_ia.append(f"<li>🟢 **Pagador Ejemplar:** El cliente paga en un promedio de <b>{avg_dias_pago:.0f} días</b>, demostrando excelente liquidez y compromiso.</li>")
+
+            if consistencia == "⚠️ Inconsistente":
+                resumen_ia.append(f"<li>🟡 **Comportamiento Errático:** La alta variabilidad en sus fechas de pago lo convierte en un cliente poco predecible.</li>")
+            
+            if total_vencido_cliente > 0:
+                 resumen_ia.append(f"<li>🔴 **Requiere Acción:** Actualmente posee una deuda vencida de <b>${total_vencido_cliente:,.0f}</b> que debe ser gestionada.</li>")
+            
+            st.markdown("<ul>" + "".join(resumen_ia) + "</ul>", unsafe_allow_html=True)
+
+        st.markdown("---")
         
-        st.subheader("Historial Completo de Transacciones")
-        st.dataframe(df_cliente_historico[['numero', 'fecha_documento', 'fecha_vencimiento', 'fecha_saldado', 'dias_de_pago', 'importe']].sort_values(by="fecha_documento", ascending=False))
+        # --- MEJORA: Gráficos de Tendencias ---
+        st.subheader("Evolución del Comportamiento del Cliente")
+        chart_cols = st.columns(2)
+        with chart_cols[0]:
+            if not df_pagadas_reales.empty:
+                fig_tendencia_pago = px.line(df_pagadas_reales.sort_values('fecha_documento'), 
+                                             x='fecha_documento', y='dias_de_pago', 
+                                             title="Tendencia de Días de Pago", markers=True,
+                                             labels={'fecha_documento': 'Fecha de Factura', 'dias_de_pago': 'Días para Pagar'})
+                fig_tendencia_pago.add_trace(go.Scatter(x=df_pagadas_reales['fecha_documento'], y=df_pagadas_reales['dias_de_pago'], mode='lines', line=dict(color='rgba(0,0,0,0)'), name='Tendencia (OLS)'))
+                # Línea de tendencia (regresión)
+                trendline = px.scatter(df_pagadas_reales, x='fecha_documento', y='dias_de_pago', trendline="ols", trendline_color_override="red").data[1]
+                fig_tendencia_pago.add_trace(trendline)
+                st.plotly_chart(fig_tendencia_pago, use_container_width=True)
+            else:
+                st.info("No hay suficientes datos de facturas pagadas para mostrar la tendencia de pago.")
+
+        with chart_cols[1]:
+            df_compras = df_cliente_historico[df_cliente_historico['importe']>0].set_index('fecha_documento').resample('QE')['importe'].sum().reset_index()
+            if not df_compras.empty:
+                fig_volumen_compra = px.bar(df_compras, x='fecha_documento', y='importe',
+                                            title="Volumen de Compra por Trimestre",
+                                            labels={'fecha_documento': 'Trimestre', 'importe': 'Monto Total Comprado'})
+                st.plotly_chart(fig_volumen_compra, use_container_width=True)
+            else:
+                st.info("No hay datos de compras para mostrar el volumen.")
 
     with tab2:
+        st.subheader(f"Análisis de la Cartera Actual para {cliente_sel}")
+        if not df_cliente_actual.empty:
+            col1, col2 = st.columns([1,2])
+            with col1:
+                # --- MEJORA: Gráfico de dona para la deuda actual ---
+                st.write("#### Composición de la Deuda")
+                if not df_vencidas_actual_cliente.empty:
+                    bins = [-float('inf'), 0, 15, 30, 60, float('inf')]
+                    labels = ['Al día', '1-15 días', '16-30 días', '31-60 días', 'Más de 60 días']
+                    
+                    # Usar datos de cartera actual para la composición
+                    df_cliente_actual['edad_cartera'] = pd.cut(df_cliente_actual['dias_vencido'], bins=bins, labels=labels, right=True)
+                    df_edades = df_cliente_actual.groupby('edad_cartera', observed=True)['importe'].sum().reset_index()
+
+                    fig_dona = px.pie(df_edades, values='importe', names='edad_cartera', 
+                                      title='Deuda por Antigüedad', hole=.4,
+                                      color_discrete_map={'Al día': 'green', '1-15 días': '#FFD700', '16-30 días': 'orange', '31-60 días': 'darkorange', 'Más de 60 días': 'red'})
+                    st.plotly_chart(fig_dona, use_container_width=True)
+                else:
+                    st.success("¡Excelente! El cliente no tiene deuda vencida.")
+
+            with col2:
+                st.write("#### Detalle de Facturas Pendientes")
+                st.dataframe(df_cliente_actual[['numero', 'fecha_documento', 'fecha_vencimiento', 'dias_vencido', 'importe']], use_container_width=True)
+        else:
+            st.info("Este cliente no tiene facturas en la cartera actual (archivo Cartera.xlsx).")
+
+    with tab3:
+        # Tu código original para esta pestaña, que ya es excelente.
         st.subheader(f"Herramientas de Comunicación para: {cliente_sel}")
         col1, col2 = st.columns(2)
         with col1:
             st.write("#### 1. Generar Estado de Cuenta en PDF")
             st.download_button(
-                label="📄 Descargar Estado de Cuenta (PDF)",
-                data=generar_pdf_estado_cuenta(df_cliente_historico),
-                file_name=f"Estado_Cuenta_{normalizar_nombre(cliente_sel).replace(' ', '_')}.pdf",
+                label="📄 Descargar Estado de Cuenta Histórico (PDF)",
+                data=generar_pdf_estado_cuenta(df_cliente_historico), # PDF con todo el histórico
+                file_name=f"Estado_Cuenta_Historico_{normalizar_nombre(cliente_sel).replace(' ', '_')}.pdf",
                 mime="application/pdf"
             )
         with col2:
             st.write("#### 2. Preparar Email de Cobro")
             asunto_sugerido = f"Recordatorio de pago y estado de cuenta - Ferreinox SAS BIC"
-            cuerpo_mensaje = f"""Estimados Sres. de {cliente_sel},\n\nLe saludamos cordialmente desde Ferreinox SAS BIC.\n\nNos ponemos en contacto con usted para recordarle amablemente sobre su saldo pendiente. Actualmente, sus facturas vencidas suman un total de **${total_vencido_cliente:,.0f}**.\n\nAdjuntamos a este correo su estado de cuenta detallado para su revisión.\n\nPuede realizar su pago de forma fácil y segura a través de nuestro portal en línea:\nhttps://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/\n\nPara ingresar, por favor utilice su NIT como 'usuario' y su Código de Cliente como 'código único interno'.\n\nAgradecemos de antemano su pronta atención a este asunto. Si ya ha realizado el pago, por favor haga caso omiso de este mensaje.\n\nAtentamente,\nEquipo de Cartera\nFerreinox SAS BIC"""
+            cuerpo_mensaje = f"""Estimados Sres. de {cliente_sel},
+
+Le saludamos cordialmente desde Ferreinox SAS BIC.
+
+Nos ponemos en contacto con usted para recordarle amablemente sobre su saldo pendiente. Actualmente, sus facturas vencidas suman un total de **${total_vencido_cliente:,.0f}**.
+
+Adjuntamos a este correo su estado de cuenta detallado para su revisión.
+
+Puede realizar su pago de forma fácil y segura a través de nuestro portal en línea:
+https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/
+
+Para ingresar, por favor utilice su NIT como 'usuario' y su Código de Cliente como 'código único interno'.
+
+Agradecemos de antemano su pronta atención a este asunto. Si ya ha realizado el pago, por favor haga caso omiso de este mensaje.
+
+Atentamente,
+Equipo de Cartera
+Ferreinox SAS BIC"""
             st.text_input("Asunto del Correo:", value=asunto_sugerido)
             st.text_area("Cuerpo del Correo (listo para copiar):", value=cuerpo_mensaje, height=350)
