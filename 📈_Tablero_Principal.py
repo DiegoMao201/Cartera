@@ -7,6 +7,7 @@ import toml
 import os
 from io import BytesIO
 import plotly.express as px
+import plotly.graph_objects as go # --- MEJORA ---
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils import get_column_letter
@@ -24,8 +25,52 @@ st.set_page_config(
     layout="wide"
 )
 
+# --- MEJORA: Paleta de colores centralizada y CSS para un look más profesional ---
+PALETA_COLORES = {
+    "primario": "#003865",
+    "secundario": "#0058A7",
+    "acento": "#FFC300",
+    "fondo_claro": "#F0F2F6",
+    "texto_claro": "#FFFFFF",
+    "texto_oscuro": "#31333F",
+    "alerta_rojo": "#D32F2F",
+    "alerta_naranja": "#F57C00",
+    "alerta_amarillo": "#FBC02D",
+    "exito_verde": "#388E3C"
+}
+
+st.markdown(f"""
+<style>
+    .stApp {{
+        background-color: {PALETA_COLORES['fondo_claro']};
+    }}
+    .stMetric {{
+        background-color: #FFFFFF;
+        border-radius: 10px;
+        padding: 15px;
+        border: 1px solid #CCCCCC;
+    }}
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: 24px;
+    }}
+    .stTabs [data-baseweb="tab"] {{
+        height: 50px;
+        white-space: pre-wrap;
+        background-color: transparent;
+        border-radius: 4px 4px 0px 0px;
+        border-bottom: 2px solid #C0C0C0;
+    }}
+    .stTabs [aria-selected="true"] {{
+        border-bottom: 2px solid {PALETA_COLORES['primario']};
+        color: {PALETA_COLORES['primario']};
+        font-weight: bold;
+    }}
+</style>
+""", unsafe_allow_html=True)
+
+
 # ======================================================================================
-# --- CLASE PDF Y FUNCIONES AUXILIARES ---
+# --- CLASE PDF Y FUNCIONES AUXILIARES (Sin cambios, tu código original) ---
 # ======================================================================================
 class PDF(FPDF):
     def header(self):
@@ -57,21 +102,11 @@ ZONAS_SERIE = { "PEREIRA": [155, 189, 158, 439], "MANIZALES": [157, 238], "ARMEN
 
 def procesar_cartera(df: pd.DataFrame) -> pd.DataFrame:
     df_proc = df.copy()
-    
-    # Se asegura que las columnas 'importe' y 'numero' sean numéricas para los cálculos
     df_proc['importe'] = pd.to_numeric(df_proc['importe'], errors='coerce').fillna(0)
-    # --- LÍNEA MODIFICADA/AÑADIDA ---
-    # Es crucial que la columna 'numero' también sea numérica para la comparación.
     df_proc['numero'] = pd.to_numeric(df_proc['numero'], errors='coerce').fillna(0)
-
-    # --- LÍNEA AÑADIDA ---
-    # IDENTIFICAR NOTAS CRÉDITO Y AJUSTAR IMPORTE
-    # Si el 'numero' del documento es negativo, se multiplica su 'importe' por -1.
     df_proc.loc[df_proc['numero'] < 0, 'importe'] *= -1
-    
     df_proc['dias_vencido'] = pd.to_numeric(df_proc['dias_vencido'], errors='coerce').fillna(0)
     df_proc['nomvendedor_norm'] = df_proc['nomvendedor'].apply(normalizar_nombre)
-    
     ZONAS_SERIE_STR = {zona: [str(s) for s in series] for zona, series in ZONAS_SERIE.items()}
     def asignar_zona_robusta(valor_serie):
         if pd.isna(valor_serie): return "OTRAS ZONAS"
@@ -80,11 +115,9 @@ def procesar_cartera(df: pd.DataFrame) -> pd.DataFrame:
         for zona, series_clave_str in ZONAS_SERIE_STR.items():
             if set(numeros_en_celda) & set(series_clave_str): return zona
         return "OTRAS ZONAS"
-        
     df_proc['zona'] = df_proc['serie'].apply(asignar_zona_robusta)
     bins = [-float('inf'), 0, 15, 30, 60, float('inf')]; labels = ['Al día', '1-15 días', '16-30 días', '31-60 días', 'Más de 60 días']
     df_proc['edad_cartera'] = pd.cut(df_proc['dias_vencido'], bins=bins, labels=labels, right=True)
-    
     return df_proc
 
 def generar_excel_formateado(df: pd.DataFrame):
@@ -129,86 +162,84 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
     if datos_cliente.empty:
         pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, 'No se encontraron facturas para este cliente.', 0, 1, 'C')
         return bytes(pdf.output())
-    
     datos_cliente_ordenados = datos_cliente.sort_values(by='fecha_vencimiento', ascending=True)
     info_cliente = datos_cliente_ordenados.iloc[0]
-    
     pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Cliente:', 0, 0); pdf.set_font('Arial', '', 11); pdf.cell(0, 10, info_cliente['nombrecliente'], 0, 1)
     pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Codigo de Cliente:', 0, 0); pdf.set_font('Arial', '', 11)
     cod_cliente_str = str(int(info_cliente['cod_cliente'])) if pd.notna(info_cliente['cod_cliente']) else "N/A"
     pdf.cell(0, 10, cod_cliente_str, 0, 1); pdf.ln(5)
-    
-    # --- MENSAJE MODIFICADO ---
-    # Se ha reescrito el mensaje para ser más profesional y dirigir al usuario al footer para el enlace de pago.
     pdf.set_font('Arial', '', 10)
-    mensaje = (
-        "Apreciado cliente, a continuación encontrará el detalle de su estado de cuenta a la fecha. "
-        "Le invitamos a realizar su revisión y proceder con el pago de los valores vencidos. "
-        "Puede realizar su pago de forma fácil y segura a través de nuestro PORTAL DE PAGOS en línea, "
-    )
+    mensaje = ("Apreciado cliente, a continuación encontrará el detalle de su estado de cuenta a la fecha. "
+               "Le invitamos a realizar su revisión y proceder con el pago de los valores vencidos. "
+               "Puede realizar su pago de forma fácil y segura a través de nuestro PORTAL DE PAGOS en línea, "
+               "cuyo enlace encontrará al final de este documento.")
     pdf.set_text_color(128, 128, 128); pdf.multi_cell(0, 5, mensaje, 0, 'J'); pdf.set_text_color(0, 0, 0); pdf.ln(10)
-    
-    # --- Encabezados de la tabla ---
     pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(0, 56, 101); pdf.set_text_color(255, 255, 255)
     pdf.cell(30, 10, 'Factura', 1, 0, 'C', 1); pdf.cell(40, 10, 'Fecha Factura', 1, 0, 'C', 1)
     pdf.cell(40, 10, 'Fecha Vencimiento', 1, 0, 'C', 1); pdf.cell(40, 10, 'Importe', 1, 1, 'C', 1)
-    
-    # --- Contenido de la tabla ---
     pdf.set_font('Arial', '', 10)
     total_importe = 0
     for _, row in datos_cliente_ordenados.iterrows():
         pdf.set_text_color(0, 0, 0)
-        if row['dias_vencido'] > 0:
-            pdf.set_fill_color(248, 241, 241) # Un rojo muy claro para las vencidas
-        else:
-            pdf.set_fill_color(255, 255, 255)
-            
+        if row['dias_vencido'] > 0: pdf.set_fill_color(248, 241, 241)
+        else: pdf.set_fill_color(255, 255, 255)
         total_importe += row['importe']
         numero_factura_str = str(int(row['numero'])) if pd.notna(row['numero']) else "N/A"
-        
         pdf.cell(30, 10, numero_factura_str, 1, 0, 'C', 1)
         pdf.cell(40, 10, row['fecha_documento'].strftime('%d/%m/%Y'), 1, 0, 'C', 1)
         pdf.cell(40, 10, row['fecha_vencimiento'].strftime('%d/%m/%Y'), 1, 0, 'C', 1)
         pdf.cell(40, 10, f"${row['importe']:,.0f}", 1, 1, 'R', 1)
-        
-    # --- Fila del total ---
     pdf.set_text_color(0, 0, 0)
     pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(0, 56, 101); pdf.set_text_color(255, 255, 255)
     pdf.cell(110, 10, 'TOTAL ADEUDADO', 1, 0, 'R', 1)
     pdf.cell(40, 10, f"${total_importe:,.0f}", 1, 1, 'R', 1)
-    
     return bytes(pdf.output())
-
 
 # --- CORRECCIÓN: Lógica de carga de datos para el tablero principal ---
 @st.cache_data
 def cargar_y_procesar_datos():
-    """Lee el archivo Excel del día, lo limpia y procesa."""
     df = pd.read_excel("Cartera.xlsx")
-    
-    if not df.empty:
-        df = df.iloc[:-1]
-
-    # Renombrar columnas ANTES de intentar usarlas
+    if not df.empty: df = df.iloc[:-1]
     df_renamed = df.rename(columns=lambda x: normalizar_nombre(x).lower().replace(' ', '_'))
-
-    # Ahora, aplicar el filtro sobre la columna ya normalizada 'serie'
     df_renamed['serie'] = df_renamed['serie'].astype(str)
     df_filtrado = df_renamed[~df_renamed['serie'].str.contains('W|X', case=False, na=False)]
-
-    # Continuar con el resto del procesamiento
     df_filtrado['fecha_documento'] = pd.to_datetime(df_filtrado['fecha_documento'], errors='coerce')
     df_filtrado['fecha_vencimiento'] = pd.to_datetime(df_filtrado['fecha_vencimiento'], errors='coerce')
-    
     return procesar_cartera(df_filtrado)
+    
+# --- MEJORA: Función para generar comentarios dinámicos ---
+def generar_analisis_cartera(kpis: dict):
+    """Genera un análisis en texto basado en los KPIs calculados."""
+    comentarios = []
+    
+    # Análisis sobre el porcentaje vencido
+    if kpis['porcentaje_vencido'] > 30:
+        comentarios.append(f"<li>🔴 **Alerta Crítica:** El <b>{kpis['porcentaje_vencido']:.1f}%</b> de la cartera está vencida. Este nivel es preocupante y requiere acciones inmediatas y contundentes.</li>")
+    elif kpis['porcentaje_vencido'] > 15:
+        comentarios.append(f"<li>🟡 **Advertencia:** Con un <b>{kpis['porcentaje_vencido']:.1f}%</b> de cartera vencida, es un buen momento para intensificar las gestiones de cobro antes de que la situación se deteriore.</li>")
+    else:
+        comentarios.append(f"<li>🟢 **Saludable:** El porcentaje de cartera vencida (<b>{kpis['porcentaje_vencido']:.1f}%</b>) está en un nivel manejable y saludable. ¡Buen trabajo!</li>")
+
+    # Análisis sobre la Antigüedad Promedio de la cartera VENCIDA
+    if kpis['antiguedad_prom_vencida'] > 60:
+        comentarios.append(f"<li>🔴 **Riesgo Alto:** Las deudas vencidas tienen una antigüedad promedio de <b>{kpis['antiguedad_prom_vencida']:.0f} días</b>. El riesgo de incobrabilidad es alto. Se debe priorizar la recuperación de estas cuentas antiguas.</li>")
+    elif kpis['antiguedad_prom_vencida'] > 30:
+        comentarios.append(f"<li>🟡 **Atención Requerida:** La antigüedad promedio de la cartera vencida es de <b>{kpis['antiguedad_prom_vencida']:.0f} días</b>. Es vital evitar que estas deudas envejezcan más.</li>")
+
+    # Análisis sobre el Índice de Severidad (CSI)
+    if kpis['csi'] > 15:
+        comentarios.append(f"<li>🔴 **Severidad Crítica (CSI: {kpis['csi']:.1f}):** El impacto combinado del monto y la antigüedad de la deuda vencida es muy alto. Esto indica un problema estructural que afecta el flujo de caja.</li>")
+    elif kpis['csi'] > 5:
+        comentarios.append(f"<li>🟡 **Severidad Moderada (CSI: {kpis['csi']:.1f}):** El índice de severidad sugiere que, aunque la situación es manejable, hay focos de deuda antigua o de alto valor que pesan sobre la cartera total.</li>")
+    else:
+        comentarios.append(f"<li>🟢 **Severidad Baja (CSI: {kpis['csi']:.1f}):** El impacto ponderado de la deuda vencida es bajo, indicando una buena gestión de cobro y plazos.</li>")
+
+    return "<ul>" + "".join(comentarios) + "</ul>"
 
 # ======================================================================================
 # --- BLOQUE PRINCIPAL DE LA APP ---
 # ======================================================================================
 def main():
-    # El set_page_config debe ser el primer comando de Streamlit en ejecutarse
-    # st.set_page_config(page_title="Tablero Principal", page_icon="📈", layout="wide") <--- ya está al inicio
-
     if 'authentication_status' not in st.session_state:
         st.session_state['authentication_status'] = False
         st.session_state['acceso_general'] = False
@@ -243,6 +274,7 @@ def main():
     else:
         st.title("📊 Tablero de Cartera Ferreinox SAS BIC")
         with st.sidebar:
+            st.image("LOGO FERREINOX SAS BIC 2024.png", use_column_width=True)
             st.success(f"Usuario: {st.session_state['vendedor_autenticado']}")
             if st.button("Cerrar Sesión"):
                 for key in list(st.session_state.keys()):
@@ -273,47 +305,106 @@ def main():
 
         if cartera_filtrada.empty:
             st.warning(f"No se encontraron datos para los filtros seleccionados."); st.stop()
-
-        st.markdown("---")
+            
+        # --- CÁLCULO DE KPIs ---
         total_cartera = cartera_filtrada['importe'].sum()
         cartera_vencida_df = cartera_filtrada[cartera_filtrada['dias_vencido'] > 0]
         total_vencido = cartera_vencida_df['importe'].sum()
         porcentaje_vencido = (total_vencido / total_cartera) * 100 if total_cartera > 0 else 0
-        if total_cartera > 0: rotacion_dias_general = (cartera_filtrada['importe'] * cartera_filtrada['dias_vencido']).sum() / total_cartera
-        else: rotacion_dias_general = 0
-        if total_vencido > 0: antiguedad_prom_vencida = (cartera_vencida_df['importe'] * cartera_vencida_df['dias_vencido']).sum() / total_vencido
-        else: antiguedad_prom_vencida = 0
-        if rotacion_dias_general <= 15: salud_rotacion, color_salud = "✅ Salud: Excelente", "green"
-        elif rotacion_dias_general <= 30: salud_rotacion, color_salud = "👍 Salud: Buena", "blue"
-        elif rotacion_dias_general <= 45: salud_rotacion, color_salud = "⚠️ Salud: Regular", "orange"
-        else: salud_rotacion, color_salud = "🚨 Salud: Alerta", "red"
-        col1, col2, col3, col4, col5 = st.columns(5)
-        with col1: st.metric("💰 Cartera Total", f"${total_cartera:,.0f}")
-        with col2: st.metric("🔥 Cartera Vencida", f"${total_vencido:,.0f}", help="Suma del importe de facturas con días de vencimiento > 0.")
-        with col3: st.metric("📈 % Vencido s/ Total", f"{porcentaje_vencido:.1f}%")
-        with col4: st.metric(label="⏳ Antigüedad Prom. Vencida", value=f"{antiguedad_prom_vencida:.0f} días", help="Edad promedio ponderada, solo de facturas YA VENCIDAS.")
-        with col5:
-            st.metric(label="🔄 Rotación General", value=f"{rotacion_dias_general:.0f} días", help="Edad promedio ponderada de TODA la cartera.")
-            st.markdown(f"<p style='color:{color_salud}; font-weight:bold; text-align:center; font-size:14px;'>{salud_rotacion}</p>", unsafe_allow_html=True)
+        if total_cartera > 0:
+            rotacion_dias_general = (cartera_filtrada['importe'] * cartera_filtrada['dias_vencido']).sum() / total_cartera
+            # --- MEJORA: Cálculo del Índice de Severidad (CSI) ---
+            csi = (cartera_vencida_df['importe'] * cartera_vencida_df['dias_vencido']).sum() / total_cartera
+        else:
+            rotacion_dias_general = 0
+            csi = 0
+        
+        antiguedad_prom_vencida = (cartera_vencida_df['importe'] * cartera_vencida_df['dias_vencido']).sum() / total_vencido if total_vencido > 0 else 0
+        
+        if rotacion_dias_general <= 15: salud_rotacion, color_salud = "✅ Excelente", PALETA_COLORES['exito_verde']
+        elif rotacion_dias_general <= 30: salud_rotacion, color_salud = "👍 Buena", PALETA_COLORES['secundario']
+        elif rotacion_dias_general <= 45: salud_rotacion, color_salud = "⚠️ Regular", PALETA_COLORES['alerta_naranja']
+        else: salud_rotacion, color_salud = "🚨 Alerta", PALETA_COLORES['alerta_rojo']
+            
+        # --- KPIs en st.metric ---
+        st.header("Indicadores Clave de Rendimiento (KPIs)")
+        kpi_cols = st.columns(5)
+        kpi_cols[0].metric("💰 Cartera Total", f"${total_cartera:,.0f}")
+        kpi_cols[1].metric("🔥 Cartera Vencida", f"${total_vencido:,.0f}", help="Suma del importe de facturas con días de vencimiento > 0.")
+        kpi_cols[2].metric("📈 % Vencido s/ Total", f"{porcentaje_vencido:.1f}%")
+        kpi_cols[3].metric("⏳ Antigüedad Prom. Vencida", f"{antiguedad_prom_vencida:.0f} días", help="Edad promedio ponderada, solo de facturas YA VENCIDAS.")
+        # --- MEJORA: Métrica para el CSI ---
+        kpi_cols[4].metric(label="💥 Índice de Severidad (CSI)", value=f"{csi:.1f}", help="Impacto ponderado de la deuda vencida sobre la cartera total. Un número más alto indica mayor riesgo.")
 
+        # --- MEJORA: Sección de Análisis y Comentarios Dinámicos ---
+        with st.expander("🤖 **Análisis y Recomendaciones del Asistente IA**", expanded=True):
+            kpis_dict = {
+                'porcentaje_vencido': porcentaje_vencido,
+                'antiguedad_prom_vencida': antiguedad_prom_vencida,
+                'csi': csi
+            }
+            analisis = generar_analisis_cartera(kpis_dict)
+            st.markdown(analisis, unsafe_allow_html=True)
         st.markdown("---")
-        col_grafico, col_tabla_resumen = st.columns([2, 1])
-        with col_grafico:
+
+        # --- MEJORA: Pestañas para organizar el contenido visual ---
+        tab1, tab2, tab3 = st.tabs(["📊 Visión General de la Cartera", "👥 Análisis por Cliente", "📑 Detalle Completo"])
+
+        with tab1:
             st.subheader("Distribución de Cartera por Antigüedad")
-            df_edades = cartera_filtrada.groupby('edad_cartera')['importe'].sum().reset_index()
-            fig = px.bar(df_edades, x='edad_cartera', y='importe', text_auto='.2s', title='Monto de Cartera por Rango de Días', labels={'edad_cartera': 'Antigüedad', 'importe': 'Monto Total'}, color='edad_cartera', color_discrete_map={'Al día': 'green', '1-15 días': '#FFD700', '16-30 días': 'orange', '31-60 días': 'darkorange', 'Más de 60 días': 'red'})
-            st.plotly_chart(fig, use_container_width=True)
-        with col_tabla_resumen:
-            st.subheader("Resumen por Antigüedad")
-            df_edades['Porcentaje'] = (df_edades['importe'] / total_cartera * 100).map('{:.1f}%'.format)
-            df_edades['importe'] = df_edades['importe'].map('${:,.0f}'.format)
-            st.dataframe(df_edades.rename(columns={'edad_cartera': 'Rango', 'importe': 'Monto'}), use_container_width=True, hide_index=True)
-        st.markdown("---")
-        st.subheader(f"Detalle: {vendedor_sel} / {zona_sel} / {poblacion_sel}")
-        st.download_button(label="📥 Descargar Reporte en Excel con Formato", data=generar_excel_formateado(cartera_filtrada), file_name=f'Cartera_{normalizar_nombre(vendedor_sel)}_{zona_sel}_{poblacion_sel}.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-        columnas_a_ocultar = ['provincia', 'telefono1', 'telefono2', 'entidad_autoriza', 'e_mail', 'descuento', 'cupo_aprobado', 'nomvendedor_norm', 'zona']
-        cartera_para_mostrar = cartera_filtrada.drop(columns=columnas_a_ocultar, errors='ignore')
-        st.dataframe(cartera_para_mostrar, use_container_width=True, hide_index=True)
+            col_grafico, col_tabla_resumen = st.columns([2, 1])
+            with col_grafico:
+                df_edades = cartera_filtrada.groupby('edad_cartera', observed=True)['importe'].sum().reset_index()
+                color_map_edades = {'Al día': PALETA_COLORES['exito_verde'], '1-15 días': PALETA_COLORES['alerta_amarillo'], '16-30 días': PALETA_COLORES['alerta_naranja'], '31-60 días': 'darkorange', 'Más de 60 días': PALETA_COLORES['alerta_rojo']}
+                fig = px.bar(df_edades, x='edad_cartera', y='importe', text_auto='.2s', title='Monto de Cartera por Rango de Días', labels={'edad_cartera': 'Antigüedad', 'importe': 'Monto Total'}, color='edad_cartera', color_discrete_map=color_map_edades)
+                fig.update_layout(showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
+            with col_tabla_resumen:
+                st.subheader("Resumen por Antigüedad")
+                df_edades['Porcentaje'] = (df_edades['importe'] / total_cartera * 100).map('{:.1f}%'.format) if total_cartera > 0 else '0.0%'
+                df_edades['importe'] = df_edades['importe'].map('${:,.0f}'.format)
+                st.dataframe(df_edades.rename(columns={'edad_cartera': 'Rango', 'importe': 'Monto'}), use_container_width=True, hide_index=True)
+        
+        with tab2:
+            st.subheader("Análisis de Concentración de Deuda por Cliente")
+            col_pareto, col_treemap = st.columns(2)
+            
+            with col_treemap:
+                # --- MEJORA: Gráfico Treemap para visualización de impacto ---
+                st.markdown("**Visualización de Cartera Vencida por Cliente (Treemap)**")
+                df_clientes_vencidos = cartera_vencida_df.groupby('nombrecliente')['importe'].sum().reset_index()
+                df_clientes_vencidos = df_clientes_vencidos[df_clientes_vencidos['importe'] > 0] # Solo clientes con deuda
+                
+                fig_treemap = px.treemap(df_clientes_vencidos, path=['nombrecliente'], values='importe',
+                                         title='Haga clic en un recuadro para explorar',
+                                         color_continuous_scale='Reds',
+                                         color='importe')
+                fig_treemap.update_layout(margin = dict(t=50, l=25, r=25, b=25))
+                st.plotly_chart(fig_treemap, use_container_width=True)
+
+            with col_pareto:
+                # --- MEJORA: Análisis de Pareto 80/20 ---
+                st.markdown("**Clientes Clave (Principio de Pareto)**")
+                client_debt = cartera_vencida_df.groupby('nombrecliente')['importe'].sum().sort_values(ascending=False)
+                client_debt_cumsum = client_debt.cumsum()
+                total_debt_vencida = client_debt.sum()
+                pareto_limit = total_debt_vencida * 0.80
+                pareto_clients = client_debt[client_debt_cumsum <= pareto_limit]
+                
+                st.info(f"El **{len(pareto_clients)}**% de los clientes deudores representan aprox. el **80%** del total de la cartera vencida. Estos son:")
+                
+                df_pareto_display = pareto_clients.reset_index()
+                df_pareto_display.columns = ['Cliente', 'Monto Vencido']
+                df_pareto_display['Monto Vencido'] = df_pareto_display['Monto Vencido'].map('${:,.0f}'.format)
+                st.dataframe(df_pareto_display, height=250, hide_index=True, use_container_width=True)
+
+        with tab3:
+            st.subheader(f"Detalle Completo: {vendedor_sel} / {zona_sel} / {poblacion_sel}")
+            st.download_button(label="📥 Descargar Reporte en Excel con Formato", data=generar_excel_formateado(cartera_filtrada), file_name=f'Cartera_{normalizar_nombre(vendedor_sel)}_{zona_sel}_{poblacion_sel}.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            columnas_a_ocultar = ['provincia', 'telefono1', 'telefono2', 'entidad_autoriza', 'e_mail', 'descuento', 'cupo_aprobado', 'nomvendedor_norm', 'zona']
+            cartera_para_mostrar = cartera_filtrada.drop(columns=columnas_a_ocultar, errors='ignore')
+            st.dataframe(cartera_para_mostrar, use_container_width=True, hide_index=True)
+            
         st.markdown("---")
         st.header("⚙️ Herramientas de Gestión")
         st.subheader("Generar Estado de Cuenta por Cliente")
