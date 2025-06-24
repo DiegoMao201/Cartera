@@ -1,10 +1,7 @@
-﻿streamlit
-pandas
-plotly
+streamlit
+pandas==2.2.2
+plotly==5.22.0
+scipy==1.13.1
+statsmodels==0.14.2
 openpyxl
-toml
-pywhatkit
-pyjanitor
-plotly
 fpdf2
-statsmodels
