@@ -12,6 +12,7 @@ from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils import get_column_letter
 from openpyxl.drawing.image import Image as XLImage
+from openpyxl.worksheet.table import Table, TableStyleInfo
 import unicodedata
 import re
 from datetime import datetime
