@@ -158,22 +158,18 @@ def generar_excel_formateado(df: pd.DataFrame):
         fill_red, fill_orange, fill_yellow = PatternFill(start_color='FF0000', end_color='FF0000', fill_type='solid'), PatternFill(start_color='FFA500', end_color='FFA500', fill_type='solid'), PatternFill(start_color='FFF9C4', end_color='FFF9C4', fill_type='solid')
         font_bold, font_green_bold = Font(bold=True), Font(bold=True, color="006400")
         first_data_row, last_data_row = 10, ws.max_row
-        # Corregido: Referencia de la tabla debe ser hasta la última fila de datos real
         tab = Table(displayName="CarteraVendedor", ref=f"A{first_data_row-1}:G{last_data_row}")
         tab.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showFirstColumn=False, showLastColumn=False, showRowStripes=True, showColumnStripes=False)
         ws.add_table(tab)
         for i, ancho in enumerate([40, 10, 12, 18, 18, 18, 15], 1): ws.column_dimensions[get_column_letter(i)].width = ancho
         importe_col_idx, dias_col_idx, formato_moneda = 6, 7, '"$"#,##0'
-        # Itera sobre las filas de datos, comenzando desde la primera fila de datos (start=first_data_row)
         for row_idx, row in enumerate(ws.iter_rows(min_row=first_data_row, max_row=last_data_row), start=first_data_row):
-            # Formato de la cabecera
             if row_idx == first_data_row:
                  for cell in row:
                     cell.font = font_bold
                     cell.alignment = Alignment(horizontal='center', vertical='center')
-                 continue # Salta a la siguiente fila
+                 continue
             
-            # Formato para filas de datos
             row[importe_col_idx - 1].number_format = formato_moneda
             dias_cell = row[dias_col_idx - 1]
             try:
@@ -462,18 +458,44 @@ def main():
                             try:
                                 sender_email = st.secrets["email_credentials"]["sender_email"]
                                 sender_password = st.secrets["email_credentials"]["sender_password"]
-                                asunto = f"Estado de Cuenta - Ferreinox SAS BIC - {cliente_seleccionado}"
-                                # --- ACTUALIZADO: Cuerpo del correo con nueva firma ---
-                                cuerpo_html = f"""
-                                <html><body>
-                                <p>Hola, {cliente_seleccionado}</p>
-                                <p>Recibe un cordial saludo. Adjunto encontrarás tu estado de cuenta detallado.</p>
-                                <p>Puedes realizar tu pago en nuestro <b>Portal de Pagos en línea</b>:</p>
-                                <p><a href="https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/">Acceder al Portal de Pagos</a></p>
-                                <p><b>Instrucciones:</b> Usuario: <b>{nit_cliente}</b> (Tu NIT) | Código Único: <b>{cod_cliente}</b></p>
-                                <p>Gracias,<br><b>Area Cartera Ferreinox SAS BIC</b></p>
-                                </body></html>
-                                """
+                                
+                                # --- LÓGICA DINÁMICA PARA EL CUERPO Y ASUNTO DEL CORREO ---
+                                facturas_vencidas_cliente = datos_cliente_seleccionado[datos_cliente_seleccionado['dias_vencido'] > 0]
+                                total_vencido_cliente = facturas_vencidas_cliente['importe'].sum()
+                                
+                                portal_link = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
+                                instrucciones = f"<b>Instrucciones de acceso:</b><br> &nbsp; • <b>Usuario:</b> {nit_cliente} (Tu NIT)<br> &nbsp; • <b>Código Único:</b> {cod_cliente}"
+                                
+                                if total_vencido_cliente > 0:
+                                    dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
+                                    asunto = f"Recordatorio Amistoso de Saldo Pendiente - {cliente_seleccionado}"
+                                    cuerpo_html = f"""
+                                    <html><body style='font-family: Arial, sans-serif; color: #333;'>
+                                        <p>Estimado(a) {cliente_seleccionado},</p>
+                                        <p>Recibe un cordial saludo del Área de Cartera de Ferreinox SAS BIC.</p>
+                                        <p>Nos ponemos en contacto para recordarte amablemente sobre tu saldo pendiente. Actualmente, tus facturas vencidas suman un total de <b>${total_vencido_cliente:,.0f}</b>, y tu factura más antigua tiene <b>{dias_max_vencido} días</b> de vencida.</p>
+                                        <p>Adjunto a este correo, encontrarás tu estado de cuenta completo para tu revisión.</p>
+                                        <p>Para tu comodidad, puedes realizar el pago de forma fácil y segura a través de nuestro <a href='{portal_link}'><b>Portal de Pagos en Línea</b></a>.</p>
+                                        <p>{instrucciones}</p>
+                                        <p>Si ya has realizado el pago, por favor, haz caso omiso de este recordatorio. Si tienes alguna consulta, no dudes en contactarnos.</p>
+                                        <p>Atentamente,<br><b>Area Cartera Ferreinox SAS BIC</b></p>
+                                    </body></html>
+                                    """
+                                else:
+                                    asunto = f"Tu Estado de Cuenta al Día - {cliente_seleccionado}"
+                                    cuerpo_html = f"""
+                                    <html><body style='font-family: Arial, sans-serif; color: #333;'>
+                                        <p>Estimado(a) {cliente_seleccionado},</p>
+                                        <p>Recibe un cordial saludo del Área de Cartera de Ferreinox SAS BIC.</p>
+                                        <p>Nos complace informarte que tu cuenta se encuentra al día. ¡Agradecemos tu excelente gestión y puntualidad en los pagos!</p>
+                                        <p>Para tu control y referencia, adjuntamos a este correo tu estado de cuenta completo.</p>
+                                        <p>Recuerda que para futuras consultas o pagos, nuestro <a href='{portal_link}'><b>Portal de Pagos en Línea</b></a> está siempre a tu disposición.</p>
+                                        <p>{instrucciones}</p>
+                                        <p>Gracias por tu confianza en nosotros.</p>
+                                        <p>Atentamente,<br><b>Area Cartera Ferreinox SAS BIC</b></p>
+                                    </body></html>
+                                    """
+                                
                                 with st.spinner(f"Enviando correo a {email_destino}..."):
                                     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                                         tmp.write(pdf_bytes)
@@ -498,7 +520,6 @@ def main():
                         total_vencido_cliente = facturas_vencidas_cliente['importe'].sum()
                         dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
                         
-                        # --- ACTUALIZADO: Mensaje de WhatsApp ---
                         mensaje_whatsapp = (
                             f"👋 ¡Hola {cliente_seleccionado}! Te saludamos desde Ferreinox SAS BIC.\n\n"
                             f"Tu estado de cuenta con un valor total vencido de *${total_vencido_cliente:,.0f}* ha sido enviado a tu correo electrónico. Tu factura más antigua tiene *{dias_max_vencido} días* de vencida.\n\n"
