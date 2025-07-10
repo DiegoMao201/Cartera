@@ -468,7 +468,7 @@ def main():
                                 
                                 if total_vencido_cliente > 0:
                                     dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
-                                    asunto = f"Recordatorio Amistoso de Saldo Pendiente - {cliente_seleccionado}"
+                                    asunto = f"Recordatorio de Saldo Pendiente - {cliente_seleccionado}"
                                     cuerpo_html = f"""
                                     <html><body style='font-family: Arial, sans-serif; color: #333;'>
                                         <p>Estimado(a) {cliente_seleccionado},</p>
