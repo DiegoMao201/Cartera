@@ -68,6 +68,17 @@ st.markdown(f"""
         color: {PALETA_COLORES['primario']};
         font-weight: bold;
     }}
+    /* --- NUEVO: Estilo para resaltar los campos de entrada --- */
+    div[data-baseweb="input"],
+    div[data-baseweb="select"],
+    div.st-multiselect,
+    div.st-text-area {{
+        background-color: #FFFFFF;
+        border: 1.5px solid {PALETA_COLORES['secundario']};
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        padding-left: 5px; /* Pequeño ajuste para que el texto no pegue al borde */
+    }}
     .button {{
         display: inline-block;
         padding: 10px 20px;
@@ -147,14 +158,22 @@ def generar_excel_formateado(df: pd.DataFrame):
         fill_red, fill_orange, fill_yellow = PatternFill(start_color='FF0000', end_color='FF0000', fill_type='solid'), PatternFill(start_color='FFA500', end_color='FFA500', fill_type='solid'), PatternFill(start_color='FFF9C4', end_color='FFF9C4', fill_type='solid')
         font_bold, font_green_bold = Font(bold=True), Font(bold=True, color="006400")
         first_data_row, last_data_row = 10, ws.max_row
-        tab = Table(displayName="CarteraVendedor", ref=f"A{first_data_row}:H{last_data_row}"); tab.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showFirstColumn=False, showLastColumn=False, showRowStripes=True, showColumnStripes=False)
+        # Corregido: Referencia de la tabla debe ser hasta la última fila de datos real
+        tab = Table(displayName="CarteraVendedor", ref=f"A{first_data_row-1}:G{last_data_row}")
+        tab.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showFirstColumn=False, showLastColumn=False, showRowStripes=True, showColumnStripes=False)
         ws.add_table(tab)
         for i, ancho in enumerate([40, 10, 12, 18, 18, 18, 15], 1): ws.column_dimensions[get_column_letter(i)].width = ancho
         importe_col_idx, dias_col_idx, formato_moneda = 6, 7, '"$"#,##0'
-        for row_idx, row in enumerate(ws.iter_rows(min_row=first_data_row + 1, max_row=last_data_row + 1), start=first_data_row + 1):
+        # Itera sobre las filas de datos, comenzando desde la primera fila de datos (start=first_data_row)
+        for row_idx, row in enumerate(ws.iter_rows(min_row=first_data_row, max_row=last_data_row), start=first_data_row):
+            # Formato de la cabecera
             if row_idx == first_data_row:
-                for cell in row: cell.font = font_bold; cell.alignment = Alignment(horizontal='center', vertical='center')
-                continue
+                 for cell in row:
+                    cell.font = font_bold
+                    cell.alignment = Alignment(horizontal='center', vertical='center')
+                 continue # Salta a la siguiente fila
+            
+            # Formato para filas de datos
             row[importe_col_idx - 1].number_format = formato_moneda
             dias_cell = row[dias_col_idx - 1]
             try:
@@ -165,10 +184,11 @@ def generar_excel_formateado(df: pd.DataFrame):
             except (ValueError, TypeError):
                 pass
             dias_cell.alignment = Alignment(horizontal='center')
+
         ws[f"E{last_data_row + 2}"] = "Tu cartera total es de:"; ws[f"E{last_data_row + 2}"].font = font_green_bold
-        ws[f"F{last_data_row + 2}"] = f"=SUBTOTAL(9,F{first_data_row + 1}:F{last_data_row})"; ws[f"F{last_data_row + 2}"].number_format = formato_moneda; ws[f"F{last_data_row + 2}"].font = font_green_bold
+        ws[f"F{last_data_row + 2}"] = f"=SUBTOTAL(9,F{first_data_row}:F{last_data_row})"; ws[f"F{last_data_row + 2}"].number_format = formato_moneda; ws[f"F{last_data_row + 2}"].font = font_green_bold
         ws[f"E{last_data_row + 3}"] = "Facturas vencidas por valor de:"; ws[f"E{last_data_row + 3}"].font = font_green_bold
-        ws[f"F{last_data_row + 3}"] = f"=SUMIF(G{first_data_row + 1}:G{last_data_row},\">0\",F{first_data_row + 1}:F{last_data_row})"; ws[f"F{last_data_row + 3}"].number_format = formato_moneda; ws[f"F{last_data_row + 3}"].font = font_green_bold
+        ws[f"F{last_data_row + 3}"] = f"=SUMIF(G{first_data_row}:G{last_data_row},\">0\",F{first_data_row}:F{last_data_row})"; ws[f"F{last_data_row + 3}"].number_format = formato_moneda; ws[f"F{last_data_row + 3}"].font = font_green_bold
     return output.getvalue()
 
 def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
@@ -217,7 +237,6 @@ def cargar_y_procesar_datos():
     if not df.empty: df = df.iloc[:-1]
     df_renamed = df.rename(columns=lambda x: normalizar_nombre(x).lower().replace(' ', '_'))
     df_renamed['serie'] = df_renamed['serie'].astype(str)
-    # Asegúrate de que las columnas de fecha se manejen correctamente incluso si están vacías
     df_renamed['fecha_documento'] = pd.to_datetime(df_renamed['fecha_documento'], errors='coerce')
     df_renamed['fecha_vencimiento'] = pd.to_datetime(df_renamed['fecha_vencimiento'], errors='coerce')
     df_filtrado = df_renamed[~df_renamed['serie'].str.contains('W|X', case=False, na=False)]
@@ -266,7 +285,7 @@ def main():
             st.error("Error al cargar las contraseñas desde los secretos.")
             st.stop()
 
-        password = st.text_input("Introduce la contraseña:", type="password")
+        password = st.text_input("Introduce la contraseña:", type="password", key="password_input")
         if st.button("Ingresar"):
             if password == str(general_password):
                 st.session_state['authentication_status'] = True
@@ -286,7 +305,6 @@ def main():
     else:
         st.title("📊 Tablero de Cartera Ferreinox SAS BIC")
         
-        # --- NUEVO: Botón para recargar datos ---
         if st.button("🔄 Recargar Datos (Limpiar Caché)"):
             st.cache_data.clear()
             st.success("Caché limpiado. Recargando los datos más recientes...")
@@ -332,11 +350,7 @@ def main():
         cartera_vencida_df = cartera_filtrada[cartera_filtrada['dias_vencido'] > 0]
         total_vencido = cartera_vencida_df['importe'].sum()
         porcentaje_vencido = (total_vencido / total_cartera) * 100 if total_cartera > 0 else 0
-        if total_cartera > 0:
-            csi = (cartera_vencida_df['importe'] * cartera_vencida_df['dias_vencido']).sum() / total_cartera
-        else:
-            csi = 0
-        
+        csi = (cartera_vencida_df['importe'] * cartera_vencida_df['dias_vencido']).sum() / total_cartera if total_cartera > 0 else 0
         antiguedad_prom_vencida = (cartera_vencida_df['importe'] * cartera_vencida_df['dias_vencido']).sum() / total_vencido if total_vencido > 0 else 0
         
         st.header("Indicadores Clave de Rendimiento (KPIs)")
@@ -348,11 +362,7 @@ def main():
         kpi_cols[4].metric(label="💥 Índice de Severidad (CSI)", value=f"{csi:.1f}", help="Impacto ponderado de la deuda vencida sobre la cartera total. Un número más alto indica mayor riesgo.")
 
         with st.expander("🤖 **Análisis y Recomendaciones del Asistente IA**", expanded=True):
-            kpis_dict = {
-                'porcentaje_vencido': porcentaje_vencido,
-                'antiguedad_prom_vencida': antiguedad_prom_vencida,
-                'csi': csi
-            }
+            kpis_dict = {'porcentaje_vencido': porcentaje_vencido, 'antiguedad_prom_vencida': antiguedad_prom_vencida, 'csi': csi}
             analisis = generar_analisis_cartera(kpis_dict)
             st.markdown(analisis, unsafe_allow_html=True)
         st.markdown("---")
@@ -383,10 +393,7 @@ def main():
                 df_clientes_vencidos = cartera_vencida_df.groupby('nombrecliente')['importe'].sum().reset_index()
                 df_clientes_vencidos = df_clientes_vencidos[df_clientes_vencidos['importe'] > 0]
                 
-                fig_treemap = px.treemap(df_clientes_vencidos, path=[px.Constant("Clientes con Deuda Vencida"), 'nombrecliente'], values='importe',
-                                         title='Haga clic en un recuadro para explorar',
-                                         color_continuous_scale='Reds',
-                                         color='importe')
+                fig_treemap = px.treemap(df_clientes_vencidos, path=[px.Constant("Clientes con Deuda Vencida"), 'nombrecliente'], values='importe', title='Haga clic en un recuadro para explorar', color_continuous_scale='Reds', color='importe')
                 fig_treemap.update_layout(margin = dict(t=50, l=25, r=25, b=25))
                 st.plotly_chart(fig_treemap, use_container_width=True)
 
@@ -397,15 +404,11 @@ def main():
                     client_debt_cumsum = client_debt.cumsum()
                     total_debt_vencida = client_debt.sum()
                     pareto_limit = total_debt_vencida * 0.80
-                    # Aseguramos incluir al menos un cliente si el primero ya supera el 80%
                     pareto_clients_df = client_debt.to_frame().iloc[0:len(client_debt_cumsum[client_debt_cumsum <= pareto_limit]) + 1]
-
                     num_total_clientes_deuda = len(client_debt)
                     num_clientes_pareto = len(pareto_clients_df)
                     porcentaje_clientes_pareto = (num_clientes_pareto / num_total_clientes_deuda) * 100 if num_total_clientes_deuda > 0 else 0
-
                     st.info(f"El **{porcentaje_clientes_pareto:.0f}%** de los clientes ({num_clientes_pareto} de {num_total_clientes_deuda}) representan aprox. el **80%** del total de la cartera vencida. Estos son:")
-                    
                     df_pareto_display = pareto_clients_df.reset_index()
                     df_pareto_display.columns = ['Cliente', 'Monto Vencido']
                     df_pareto_display['Monto Vencido'] = df_pareto_display['Monto Vencido'].map('${:,.0f}'.format)
@@ -460,6 +463,7 @@ def main():
                                 sender_email = st.secrets["email_credentials"]["sender_email"]
                                 sender_password = st.secrets["email_credentials"]["sender_password"]
                                 asunto = f"Estado de Cuenta - Ferreinox SAS BIC - {cliente_seleccionado}"
+                                # --- ACTUALIZADO: Cuerpo del correo con nueva firma ---
                                 cuerpo_html = f"""
                                 <html><body>
                                 <p>Hola, {cliente_seleccionado}</p>
@@ -467,23 +471,17 @@ def main():
                                 <p>Puedes realizar tu pago en nuestro <b>Portal de Pagos en línea</b>:</p>
                                 <p><a href="https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/">Acceder al Portal de Pagos</a></p>
                                 <p><b>Instrucciones:</b> Usuario: <b>{nit_cliente}</b> (Tu NIT) | Código Único: <b>{cod_cliente}</b></p>
-                                <p>Gracias,<br><b>Equipo Ferreinox SAS BIC</b></p>
+                                <p>Gracias,<br><b>Area Cartera Ferreinox SAS BIC</b></p>
                                 </body></html>
                                 """
                                 with st.spinner(f"Enviando correo a {email_destino}..."):
-                                    # --- CORRECCIÓN: Usar un archivo temporal para el adjunto ---
                                     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                                         tmp.write(pdf_bytes)
                                         tmp_path = tmp.name
                                     
                                     yag = yagmail.SMTP(sender_email, sender_password)
-                                    yag.send(
-                                        to=email_destino,
-                                        subject=asunto,
-                                        contents=cuerpo_html,
-                                        attachments=tmp_path
-                                    )
-                                    os.remove(tmp_path) # Limpiar el archivo temporal
+                                    yag.send(to=email_destino, subject=asunto, contents=cuerpo_html, attachments=tmp_path)
+                                    os.remove(tmp_path)
                                 st.success(f"¡Correo enviado exitosamente a {email_destino}!")
 
                             except Exception as e:
@@ -492,7 +490,6 @@ def main():
                 
                 with col_whatsapp:
                     st.subheader("📲 Enviar por WhatsApp")
-                    # --- NUEVO: Campo de texto editable para el número ---
                     numero_completo_para_mostrar = f"+57{telefono_cliente}" if telefono_cliente else "+57"
                     numero_destino_wa = st.text_input("Verificar o modificar número de WhatsApp:", value=numero_completo_para_mostrar)
 
@@ -501,20 +498,19 @@ def main():
                         total_vencido_cliente = facturas_vencidas_cliente['importe'].sum()
                         dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
                         
+                        # --- ACTUALIZADO: Mensaje de WhatsApp ---
                         mensaje_whatsapp = (
-                            f"👋 ¡Hola {cliente_seleccionado}! Te saludamos desde Ferreinox SAS BIC para recordarte sobre tus facturas vencidas.\n\n"
-                            f"Suma total vencida: *${total_vencido_cliente:,.0f}*\n"
-                            f"Tu factura más antigua tiene: *{dias_max_vencido} días* de vencida.\n\n"
-                            f"Puedes ponerte al día en nuestro Portal de Pagos:\n"
+                            f"👋 ¡Hola {cliente_seleccionado}! Te saludamos desde Ferreinox SAS BIC.\n\n"
+                            f"Tu estado de cuenta con un valor total vencido de *${total_vencido_cliente:,.0f}* ha sido enviado a tu correo electrónico. Tu factura más antigua tiene *{dias_max_vencido} días* de vencida.\n\n"
+                            f"Para ponerte al día, puedes usar nuestro Portal de Pagos en línea:\n"
                             f"🔗 https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/\n\n"
-                            f"Para ingresar, usa estos datos:\n"
-                            f"👤 *Usuario:* {nit_cliente}\n"
-                            f"🔑 *Código Único Interno:* {cod_cliente}\n\n"
+                            f"Tus datos de acceso son:\n"
+                            f"👤 *Usuario:* {nit_cliente} (Tu NIT)\n"
+                            f"🔑 *Código Único:* {cod_cliente}\n\n"
                             f"¡Agradecemos tu pronta gestión!"
                         )
                         mensaje_codificado = quote(mensaje_whatsapp)
                         
-                        # Limpiar el número de caracteres no numéricos
                         numero_limpio = re.sub(r'\D', '', numero_destino_wa)
                         
                         if numero_limpio:
