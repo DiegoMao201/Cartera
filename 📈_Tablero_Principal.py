@@ -1,5 +1,5 @@
 # ======================================================================================
-# ARCHIVO: 📈_Tablero_Principal.py (v.Definitiva con Dropbox y Separador Pipe)
+# ARCHIVO: 📈_Tablero_Principal.py (v.Definitiva con Corrección de Duplicados)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -80,7 +80,6 @@ def cargar_datos_desde_dropbox():
                 'Cupo Aprobado', 'Dias Vencido'
             ]
             
-            # --- CAMBIO IMPORTANTE: Se usa el separador '|' ---
             df = pd.read_csv(StringIO(contenido_csv), header=None, names=nombres_columnas_originales, sep='|', engine='python')
             return df
     except Exception as e:
@@ -99,7 +98,9 @@ def cargar_datos_historicos():
         try:
             df_hist = pd.read_excel(archivo)
             if not df_hist.empty:
-                df_hist = df_hist.iloc[:-1]
+                # La lógica original eliminaba la última fila, la preservamos
+                if "Total" in str(df_hist.iloc[-1, 0]):
+                    df_hist = df_hist.iloc[:-1]
             lista_de_dataframes.append(df_hist)
         except Exception as e:
             st.warning(f"No se pudo leer el archivo histórico {archivo}: {e}")
@@ -111,8 +112,7 @@ def cargar_datos_historicos():
 @st.cache_data
 def cargar_y_procesar_datos():
     """
-    Orquesta la carga de datos desde Dropbox y archivos locales, 
-    los combina y aplica el procesamiento original.
+    Orquesta la carga de datos, los combina, limpia duplicados y procesa.
     """
     df_dropbox = cargar_datos_desde_dropbox()
     df_historico = cargar_datos_historicos()
@@ -122,7 +122,13 @@ def cargar_y_procesar_datos():
     if df_combinado.empty:
         st.error("No se pudieron cargar datos de ninguna fuente. La aplicación no puede continuar.")
         st.stop()
+        
+    # --- SOLUCIÓN AL ERROR TypeError ---
+    # Elimina columnas duplicadas que pueden venir de archivos Excel malformados,
+    # conservando la primera aparición de cada columna.
+    df_combinado = df_combinado.loc[:, ~df_combinado.columns.duplicated()]
     
+    # Aplica la misma lógica de procesamiento del código original
     df_renamed = df_combinado.rename(columns=lambda x: normalizar_nombre(x).lower().replace(' ', '_'))
     
     df_renamed['serie'] = df_renamed['serie'].astype(str)
@@ -167,6 +173,7 @@ ZONAS_SERIE = { "PEREIRA": [155, 189, 158, 439], "MANIZALES": [157, 238], "ARMEN
 
 def procesar_cartera(df: pd.DataFrame) -> pd.DataFrame:
     df_proc = df.copy()
+    # Estas conversiones ahora se hacen sobre un DataFrame limpio y sin duplicados
     df_proc['importe'] = pd.to_numeric(df_proc['importe'], errors='coerce').fillna(0)
     df_proc['numero'] = pd.to_numeric(df_proc['numero'], errors='coerce').fillna(0)
     df_proc.loc[df_proc['numero'] < 0, 'importe'] *= -1
@@ -427,7 +434,6 @@ def main():
         with tab3:
             st.subheader(f"Detalle Completo: {vendedor_sel} / {zona_sel} / {poblacion_sel}")
             st.download_button(label="📥 Descargar Reporte en Excel", data=generar_excel_formateado(cartera_filtrada), file_name=f'Cartera_{normalizar_nombre(vendedor_sel)}_{zona_sel}_{poblacion_sel}.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-            
             columnas_disponibles = cartera_filtrada.columns
             columnas_a_ocultar_existentes = [col for col in ['provincia', 'telefono1', 'telefono2', 'entidad_autoriza', 'e_mail', 'descuento', 'cupo_aprobado', 'nomvendedor_norm', 'zona'] if col in columnas_disponibles]
             cartera_para_mostrar = cartera_filtrada.drop(columns=columnas_a_ocultar_existentes, errors='ignore')
