@@ -1,5 +1,5 @@
 # ======================================================================================
-# ARCHIVO: 📈_Tablero_Principal.py (v.Final con Dropbox Refresh Token)
+# ARCHIVO: 📈_Tablero_Principal.py (v.Híbrida Final)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -20,7 +20,8 @@ from fpdf import FPDF
 import yagmail
 from urllib.parse import quote
 import tempfile
-import dropbox # <- NUEVA LIBRERÍA
+import dropbox # <- Librería para Dropbox
+import glob    # <- Librería para buscar archivos históricos
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
@@ -29,7 +30,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- PALETA DE COLORES Y CSS (Sin cambios) ---
+# --- PALETA DE COLORES Y CSS ---
 PALETA_COLORES = {
     "primario": "#003865",
     "secundario": "#0058A7",
@@ -42,101 +43,154 @@ PALETA_COLORES = {
     "alerta_amarillo": "#FBC02D",
     "exito_verde": "#388E3C"
 }
+
 st.markdown(f"""
 <style>
-    .stApp {{ background-color: {PALETA_COLORES['fondo_claro']}; }}
-    .stMetric {{ background-color: #FFFFFF; border-radius: 10px; padding: 15px; border: 1px solid #CCCCCC; }}
-    .stTabs [data-baseweb="tab-list"] {{ gap: 24px; }}
-    .stTabs [data-baseweb="tab"] {{ height: 50px; white-space: pre-wrap; background-color: transparent; border-radius: 4px 4px 0px 0px; border-bottom: 2px solid #C0C0C0; }}
-    .stTabs [aria-selected="true"] {{ border-bottom: 2px solid {PALETA_COLORES['primario']}; color: {PALETA_COLORES['primario']}; font-weight: bold; }}
-    div[data-baseweb="input"], div[data-baseweb="select"], div.st-multiselect, div.st-text-area {{ background-color: #FFFFFF; border: 1.5px solid {PALETA_COLORES['secundario']}; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); padding-left: 5px; }}
-    .button {{ display: inline-block; padding: 10px 20px; color: white; background-color: #25D366; border-radius: 5px; text-align: center; text-decoration: none; font-weight: bold; }}
+    .stApp {{
+        background-color: {PALETA_COLORES['fondo_claro']};
+    }}
+    .stMetric {{
+        background-color: #FFFFFF;
+        border-radius: 10px;
+        padding: 15px;
+        border: 1px solid #CCCCCC;
+    }}
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: 24px;
+    }}
+    .stTabs [data-baseweb="tab"] {{
+        height: 50px;
+        white-space: pre-wrap;
+        background-color: transparent;
+        border-radius: 4px 4px 0px 0px;
+        border-bottom: 2px solid #C0C0C0;
+    }}
+    .stTabs [aria-selected="true"] {{
+        border-bottom: 2px solid {PALETA_COLORES['primario']};
+        color: {PALETA_COLORES['primario']};
+        font-weight: bold;
+    }}
+    div[data-baseweb="input"],
+    div[data-baseweb="select"],
+    div.st-multiselect,
+    div.st-text-area {{
+        background-color: #FFFFFF;
+        border: 1.5px solid {PALETA_COLORES['secundario']};
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        padding-left: 5px;
+    }}
+    .button {{
+        display: inline-block;
+        padding: 10px 20px;
+        color: white;
+        background-color: #25D366;
+        border-radius: 5px;
+        text-align: center;
+        text-decoration: none;
+        font-weight: bold;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
 
 # ======================================================================================
-# --- FUNCIÓN PARA CARGAR DATOS DESDE DROPBOX (CORREGIDA) ---
+# --- LÓGICA DE CARGA DE DATOS (MODIFICADA) ---
 # ======================================================================================
-@st.cache_data(ttl=600) # Cache por 10 minutos
+
+@st.cache_data(ttl=600)
 def cargar_datos_desde_dropbox():
-    """
-    Se conecta a Dropbox usando App Key, App Secret y Refresh Token para asegurar
-    una conexión persistente.
-    """
+    """Carga los datos más recientes desde el archivo CSV en Dropbox."""
     try:
-        # Carga las credenciales persistentes desde los secretos de Streamlit
         APP_KEY = st.secrets["dropbox"]["app_key"]
         APP_SECRET = st.secrets["dropbox"]["app_secret"]
         REFRESH_TOKEN = st.secrets["dropbox"]["refresh_token"]
         
-        # Inicializa el cliente de Dropbox con el refresh token
-        with dropbox.Dropbox(
-            app_key=APP_KEY,
-            app_secret=APP_SECRET,
-            oauth2_refresh_token=REFRESH_TOKEN
-        ) as dbx:
-            
-            # Ruta del archivo en tu Dropbox
+        with dropbox.Dropbox(app_key=APP_KEY, app_secret=APP_SECRET, oauth2_refresh_token=REFRESH_TOKEN) as dbx:
             path_archivo_dropbox = '/data/cartera_detalle.csv'
-            
-            # Descarga el archivo
             metadata, res = dbx.files_download(path=path_archivo_dropbox)
-            
-            # --- LÍNEA CORREGIDA ---
-            # Lee el contenido del archivo en memoria usando la codificación 'latin-1'
             contenido_csv = res.content.decode('latin-1')
             
-            # Define los nombres de las columnas
-            nombres_columnas = [
-                'serie', 'numero', 'fecha_documento', 'fecha_vencimiento', 'cod_cliente',
-                'nombrecliente', 'nit', 'poblacion', 'provincia', 'telefono1', 'telefono2',
-                'nomvendedor', 'entidad_autoriza', 'e_mail', 'importe', 'descuento',
-                'cupo_aprobado', 'dias_vencido'
+            # Nombres de columna basados en la estructura del Excel original
+            # El código aplicará la normalización a estos nombres más adelante
+            nombres_columnas_originales = [
+                'Serie', 'Numero', 'Fecha Documento', 'Fecha Vencimiento', 'Cod Cliente',
+                'NombreCliente', 'Nit', 'Poblacion', 'Provincia', 'Telefono1', 'Telefono2',
+                'NomVendedor', 'Entidad Autoriza', 'E-Mail', 'Importe', 'Descuento',
+                'Cupo Aprobado', 'Dias Vencido'
             ]
             
-            # Lee el CSV usando StringIO
-            df = pd.read_csv(StringIO(contenido_csv), header=None, names=nombres_columnas)
-            
+            df = pd.read_csv(StringIO(contenido_csv), header=None, names=nombres_columnas_originales, sep=',', engine='python')
             return df
 
-    except dropbox.exceptions.AuthError as err:
-        st.error(f"Error de Autenticación en Dropbox: {err}. Verifica que tus credenciales (app_key, app_secret, refresh_token) en secrets.toml sean correctas.")
-        return None
-    except dropbox.exceptions.ApiError as err:
-        st.error(f"Error de API de Dropbox: {err}. Verifica la ruta del archivo y los permisos de la aplicación en Dropbox.")
-        return None
     except Exception as e:
-        st.error(f"Ocurrió un error inesperado al cargar los datos desde Dropbox: {e}")
-        return None
+        st.error(f"Error al cargar datos desde Dropbox: {e}")
+        return pd.DataFrame()
 
-# --- FUNCIÓN DE PROCESAMIENTO (Sin cambios) ---
+@st.cache_data
+def cargar_datos_historicos():
+    """Busca y carga todos los archivos Excel históricos locales."""
+    archivos_historicos = glob.glob("Cartera_*.xlsx")
+    if not archivos_historicos:
+        return pd.DataFrame()
+
+    lista_de_dataframes = []
+    for archivo in archivos_historicos:
+        try:
+            df_hist = pd.read_excel(archivo)
+            # Eliminar la última fila de totales si existe
+            if not df_hist.empty:
+                df_hist = df_hist.iloc[:-1]
+            lista_de_dataframes.append(df_hist)
+        except Exception as e:
+            st.warning(f"No se pudo leer el archivo histórico {archivo}: {e}")
+            
+    if lista_de_dataframes:
+        return pd.concat(lista_de_dataframes, ignore_index=True)
+    return pd.DataFrame()
+
+@st.cache_data
 def cargar_y_procesar_datos():
-    df_crudo = cargar_datos_desde_dropbox()
+    """
+    Función principal que orquesta la carga desde Dropbox y archivos locales, 
+    los combina y aplica el procesamiento original.
+    """
+    # 1. Cargar datos de ambas fuentes
+    df_dropbox = cargar_datos_desde_dropbox()
+    df_historico = cargar_datos_historicos()
     
-    if df_crudo is None or df_crudo.empty:
-        st.error("No se pudieron cargar los datos desde Dropbox. La aplicación no puede continuar.")
-        st.stop()
+    # 2. Combinar los DataFrames
+    df_combinado = pd.concat([df_dropbox, df_historico], ignore_index=True)
 
-    df_crudo['serie'] = df_crudo['serie'].astype(str)
-    df_crudo['fecha_documento'] = pd.to_datetime(df_crudo['fecha_documento'], errors='coerce')
-    df_crudo['fecha_vencimiento'] = pd.to_datetime(df_crudo['fecha_vencimiento'], errors='coerce')
+    if df_combinado.empty:
+        st.error("No se pudieron cargar datos de ninguna fuente. La aplicación no puede continuar.")
+        st.stop()
     
-    df_filtrado = df_crudo[~df_crudo['serie'].str.contains('W|X', case=False, na=False)]
+    # 3. Aplicar la misma lógica de procesamiento del código original
+    df_renamed = df_combinado.rename(columns=lambda x: normalizar_nombre(x).lower().replace(' ', '_'))
+    
+    df_renamed['serie'] = df_renamed['serie'].astype(str)
+    df_renamed['fecha_documento'] = pd.to_datetime(df_renamed['fecha_documento'], errors='coerce')
+    df_renamed['fecha_vencimiento'] = pd.to_datetime(df_renamed['fecha_vencimiento'], errors='coerce')
+    
+    df_filtrado = df_renamed[~df_renamed['serie'].str.contains('W|X', case=False, na=False)]
     
     return procesar_cartera(df_filtrado)
 
 
 # ======================================================================================
-# --- OTRAS FUNCIONES AUXILIARES (Sin cambios) ---
+# --- CLASE PDF Y FUNCIONES AUXILIARES (LÓGICA ORIGINAL INTACTA) ---
 # ======================================================================================
 class PDF(FPDF):
     def header(self):
-        try: self.image("LOGO FERREINOX SAS BIC 2024.png", 10, 8, 80)
-        except FileNotFoundError: self.set_font('Arial', 'B', 12); self.cell(80, 10, 'Logo no encontrado', 0, 0, 'L')
+        try:
+            self.image("LOGO FERREINOX SAS BIC 2024.png", 10, 8, 80)
+        except FileNotFoundError:
+            self.set_font('Arial', 'B', 12); self.cell(80, 10, 'Logo no encontrado', 0, 0, 'L')
         self.set_font('Arial', 'B', 18); self.cell(0, 10, 'Estado de Cuenta', 0, 1, 'R')
         self.set_font('Arial', 'I', 9); self.cell(0, 10, f'Generado el: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}', 0, 1, 'R')
         self.ln(5); self.set_line_width(0.5); self.set_draw_color(220, 220, 220); self.line(10, 35, 200, 35); self.ln(10)
+
     def footer(self):
         self.set_y(-40)
         self.set_font('Arial', 'I', 9); self.set_text_color(100, 100, 100)
@@ -196,8 +250,11 @@ def generar_excel_formateado(df: pd.DataFrame):
         importe_col_idx, dias_col_idx, formato_moneda = 6, 7, '"$"#,##0'
         for row_idx, row in enumerate(ws.iter_rows(min_row=first_data_row, max_row=last_data_row), start=first_data_row):
             if row_idx == first_data_row:
-                 for cell in row: cell.font = font_bold; cell.alignment = Alignment(horizontal='center', vertical='center')
+                 for cell in row:
+                    cell.font = font_bold
+                    cell.alignment = Alignment(horizontal='center', vertical='center')
                  continue
+            
             row[importe_col_idx - 1].number_format = formato_moneda
             dias_cell = row[dias_col_idx - 1]
             try:
@@ -205,8 +262,10 @@ def generar_excel_formateado(df: pd.DataFrame):
                 if dias > 60: dias_cell.fill = fill_red
                 elif dias > 30: dias_cell.fill = fill_orange
                 elif dias > 0: dias_cell.fill = fill_yellow
-            except (ValueError, TypeError): pass
+            except (ValueError, TypeError):
+                pass
             dias_cell.alignment = Alignment(horizontal='center')
+
         ws[f"E{last_data_row + 2}"] = "Tu cartera total es de:"; ws[f"E{last_data_row + 2}"].font = font_green_bold
         ws[f"F{last_data_row + 2}"] = f"=SUBTOTAL(9,F{first_data_row}:F{last_data_row})"; ws[f"F{last_data_row + 2}"].number_format = formato_moneda; ws[f"F{last_data_row + 2}"].font = font_green_bold
         ws[f"E{last_data_row + 3}"] = "Facturas vencidas por valor de:"; ws[f"E{last_data_row + 3}"].font = font_green_bold
@@ -254,20 +313,32 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
     return bytes(pdf.output())
 
 def generar_analisis_cartera(kpis: dict):
+    """Genera un análisis en texto basado en los KPIs calculados."""
     comentarios = []
-    if kpis['porcentaje_vencido'] > 30: comentarios.append(f"<li>🔴 **Alerta Crítica:** El <b>{kpis['porcentaje_vencido']:.1f}%</b> de la cartera está vencida. Requiere acciones inmediatas.</li>")
-    elif kpis['porcentaje_vencido'] > 15: comentarios.append(f"<li>🟡 **Advertencia:** Con un <b>{kpis['porcentaje_vencido']:.1f}%</b> de cartera vencida, es momento de intensificar gestiones.</li>")
-    else: comentarios.append(f"<li>🟢 **Saludable:** El porcentaje de cartera vencida (<b>{kpis['porcentaje_vencido']:.1f}%</b>) está en un nivel manejable.</li>")
-    if kpis['antiguedad_prom_vencida'] > 60: comentarios.append(f"<li>🔴 **Riesgo Alto:** Antigüedad promedio de <b>{kpis['antiguedad_prom_vencida']:.0f} días</b>. Priorizar recuperación.</li>")
-    elif kpis['antiguedad_prom_vencida'] > 30: comentarios.append(f"<li>🟡 **Atención Requerida:** Antigüedad promedio de <b>{kpis['antiguedad_prom_vencida']:.0f} días</b>. Evitar que envejezcan más.</li>")
-    if kpis['csi'] > 15: comentarios.append(f"<li>🔴 **Severidad Crítica (CSI: {kpis['csi']:.1f}):** Impacto muy alto que afecta el flujo de caja.</li>")
-    elif kpis['csi'] > 5: comentarios.append(f"<li>🟡 **Severidad Moderada (CSI: {kpis['csi']:.1f}):** Hay focos de deuda antigua o de alto valor que pesan.</li>")
-    else: comentarios.append(f"<li>🟢 **Severidad Baja (CSI: {kpis['csi']:.1f}):** Impacto bajo, indicando buena gestión.</li>")
+    
+    if kpis['porcentaje_vencido'] > 30:
+        comentarios.append(f"<li>🔴 **Alerta Crítica:** El <b>{kpis['porcentaje_vencido']:.1f}%</b> de la cartera está vencida. Requiere acciones inmediatas.</li>")
+    elif kpis['porcentaje_vencido'] > 15:
+        comentarios.append(f"<li>🟡 **Advertencia:** Con un <b>{kpis['porcentaje_vencido']:.1f}%</b> de cartera vencida, es momento de intensificar gestiones.</li>")
+    else:
+        comentarios.append(f"<li>🟢 **Saludable:** El porcentaje de cartera vencida (<b>{kpis['porcentaje_vencido']:.1f}%</b>) está en un nivel manejable.</li>")
+
+    if kpis['antiguedad_prom_vencida'] > 60:
+        comentarios.append(f"<li>🔴 **Riesgo Alto:** Antigüedad promedio de <b>{kpis['antiguedad_prom_vencida']:.0f} días</b>. Priorizar recuperación.</li>")
+    elif kpis['antiguedad_prom_vencida'] > 30:
+        comentarios.append(f"<li>🟡 **Atención Requerida:** Antigüedad promedio de <b>{kpis['antiguedad_prom_vencida']:.0f} días</b>. Evitar que envejezcan más.</li>")
+
+    if kpis['csi'] > 15:
+        comentarios.append(f"<li>🔴 **Severidad Crítica (CSI: {kpis['csi']:.1f}):** Impacto muy alto que afecta el flujo de caja.</li>")
+    elif kpis['csi'] > 5:
+        comentarios.append(f"<li>🟡 **Severidad Moderada (CSI: {kpis['csi']:.1f}):** Hay focos de deuda antigua o de alto valor que pesan.</li>")
+    else:
+        comentarios.append(f"<li>🟢 **Severidad Baja (CSI: {kpis['csi']:.1f}):** Impacto bajo, indicando buena gestión.</li>")
+
     return "<ul>" + "".join(comentarios) + "</ul>"
 
-
 # ======================================================================================
-# --- BLOQUE PRINCIPAL DE LA APP (Sin cambios en la lógica de UI) ---
+# --- BLOQUE PRINCIPAL DE LA APP (LÓGICA ORIGINAL INTACTA) ---
 # ======================================================================================
 def main():
     if 'authentication_status' not in st.session_state:
@@ -281,6 +352,7 @@ def main():
         except Exception:
             st.error("Error al cargar las contraseñas desde los secretos.")
             st.stop()
+
         password = st.text_input("Introduce la contraseña:", type="password", key="password_input")
         if st.button("Ingresar"):
             if password == str(general_password):
@@ -297,17 +369,20 @@ def main():
 
     st.title("📊 Tablero de Cartera Ferreinox SAS BIC")
     
-    if st.button("🔄 Recargar Datos desde Dropbox"):
+    if st.button("🔄 Recargar Datos (Dropbox + Locales)"):
         st.cache_data.clear()
-        st.success("Caché limpiado. Recargando los datos más recientes desde Dropbox...")
+        st.success("Caché limpiado. Recargando todos los datos...")
         st.rerun()
 
     with st.sidebar:
-        try: st.image("LOGO FERREINOX SAS BIC 2024.png", use_container_width=True)
-        except FileNotFoundError: st.warning("Logo no encontrado.")
+        try:
+            st.image("LOGO FERREINOX SAS BIC 2024.png", use_container_width=True)
+        except FileNotFoundError:
+            st.warning("Logo no encontrado.")
         st.success(f"Usuario: {st.session_state['vendedor_autenticado']}")
         if st.button("Cerrar Sesión"):
-            for key in list(st.session_state.keys()): del st.session_state[key]
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
             st.rerun()
 
     cartera_procesada = cargar_y_procesar_datos()
@@ -318,6 +393,7 @@ def main():
         vendedor_sel = st.sidebar.selectbox("Filtrar por Vendedor:", vendedores_en_excel_display)
     else:
         vendedor_sel = st.session_state['vendedor_autenticado']
+    
     lista_zonas = ["Todas las Zonas"] + sorted(cartera_procesada['zona'].dropna().unique())
     zona_sel = st.sidebar.selectbox("Filtrar por Zona:", lista_zonas)
     lista_poblaciones = ["Todas"] + sorted(cartera_procesada['poblacion'].dropna().unique())
@@ -341,10 +417,10 @@ def main():
     st.header("Indicadores Clave de Rendimiento (KPIs)")
     kpi_cols = st.columns(5)
     kpi_cols[0].metric("💰 Cartera Total", f"${total_cartera:,.0f}")
-    kpi_cols[1].metric("🔥 Cartera Vencida", f"${total_vencido:,.0f}")
+    kpi_cols[1].metric("🔥 Cartera Vencida", f"${total_vencido:,.0f}", help="Suma del importe de facturas con días de vencimiento > 0.")
     kpi_cols[2].metric("📈 % Vencido s/ Total", f"{porcentaje_vencido:.1f}%")
-    kpi_cols[3].metric("⏳ Antigüedad Prom. Vencida", f"{antiguedad_prom_vencida:.0f} días")
-    kpi_cols[4].metric(label="💥 Índice de Severidad (CSI)", value=f"{csi:.1f}")
+    kpi_cols[3].metric("⏳ Antigüedad Prom. Vencida", f"{antiguedad_prom_vencida:.0f} días", help="Edad promedio ponderada, solo de facturas YA VENCIDAS.")
+    kpi_cols[4].metric(label="💥 Índice de Severidad (CSI)", value=f"{csi:.1f}", help="Impacto ponderado de la deuda vencida sobre la cartera total. Un número más alto indica mayor riesgo.")
 
     with st.expander("🤖 **Análisis y Recomendaciones del Asistente IA**", expanded=True):
         kpis_dict = {'porcentaje_vencido': porcentaje_vencido, 'antiguedad_prom_vencida': antiguedad_prom_vencida, 'csi': csi}
@@ -353,6 +429,7 @@ def main():
     st.markdown("---")
 
     tab1, tab2, tab3 = st.tabs(["📊 Visión General de la Cartera", "👥 Análisis por Cliente", "📑 Detalle Completo"])
+
     with tab1:
         st.subheader("Distribución de Cartera por Antigüedad")
         col_grafico, col_tabla_resumen = st.columns([2, 1])
@@ -367,16 +444,20 @@ def main():
             df_edades['Porcentaje'] = (df_edades['importe'] / total_cartera * 100).map('{:.1f}%'.format) if total_cartera > 0 else '0.0%'
             df_edades['importe'] = df_edades['importe'].map('${:,.0f}'.format)
             st.dataframe(df_edades.rename(columns={'edad_cartera': 'Rango', 'importe': 'Monto'}), use_container_width=True, hide_index=True)
+    
     with tab2:
         st.subheader("Análisis de Concentración de Deuda por Cliente")
         col_pareto, col_treemap = st.columns(2)
+        
         with col_treemap:
             st.markdown("**Visualización de Cartera Vencida por Cliente (Treemap)**")
             df_clientes_vencidos = cartera_vencida_df.groupby('nombrecliente')['importe'].sum().reset_index()
             df_clientes_vencidos = df_clientes_vencidos[df_clientes_vencidos['importe'] > 0]
+            
             fig_treemap = px.treemap(df_clientes_vencidos, path=[px.Constant("Clientes con Deuda Vencida"), 'nombrecliente'], values='importe', title='Haga clic en un recuadro para explorar', color_continuous_scale='Reds', color='importe')
             fig_treemap.update_layout(margin = dict(t=50, l=25, r=25, b=25))
             st.plotly_chart(fig_treemap, use_container_width=True)
+
         with col_pareto:
             st.markdown("**Clientes Clave (Principio de Pareto)**")
             client_debt = cartera_vencida_df.groupby('nombrecliente')['importe'].sum().sort_values(ascending=False)
@@ -388,18 +469,21 @@ def main():
                 num_total_clientes_deuda = len(client_debt)
                 num_clientes_pareto = len(pareto_clients_df)
                 porcentaje_clientes_pareto = (num_clientes_pareto / num_total_clientes_deuda) * 100 if num_total_clientes_deuda > 0 else 0
-                st.info(f"El **{porcentaje_clientes_pareto:.0f}%** de los clientes ({num_clientes_pareto} de {num_total_clientes_deuda}) representan aprox. el **80%** de la cartera vencida.")
+                st.info(f"El **{porcentaje_clientes_pareto:.0f}%** de los clientes ({num_clientes_pareto} de {num_total_clientes_deuda}) representan aprox. el **80%** del total de la cartera vencida.")
                 df_pareto_display = pareto_clients_df.reset_index()
                 df_pareto_display.columns = ['Cliente', 'Monto Vencido']
                 df_pareto_display['Monto Vencido'] = df_pareto_display['Monto Vencido'].map('${:,.0f}'.format)
                 st.dataframe(df_pareto_display, height=250, hide_index=True, use_container_width=True)
             else:
                 st.info("No hay cartera vencida para analizar.")
+
     with tab3:
         st.subheader(f"Detalle Completo: {vendedor_sel} / {zona_sel} / {poblacion_sel}")
-        st.download_button(label="📥 Descargar Reporte en Excel", data=generar_excel_formateado(cartera_filtrada), file_name=f'Cartera_{normalizar_nombre(vendedor_sel)}_{zona_sel}_{poblacion_sel}.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-        columnas_a_ocultar = ['provincia', 'telefono1', 'telefono2', 'entidad_autoriza', 'e_mail', 'descuento', 'cupo_aprobado', 'nomvendedor_norm', 'zona']
-        cartera_para_mostrar = cartera_filtrada.drop(columns=columnas_a_ocultar, errors='ignore')
+        st.download_button(label="📥 Descargar Reporte en Excel con Formato", data=generar_excel_formateado(cartera_filtrada), file_name=f'Cartera_{normalizar_nombre(vendedor_sel)}_{zona_sel}_{poblacion_sel}.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        
+        columnas_disponibles = cartera_filtrada.columns
+        columnas_a_ocultar_existentes = [col for col in ['provincia', 'telefono1', 'telefono2', 'entidad_autoriza', 'e_mail', 'descuento', 'cupo_aprobado', 'nomvendedor_norm', 'zona'] if col in columnas_disponibles]
+        cartera_para_mostrar = cartera_filtrada.drop(columns=columnas_a_ocultar_existentes, errors='ignore')
         st.dataframe(cartera_para_mostrar, use_container_width=True, hide_index=True)
         
     st.markdown("---")
@@ -414,21 +498,25 @@ def main():
         if cliente_seleccionado:
             datos_cliente_seleccionado = cartera_filtrada[cartera_filtrada['nombrecliente'] == cliente_seleccionado].copy()
             info_cliente_raw = datos_cliente_seleccionado.iloc[0]
+            
             correo_cliente = info_cliente_raw.get('e_mail', 'Correo no disponible')
             telefono_raw = str(info_cliente_raw.get('telefono1', ''))
             telefono_cliente = telefono_raw.split('.')[0] if '.' in telefono_raw else telefono_raw
             nit_cliente = str(info_cliente_raw.get('nit', 'N/A'))
             cod_cliente = str(int(info_cliente_raw['cod_cliente'])) if pd.notna(info_cliente_raw['cod_cliente']) else "N/A"
+
             st.write(f"**Facturas para {cliente_seleccionado}:**")
             st.dataframe(datos_cliente_seleccionado[['numero', 'fecha_documento', 'fecha_vencimiento', 'dias_vencido', 'importe']], use_container_width=True, hide_index=True)
+            
             pdf_bytes = generar_pdf_estado_cuenta(datos_cliente_seleccionado)
             st.download_button(label="📄 Descargar Estado de Cuenta (PDF)", data=pdf_bytes, file_name=f"Estado_Cuenta_{normalizar_nombre(cliente_seleccionado).replace(' ', '_')}.pdf", mime="application/pdf")
+
             st.markdown("---")
             col_email, col_whatsapp = st.columns(2)
 
             with col_email:
                 st.subheader("✉️ Enviar por Correo Electrónico")
-                email_destino = st.text_input("Verificar o modificar correo:", value=correo_cliente)
+                email_destino = st.text_input("Verificar o modificar correo del cliente:", value=correo_cliente)
                 
                 if st.button("📧 Enviar Correo con Estado de Cuenta"):
                     if not email_destino or email_destino == 'Correo no disponible' or '@' not in email_destino:
@@ -437,57 +525,88 @@ def main():
                         try:
                             sender_email = st.secrets["email_credentials"]["sender_email"]
                             sender_password = st.secrets["email_credentials"]["sender_password"]
+                            
                             facturas_vencidas_cliente = datos_cliente_seleccionado[datos_cliente_seleccionado['dias_vencido'] > 0]
                             total_vencido_cliente = facturas_vencidas_cliente['importe'].sum()
+                            
                             portal_link = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
                             instrucciones = f"<b>Instrucciones de acceso:</b><br> &nbsp; • <b>Usuario:</b> {nit_cliente} (Tu NIT)<br> &nbsp; • <b>Código Único:</b> {cod_cliente}"
                             
                             if total_vencido_cliente > 0:
                                 dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
                                 asunto = f"Recordatorio Amistoso de Saldo Pendiente - {cliente_seleccionado}"
-                                cuerpo_html = f"""<html>...</html>""" # El cuerpo del correo va aquí
+                                cuerpo_html = f"""
+                                <html><body style='font-family: Arial, sans-serif; color: #333;'>
+                                    <p>Estimado(a) {cliente_seleccionado},</p>
+                                    <p>Recibe un cordial saludo del Área de Cartera de Ferreinox SAS BIC.</p>
+                                    <p>Nos ponemos en contacto para recordarte amablemente sobre tu saldo pendiente. Actualmente, tus facturas vencidas suman un total de <b>${total_vencido_cliente:,.0f}</b>, y tu factura más antigua tiene <b>{dias_max_vencido} días</b> de vencida.</p>
+                                    <p>Adjunto a este correo, encontrarás tu estado de cuenta completo para tu revisión.</p>
+                                    <p>Para tu comodidad, puedes realizar el pago de forma fácil y segura a través de nuestro <a href='{portal_link}'><b>Portal de Pagos en Línea</b></a>.</p>
+                                    <p>{instrucciones}</p>
+                                    <p>Si ya has realizado el pago, por favor, haz caso omiso de este recordatorio. Si tienes alguna consulta, no dudes en contactarnos.</p>
+                                    <p>Atentamente,<br><b>Area Cartera Ferreinox SAS BIC</b></p>
+                                </body></html>
+                                """
                             else:
                                 asunto = f"Tu Estado de Cuenta al Día - {cliente_seleccionado}"
-                                cuerpo_html = f"""<html>...</html>""" # El cuerpo del correo va aquí
+                                cuerpo_html = f"""
+                                <html><body style='font-family: Arial, sans-serif; color: #333;'>
+                                    <p>Estimado(a) {cliente_seleccionado},</p>
+                                    <p>Recibe un cordial saludo del Área de Cartera de Ferreinox SAS BIC.</p>
+                                    <p>Nos complace informarte que tu cuenta se encuentra al día. ¡Agradecemos tu excelente gestión y puntualidad en los pagos!</p>
+                                    <p>Para tu control y referencia, adjuntamos a este correo tu estado de cuenta completo.</p>
+                                    <p>Recuerda que para futuras consultas o pagos, nuestro <a href='{portal_link}'><b>Portal de Pagos en Línea</b></a> está siempre a tu disposición.</p>
+                                    <p>{instrucciones}</p>
+                                    <p>Gracias por tu confianza en nosotros.</p>
+                                    <p>Atentamente,<br><b>Area Cartera Ferreinox SAS BIC</b></p>
+                                </body></html>
+                                """
                             
                             with st.spinner(f"Enviando correo a {email_destino}..."):
                                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                                     tmp.write(pdf_bytes)
                                     tmp_path = tmp.name
+                                
                                 yag = yagmail.SMTP(sender_email, sender_password)
                                 yag.send(to=email_destino, subject=asunto, contents=cuerpo_html, attachments=tmp_path)
                                 os.remove(tmp_path)
                             st.success(f"¡Correo enviado exitosamente a {email_destino}!")
+
                         except Exception as e:
                             st.error(f"Error al enviar el correo: {e}")
+                            st.error("Asegúrate de haber configurado tus credenciales en 'secrets.toml' y de usar una 'contraseña de aplicación' de Gmail.")
+                
+                with col_whatsapp:
+                    st.subheader("📲 Enviar por WhatsApp")
+                    numero_completo_para_mostrar = f"+57{telefono_cliente}" if telefono_cliente else "+57"
+                    numero_destino_wa = st.text_input("Verificar o modificar número de WhatsApp:", value=numero_completo_para_mostrar)
 
-            with col_whatsapp:
-                st.subheader("📲 Enviar por WhatsApp")
-                numero_completo_para_mostrar = f"+57{telefono_cliente}" if telefono_cliente else "+57"
-                numero_destino_wa = st.text_input("Verificar o modificar número de WhatsApp:", value=numero_completo_para_mostrar)
-                facturas_vencidas_cliente = datos_cliente_seleccionado[datos_cliente_seleccionado['dias_vencido'] > 0]
-                if not facturas_vencidas_cliente.empty:
-                    total_vencido_cliente = facturas_vencidas_cliente['importe'].sum()
-                    dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
-                    mensaje_whatsapp = (
-                        f"👋 ¡Hola {cliente_seleccionado}! Te saludamos desde Ferreinox SAS BIC.\n\n"
-                        f"Tu estado de cuenta con un valor total vencido de *${total_vencido_cliente:,.0f}* ha sido enviado a tu correo. Tu factura más antigua tiene *{dias_max_vencido} días* de vencida.\n\n"
-                        f"Para ponerte al día, puedes usar nuestro Portal de Pagos:\n"
-                        f"🔗 https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/\n\n"
-                        f"Tus datos de acceso son:\n"
-                        f"👤 *Usuario:* {nit_cliente} (Tu NIT)\n"
-                        f"🔑 *Código Único:* {cod_cliente}\n\n"
-                        f"¡Agradecemos tu pronta gestión!"
-                    )
-                    mensaje_codificado = quote(mensaje_whatsapp)
-                    numero_limpio = re.sub(r'\D', '', numero_destino_wa)
-                    if numero_limpio:
-                        url_whatsapp = f"https://wa.me/{numero_limpio}?text={mensaje_codificado}"
-                        st.markdown(f'<a href="{url_whatsapp}" target="_blank" class="button">📱 Enviar a WhatsApp ({numero_destino_wa})</a>', unsafe_allow_html=True)
+                    facturas_vencidas_cliente = datos_cliente_seleccionado[datos_cliente_seleccionado['dias_vencido'] > 0]
+                    if not facturas_vencidas_cliente.empty:
+                        total_vencido_cliente = facturas_vencidas_cliente['importe'].sum()
+                        dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
+                        
+                        mensaje_whatsapp = (
+                            f"👋 ¡Hola {cliente_seleccionado}! Te saludamos desde Ferreinox SAS BIC.\n\n"
+                            f"Tu estado de cuenta con un valor total vencido de *${total_vencido_cliente:,.0f}* ha sido enviado a tu correo electrónico. Tu factura más antigua tiene *{dias_max_vencido} días* de vencida.\n\n"
+                            f"Para ponerte al día, puedes usar nuestro Portal de Pagos en línea:\n"
+                            f"🔗 https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/\n\n"
+                            f"Tus datos de acceso son:\n"
+                            f"👤 *Usuario:* {nit_cliente} (Tu NIT)\n"
+                            f"🔑 *Código Único:* {cod_cliente}\n\n"
+                            f"¡Agradecemos tu pronta gestión!"
+                        )
+                        mensaje_codificado = quote(mensaje_whatsapp)
+                        
+                        numero_limpio = re.sub(r'\D', '', numero_destino_wa)
+                        
+                        if numero_limpio:
+                            url_whatsapp = f"https://wa.me/{numero_limpio}?text={mensaje_codificado}"
+                            st.markdown(f'<a href="{url_whatsapp}" target="_blank" class="button">📱 Enviar a WhatsApp ({numero_destino_wa})</a>', unsafe_allow_html=True)
+                        else:
+                            st.warning("Ingresa un número de teléfono válido.")
                     else:
-                        st.warning("Ingresa un número de teléfono válido.")
-                else:
-                    st.info("Este cliente no tiene facturas vencidas.")
+                        st.info("Este cliente no tiene facturas vencidas. ¡Excelente!")
 
 if __name__ == '__main__':
     main()
