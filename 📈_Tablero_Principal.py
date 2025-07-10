@@ -488,21 +488,21 @@ def main():
                                 
                                 if total_vencido_cliente > 0:
                                     dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
-                                    asunto = f"Recordatorio Amistoso de Saldo Pendiente - {cliente_seleccionado}"
+                                    asunto = f"Recordatorio de Saldo Pendiente - {cliente_seleccionado}"
                                     cuerpo_html = f"""
                                     <html><body style='font-family: Arial, sans-serif; color: #333;'>
                                         <p>Estimado(a) {cliente_seleccionado},</p>
                                         <p>Recibe un cordial saludo del Área de Cartera de Ferreinox SAS BIC.</p>
-                                        <p>Nos ponemos en contacto para recordarte amablemente sobre tu saldo pendiente. Actualmente, tus facturas vencidas suman un total de <b>${total_vencido_cliente:,.0f}</b>, y tu factura más antigua tiene <b>{dias_max_vencido} días</b> de vencida.</p>
-                                        <p>Adjunto a este correo, encontrarás tu estado de cuenta completo para tu revisión.</p>
-                                        <p>Para tu comodidad, puedes realizar el pago de forma fácil y segura a través de nuestro <a href='{portal_link}'><b>Portal de Pagos en Línea</b></a>.</p>
+                                        <p>Nos ponemos en contacto para recordarle su saldo pendiente. Actualmente, tus facturas vencidas suman un total de <b>${total_vencido_cliente:,.0f}</b>, y tu factura más antigua tiene <b>{dias_max_vencido} días</b> de vencida.</p>
+                                        <p>Adjunto a este correo, encontrara su estado de cuenta completo para su revisión.</p>
+                                        <p>Para su comodidad, puede realizar el pago de forma fácil y segura a través de nuestro <a href='{portal_link}'><b>Portal de Pagos en Línea</b></a>.</p>
                                         <p>{instrucciones}</p>
                                         <p>Si ya has realizado el pago, por favor, haz caso omiso de este recordatorio. Si tienes alguna consulta, no dudes en contactarnos.</p>
                                         <p>Atentamente,<br><b>Area Cartera Ferreinox SAS BIC</b></p>
                                     </body></html>
                                     """
                                 else:
-                                    asunto = f"Tu Estado de Cuenta al Día - {cliente_seleccionado}"
+                                    asunto = f"Tu Estado de Cuenta actualizado - {cliente_seleccionado}"
                                     cuerpo_html = f"""
                                     <html><body style='font-family: Arial, sans-serif; color: #333;'>
                                         <p>Estimado(a) {cliente_seleccionado},</p>
