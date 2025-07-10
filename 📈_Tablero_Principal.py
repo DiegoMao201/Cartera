@@ -12,13 +12,13 @@ from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils import get_column_letter
 from openpyxl.drawing.image import Image as XLImage
-from openpyxl.worksheet.table import Table, TableStyleInfo
 import unicodedata
 import re
 from datetime import datetime
 from fpdf import FPDF
 import yagmail # Necesario para enviar correos
 from urllib.parse import quote # Necesario para codificar URL de WhatsApp
+import tempfile # Necesario para la corrección del envío de email
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
@@ -65,6 +65,16 @@ st.markdown(f"""
     .stTabs [aria-selected="true"] {{
         border-bottom: 2px solid {PALETA_COLORES['primario']};
         color: {PALETA_COLORES['primario']};
+        font-weight: bold;
+    }}
+    .button {{
+        display: inline-block;
+        padding: 10px 20px;
+        color: white;
+        background-color: #25D366; /* Color de WhatsApp */
+        border-radius: 5px;
+        text-align: center;
+        text-decoration: none;
         font-weight: bold;
     }}
 </style>
@@ -136,25 +146,28 @@ def generar_excel_formateado(df: pd.DataFrame):
         fill_red, fill_orange, fill_yellow = PatternFill(start_color='FF0000', end_color='FF0000', fill_type='solid'), PatternFill(start_color='FFA500', end_color='FFA500', fill_type='solid'), PatternFill(start_color='FFF9C4', end_color='FFF9C4', fill_type='solid')
         font_bold, font_green_bold = Font(bold=True), Font(bold=True, color="006400")
         first_data_row, last_data_row = 10, ws.max_row
-        tab = Table(displayName="CarteraVendedor", ref=f"A{first_data_row}:G{last_data_row}"); tab.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showFirstColumn=False, showLastColumn=False, showRowStripes=True, showColumnStripes=False)
+        tab = Table(displayName="CarteraVendedor", ref=f"A{first_data_row}:H{last_data_row}"); tab.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showFirstColumn=False, showLastColumn=False, showRowStripes=True, showColumnStripes=False)
         ws.add_table(tab)
         for i, ancho in enumerate([40, 10, 12, 18, 18, 18, 15], 1): ws.column_dimensions[get_column_letter(i)].width = ancho
         importe_col_idx, dias_col_idx, formato_moneda = 6, 7, '"$"#,##0'
-        for row_idx, row in enumerate(ws.iter_rows(min_row=first_data_row, max_row=last_data_row), start=first_data_row):
+        for row_idx, row in enumerate(ws.iter_rows(min_row=first_data_row + 1, max_row=last_data_row + 1), start=first_data_row + 1):
             if row_idx == first_data_row:
                 for cell in row: cell.font = font_bold; cell.alignment = Alignment(horizontal='center', vertical='center')
                 continue
             row[importe_col_idx - 1].number_format = formato_moneda
             dias_cell = row[dias_col_idx - 1]
-            dias = int(dias_cell.value) if str(dias_cell.value).isdigit() else 0
-            if dias > 60: dias_cell.fill = fill_red
-            elif dias > 30: dias_cell.fill = fill_orange
-            elif dias > 0: dias_cell.fill = fill_yellow
+            try:
+                dias = int(dias_cell.value)
+                if dias > 60: dias_cell.fill = fill_red
+                elif dias > 30: dias_cell.fill = fill_orange
+                elif dias > 0: dias_cell.fill = fill_yellow
+            except (ValueError, TypeError):
+                pass
             dias_cell.alignment = Alignment(horizontal='center')
         ws[f"E{last_data_row + 2}"] = "Tu cartera total es de:"; ws[f"E{last_data_row + 2}"].font = font_green_bold
         ws[f"F{last_data_row + 2}"] = f"=SUBTOTAL(9,F{first_data_row + 1}:F{last_data_row})"; ws[f"F{last_data_row + 2}"].number_format = formato_moneda; ws[f"F{last_data_row + 2}"].font = font_green_bold
         ws[f"E{last_data_row + 3}"] = "Facturas vencidas por valor de:"; ws[f"E{last_data_row + 3}"].font = font_green_bold
-        ws[f"F{last_data_row + 3}"] = f"=SUMPRODUCT((SUBTOTAL(103,OFFSET(F{first_data_row+1},ROW(F{first_data_row+1}:F{last_data_row})-ROW(F{first_data_row+1}),0,1,1)))*(G{first_data_row+1}:G{last_data_row}>0),F{first_data_row+1}:F{last_data_row})"; ws[f"F{last_data_row + 3}"].number_format = formato_moneda; ws[f"F{last_data_row + 3}"].font = font_green_bold
+        ws[f"F{last_data_row + 3}"] = f"=SUMIF(G{first_data_row + 1}:G{last_data_row},\">0\",F{first_data_row + 1}:F{last_data_row})"; ws[f"F{last_data_row + 3}"].number_format = formato_moneda; ws[f"F{last_data_row + 3}"].font = font_green_bold
     return output.getvalue()
 
 def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
@@ -203,11 +216,12 @@ def cargar_y_procesar_datos():
     if not df.empty: df = df.iloc[:-1]
     df_renamed = df.rename(columns=lambda x: normalizar_nombre(x).lower().replace(' ', '_'))
     df_renamed['serie'] = df_renamed['serie'].astype(str)
+    # Asegúrate de que las columnas de fecha se manejen correctamente incluso si están vacías
+    df_renamed['fecha_documento'] = pd.to_datetime(df_renamed['fecha_documento'], errors='coerce')
+    df_renamed['fecha_vencimiento'] = pd.to_datetime(df_renamed['fecha_vencimiento'], errors='coerce')
     df_filtrado = df_renamed[~df_renamed['serie'].str.contains('W|X', case=False, na=False)]
-    df_filtrado['fecha_documento'] = pd.to_datetime(df_filtrado['fecha_documento'], errors='coerce')
-    df_filtrado['fecha_vencimiento'] = pd.to_datetime(df_filtrado['fecha_vencimiento'], errors='coerce')
     return procesar_cartera(df_filtrado)
-    
+
 def generar_analisis_cartera(kpis: dict):
     """Genera un análisis en texto basado en los KPIs calculados."""
     comentarios = []
@@ -270,6 +284,13 @@ def main():
                     st.error("Contraseña incorrecta.")
     else:
         st.title("📊 Tablero de Cartera Ferreinox SAS BIC")
+        
+        # --- NUEVO: Botón para recargar datos ---
+        if st.button("🔄 Recargar Datos (Limpiar Caché)"):
+            st.cache_data.clear()
+            st.success("Caché limpiado. Recargando los datos más recientes...")
+            st.rerun()
+
         with st.sidebar:
             try:
                 st.image("LOGO FERREINOX SAS BIC 2024.png", use_container_width=True)
@@ -280,10 +301,10 @@ def main():
                 for key in list(st.session_state.keys()):
                     del st.session_state[key]
                 st.rerun()
-        
+
         try:
             cartera_procesada = cargar_y_procesar_datos()
-        except FileNotFoundError: st.error("No se encontró el archivo 'Cartera.xlsx'."); st.stop()
+        except FileNotFoundError: st.error("No se encontró el archivo 'Cartera.xlsx'. Asegúrate de que esté en la misma carpeta que la aplicación."); st.stop()
         except Exception as e: st.error(f"Error al cargar o procesar 'Cartera.xlsx': {e}."); st.stop()
 
         st.sidebar.title("Filtros")
@@ -375,21 +396,21 @@ def main():
                     client_debt_cumsum = client_debt.cumsum()
                     total_debt_vencida = client_debt.sum()
                     pareto_limit = total_debt_vencida * 0.80
-                    pareto_clients = client_debt[client_debt_cumsum <= pareto_limit]
-                    
+                    # Aseguramos incluir al menos un cliente si el primero ya supera el 80%
+                    pareto_clients_df = client_debt.to_frame().iloc[0:len(client_debt_cumsum[client_debt_cumsum <= pareto_limit]) + 1]
+
                     num_total_clientes_deuda = len(client_debt)
-                    num_clientes_pareto = len(pareto_clients)
+                    num_clientes_pareto = len(pareto_clients_df)
                     porcentaje_clientes_pareto = (num_clientes_pareto / num_total_clientes_deuda) * 100 if num_total_clientes_deuda > 0 else 0
 
                     st.info(f"El **{porcentaje_clientes_pareto:.0f}%** de los clientes ({num_clientes_pareto} de {num_total_clientes_deuda}) representan aprox. el **80%** del total de la cartera vencida. Estos son:")
                     
-                    df_pareto_display = pareto_clients.reset_index()
+                    df_pareto_display = pareto_clients_df.reset_index()
                     df_pareto_display.columns = ['Cliente', 'Monto Vencido']
                     df_pareto_display['Monto Vencido'] = df_pareto_display['Monto Vencido'].map('${:,.0f}'.format)
                     st.dataframe(df_pareto_display, height=250, hide_index=True, use_container_width=True)
                 else:
                     st.info("No hay cartera vencida para analizar.")
-
 
         with tab3:
             st.subheader(f"Detalle Completo: {vendedor_sel} / {zona_sel} / {poblacion_sel}")
@@ -411,9 +432,9 @@ def main():
                 datos_cliente_seleccionado = cartera_filtrada[cartera_filtrada['nombrecliente'] == cliente_seleccionado].copy()
                 info_cliente_raw = datos_cliente_seleccionado.iloc[0]
                 
-                # Extraer datos clave del cliente
                 correo_cliente = info_cliente_raw.get('e_mail', 'Correo no disponible')
-                telefono_cliente = str(info_cliente_raw.get('telefono1', '')).split('.')[0]
+                telefono_raw = str(info_cliente_raw.get('telefono1', ''))
+                telefono_cliente = telefono_raw.split('.')[0] if '.' in telefono_raw else telefono_raw
                 nit_cliente = str(info_cliente_raw.get('nit', 'N/A'))
                 cod_cliente = str(int(info_cliente_raw['cod_cliente'])) if pd.notna(info_cliente_raw['cod_cliente']) else "N/A"
 
@@ -424,108 +445,84 @@ def main():
                 st.download_button(label="📄 Descargar Estado de Cuenta (PDF)", data=pdf_bytes, file_name=f"Estado_Cuenta_{normalizar_nombre(cliente_seleccionado).replace(' ', '_')}.pdf", mime="application/pdf")
 
                 st.markdown("---")
-                st.subheader("✉️ Enviar por Correo Electrónico")
+                col_email, col_whatsapp = st.columns(2)
 
-                email_destino = st.text_input("Verificar o modificar correo del cliente:", value=correo_cliente)
+                with col_email:
+                    st.subheader("✉️ Enviar por Correo Electrónico")
+                    email_destino = st.text_input("Verificar o modificar correo del cliente:", value=correo_cliente)
+                    
+                    if st.button("📧 Enviar Correo con Estado de Cuenta"):
+                        if not email_destino or email_destino == 'Correo no disponible' or '@' not in email_destino:
+                            st.error("Dirección de correo no válida o no disponible.")
+                        else:
+                            try:
+                                sender_email = st.secrets["email_credentials"]["sender_email"]
+                                sender_password = st.secrets["email_credentials"]["sender_password"]
+                                asunto = f"Estado de Cuenta - Ferreinox SAS BIC - {cliente_seleccionado}"
+                                cuerpo_html = f"""
+                                <html><body>
+                                <p>Hola, {cliente_seleccionado}</p>
+                                <p>Recibe un cordial saludo. Adjunto encontrarás tu estado de cuenta detallado.</p>
+                                <p>Puedes realizar tu pago en nuestro <b>Portal de Pagos en línea</b>:</p>
+                                <p><a href="https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/">Acceder al Portal de Pagos</a></p>
+                                <p><b>Instrucciones:</b> Usuario: <b>{nit_cliente}</b> (Tu NIT) | Código Único: <b>{cod_cliente}</b></p>
+                                <p>Gracias,<br><b>Equipo Ferreinox SAS BIC</b></p>
+                                </body></html>
+                                """
+                                with st.spinner(f"Enviando correo a {email_destino}..."):
+                                    # --- CORRECCIÓN: Usar un archivo temporal para el adjunto ---
+                                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                                        tmp.write(pdf_bytes)
+                                        tmp_path = tmp.name
+                                    
+                                    yag = yagmail.SMTP(sender_email, sender_password)
+                                    yag.send(
+                                        to=email_destino,
+                                        subject=asunto,
+                                        contents=cuerpo_html,
+                                        attachments=tmp_path
+                                    )
+                                    os.remove(tmp_path) # Limpiar el archivo temporal
+                                st.success(f"¡Correo enviado exitosamente a {email_destino}!")
+
+                            except Exception as e:
+                                st.error(f"Error al enviar el correo: {e}")
+                                st.error("Asegúrate de haber configurado correctamente tus credenciales en 'secrets.toml' y de usar una 'contraseña de aplicación' de Gmail.")
                 
-                if st.button("📧 Enviar Correo con Estado de Cuenta"):
-                    if not email_destino or email_destino == 'Correo no disponible':
-                        st.error("Dirección de correo no válida o no disponible.")
+                with col_whatsapp:
+                    st.subheader("📲 Enviar por WhatsApp")
+                    # --- NUEVO: Campo de texto editable para el número ---
+                    numero_completo_para_mostrar = f"+57{telefono_cliente}" if telefono_cliente else "+57"
+                    numero_destino_wa = st.text_input("Verificar o modificar número de WhatsApp:", value=numero_completo_para_mostrar)
+
+                    facturas_vencidas_cliente = datos_cliente_seleccionado[datos_cliente_seleccionado['dias_vencido'] > 0]
+                    if not facturas_vencidas_cliente.empty:
+                        total_vencido_cliente = facturas_vencidas_cliente['importe'].sum()
+                        dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
+                        
+                        mensaje_whatsapp = (
+                            f"👋 ¡Hola {cliente_seleccionado}! Te saludamos desde Ferreinox SAS BIC para recordarte sobre tus facturas vencidas.\n\n"
+                            f"Suma total vencida: *${total_vencido_cliente:,.0f}*\n"
+                            f"Tu factura más antigua tiene: *{dias_max_vencido} días* de vencida.\n\n"
+                            f"Puedes ponerte al día en nuestro Portal de Pagos:\n"
+                            f"🔗 https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/\n\n"
+                            f"Para ingresar, usa estos datos:\n"
+                            f"👤 *Usuario:* {nit_cliente}\n"
+                            f"🔑 *Código Único Interno:* {cod_cliente}\n\n"
+                            f"¡Agradecemos tu pronta gestión!"
+                        )
+                        mensaje_codificado = quote(mensaje_whatsapp)
+                        
+                        # Limpiar el número de caracteres no numéricos
+                        numero_limpio = re.sub(r'\D', '', numero_destino_wa)
+                        
+                        if numero_limpio:
+                            url_whatsapp = f"https://wa.me/{numero_limpio}?text={mensaje_codificado}"
+                            st.markdown(f'<a href="{url_whatsapp}" target="_blank" class="button">📱 Enviar a WhatsApp ({numero_destino_wa})</a>', unsafe_allow_html=True)
+                        else:
+                            st.warning("Ingresa un número de teléfono válido.")
                     else:
-                        try:
-                            # Cargar credenciales desde secrets
-                            sender_email = st.secrets["email_credentials"]["sender_email"]
-                            sender_password = st.secrets["email_credentials"]["sender_password"]
-
-                            # Contenido del correo
-                            asunto = f"Estado de Cuenta - Ferreinox SAS BIC - {cliente_seleccionado}"
-                            cuerpo_html = f"""
-                            <html>
-                            <head>
-                                <style>
-                                    body {{ font-family: Arial, sans-serif; color: #333; }}
-                                    .container {{ padding: 20px; border: 1px solid #ddd; border-radius: 8px; max-width: 600px; margin: auto; }}
-                                    .header {{ color: #003865; font-size: 24px; font-weight: bold; }}
-                                    .content {{ margin-top: 20px; }}
-                                    .footer {{ margin-top: 30px; font-size: 12px; color: #777; }}
-                                    .payment-info {{ background-color: #f0f2f6; padding: 15px; border-radius: 5px; margin-top: 15px; }}
-                                    a {{ color: #0058A7; text-decoration: none; font-weight: bold; }}
-                                </style>
-                            </head>
-                            <body>
-                                <div class="container">
-                                    <p class="header">Hola, {cliente_seleccionado}</p>
-                                    <div class="content">
-                                        <p>Recibe un cordial saludo de parte del equipo de Ferreinox SAS BIC.</p>
-                                        <p>Adjunto a este correo, encontrarás tu estado de cuenta detallado a la fecha.</p>
-                                        <p>Te invitamos a revisarlo y gestionar el pago de los valores pendientes a la brevedad posible.</p>
-                                        <div class="payment-info">
-                                            <p><b>Realiza tu pago de forma fácil y segura en nuestro Portal de Pagos en línea:</b></p>
-                                            <p><a href="https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/">Acceder al Portal de Pagos</a></p>
-                                            <p><b>Instrucciones de acceso:</b></p>
-                                            <ul>
-                                                <li><b>Usuario:</b> {nit_cliente} (Tu NIT)</li>
-                                                <li><b>Código Único Interno:</b> {cod_cliente} (Tu Código de Cliente)</li>
-                                            </ul>
-                                        </div>
-                                    </div>
-                                    <div class="footer">
-                                        <p>Si tienes alguna duda o ya realizaste el pago, por favor haz caso omiso a este mensaje o contáctanos.</p>
-                                        <p>Agradecemos tu confianza y preferencia.</p>
-                                        <p><b>Ferreinox SAS BIC</b></p>
-                                    </div>
-                                </div>
-                            </body>
-                            </html>
-                            """
-                            
-                            with st.spinner(f"Enviando correo a {email_destino}..."):
-                                yag = yagmail.SMTP(sender_email, sender_password)
-                                yag.send(
-                                    to=email_destino,
-                                    subject=asunto,
-                                    contents=cuerpo_html,
-                                    attachments=[(f"Estado_Cuenta_{normalizar_nombre(cliente_seleccionado).replace(' ', '_')}.pdf", BytesIO(pdf_bytes))]
-                                )
-                            st.success(f"¡Correo enviado exitosamente a {email_destino}!")
-
-                        except Exception as e:
-                            st.error(f"Error al enviar el correo: {e}")
-                            st.error("Asegúrate de haber configurado correctamente tus credenciales en el archivo secrets.toml y de tener una 'contraseña de aplicación' de Gmail.")
-                
-                st.markdown("---")
-                st.subheader("📲 Enviar Recordatorio por WhatsApp")
-
-                facturas_vencidas_cliente = datos_cliente_seleccionado[datos_cliente_seleccionado['dias_vencido'] > 0]
-                if not facturas_vencidas_cliente.empty:
-                    total_vencido_cliente = facturas_vencidas_cliente['importe'].sum()
-                    dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
-                    
-                    mensaje_whatsapp = (
-                        f"👋 ¡Hola {cliente_seleccionado}! Te saludamos desde Ferreinox SAS BIC para recordarte sobre tus facturas vencidas.\n\n"
-                        f"Suma total vencida: *${total_vencido_cliente:,.0f}*\n"
-                        f"Tu factura más antigua tiene: *{dias_max_vencido} días* de vencida.\n\n"
-                        f"Puedes ponerte al día de forma fácil y segura en nuestro Portal de Pagos en línea:\n"
-                        f"🔗 https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/\n\n"
-                        f"Para ingresar, usa estos datos:\n"
-                        f"👤 *Usuario:* {nit_cliente}\n"
-                        f"🔑 *Código Único Interno:* {cod_cliente}\n\n"
-                        f"¡Agradecemos tu pronta gestión!"
-                    )
-                    
-                    mensaje_codificado = quote(mensaje_whatsapp)
-                    
-                    # Se asume que el número en la base de datos no tiene el '+' y necesita el código de país (57 para Colombia)
-                    if telefono_cliente and telefono_cliente.isdigit():
-                        numero_completo = f"57{telefono_cliente}"
-                        url_whatsapp = f"https://wa.me/{numero_completo}?text={mensaje_codificado}"
-                        st.markdown(f'<a href="{url_whatsapp}" target="_blank" class="button">📱 Enviar a WhatsApp ({telefono_cliente})</a>', unsafe_allow_html=True)
-                    else:
-                        st.warning(f"No se encontró un número de teléfono válido para este cliente. (Encontrado: {telefono_cliente})")
-
-                else:
-                    st.info("Este cliente no tiene facturas vencidas. ¡Excelente!")
-
+                        st.info("Este cliente no tiene facturas vencidas. ¡Excelente!")
 
 if __name__ == '__main__':
     main()
