@@ -1,5 +1,5 @@
 # ======================================================================================
-# ARCHIVO: 📈_Tablero_Principal.py (v.Final Restaurada con Carga Híbrida)
+# ARCHIVO: 📈_Tablero_Principal.py (v.Definitiva con Dropbox y Separador Pipe)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -30,7 +30,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- MEJORA: Paleta de colores centralizada y CSS para un look más profesional ---
+# --- PALETA DE COLORES Y CSS ---
 PALETA_COLORES = {
     "primario": "#003865",
     "secundario": "#0058A7",
@@ -45,50 +45,13 @@ PALETA_COLORES = {
 }
 st.markdown(f"""
 <style>
-    .stApp {{
-        background-color: {PALETA_COLORES['fondo_claro']};
-    }}
-    .stMetric {{
-        background-color: #FFFFFF;
-        border-radius: 10px;
-        padding: 15px;
-        border: 1px solid #CCCCCC;
-    }}
-    .stTabs [data-baseweb="tab-list"] {{
-        gap: 24px;
-    }}
-    .stTabs [data-baseweb="tab"] {{
-        height: 50px;
-        white-space: pre-wrap;
-        background-color: transparent;
-        border-radius: 4px 4px 0px 0px;
-        border-bottom: 2px solid #C0C0C0;
-    }}
-    .stTabs [aria-selected="true"] {{
-        border-bottom: 2px solid {PALETA_COLORES['primario']};
-        color: {PALETA_COLORES['primario']};
-        font-weight: bold;
-    }}
-    div[data-baseweb="input"],
-    div[data-baseweb="select"],
-    div.st-multiselect,
-    div.st-text-area {{
-        background-color: #FFFFFF;
-        border: 1.5px solid {PALETA_COLORES['secundario']};
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        padding-left: 5px;
-    }}
-    .button {{
-        display: inline-block;
-        padding: 10px 20px;
-        color: white;
-        background-color: #25D366;
-        border-radius: 5px;
-        text-align: center;
-        text-decoration: none;
-        font-weight: bold;
-    }}
+    .stApp {{ background-color: {PALETA_COLORES['fondo_claro']}; }}
+    .stMetric {{ background-color: #FFFFFF; border-radius: 10px; padding: 15px; border: 1px solid #CCCCCC; }}
+    .stTabs [data-baseweb="tab-list"] {{ gap: 24px; }}
+    .stTabs [data-baseweb="tab"] {{ height: 50px; white-space: pre-wrap; background-color: transparent; border-radius: 4px 4px 0px 0px; border-bottom: 2px solid #C0C0C0; }}
+    .stTabs [aria-selected="true"] {{ border-bottom: 2px solid {PALETA_COLORES['primario']}; color: {PALETA_COLORES['primario']}; font-weight: bold; }}
+    div[data-baseweb="input"], div[data-baseweb="select"], div.st-multiselect, div.st-text-area {{ background-color: #FFFFFF; border: 1.5px solid {PALETA_COLORES['secundario']}; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); padding-left: 5px; }}
+    .button {{ display: inline-block; padding: 10px 20px; color: white; background-color: #25D366; border-radius: 5px; text-align: center; text-decoration: none; font-weight: bold; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -117,7 +80,8 @@ def cargar_datos_desde_dropbox():
                 'Cupo Aprobado', 'Dias Vencido'
             ]
             
-            df = pd.read_csv(StringIO(contenido_csv), header=None, names=nombres_columnas_originales, sep=',', engine='python')
+            # --- CAMBIO IMPORTANTE: Se usa el separador '|' ---
+            df = pd.read_csv(StringIO(contenido_csv), header=None, names=nombres_columnas_originales, sep='|', engine='python')
             return df
     except Exception as e:
         st.error(f"Error al cargar datos desde Dropbox: {e}")
@@ -135,7 +99,6 @@ def cargar_datos_historicos():
         try:
             df_hist = pd.read_excel(archivo)
             if not df_hist.empty:
-                # La lógica original eliminaba la última fila, la preservamos
                 df_hist = df_hist.iloc[:-1]
             lista_de_dataframes.append(df_hist)
         except Exception as e:
@@ -145,7 +108,6 @@ def cargar_datos_historicos():
         return pd.concat(lista_de_dataframes, ignore_index=True)
     return pd.DataFrame()
 
-# Se restaura la función original de carga y procesamiento, ahora adaptada
 @st.cache_data
 def cargar_y_procesar_datos():
     """
@@ -161,7 +123,6 @@ def cargar_y_procesar_datos():
         st.error("No se pudieron cargar datos de ninguna fuente. La aplicación no puede continuar.")
         st.stop()
     
-    # Se aplica la misma lógica de procesamiento del código original
     df_renamed = df_combinado.rename(columns=lambda x: normalizar_nombre(x).lower().replace(' ', '_'))
     
     df_renamed['serie'] = df_renamed['serie'].astype(str)
@@ -324,7 +285,6 @@ def generar_analisis_cartera(kpis: dict):
 # --- BLOQUE PRINCIPAL DE LA APP ---
 # ======================================================================================
 def main():
-    # El flujo de autenticación original es preservado para asegurar que la pantalla de login aparezca
     if 'authentication_status' not in st.session_state:
         st.session_state['authentication_status'] = False
         st.session_state['acceso_general'] = False
@@ -338,7 +298,6 @@ def main():
         except Exception as e:
             st.error(f"Error al cargar las contraseñas desde los secretos: {e}")
             st.stop()
-
         password = st.text_input("Introduce la contraseña:", type="password", key="password_input")
         if st.button("Ingresar"):
             if password == str(general_password):
@@ -357,7 +316,6 @@ def main():
                 if not st.session_state['authentication_status']:
                     st.error("Contraseña incorrecta.")
     else:
-        # --- El tablero principal se muestra solo después de una autenticación exitosa ---
         st.title("📊 Tablero de Cartera Ferreinox SAS BIC")
         
         if st.button("🔄 Recargar Datos (Dropbox + Locales)"):
@@ -376,7 +334,6 @@ def main():
                     del st.session_state[key]
                 st.rerun()
 
-        # Se llama a la función de carga de datos aquí, dentro de la sección autenticada
         cartera_procesada = cargar_y_procesar_datos()
         
         st.sidebar.title("Filtros")
