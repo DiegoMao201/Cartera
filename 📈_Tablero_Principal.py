@@ -20,7 +20,7 @@ from fpdf import FPDF
 import yagmail
 from urllib.parse import quote
 import tempfile
-import dropbox 
+import dropbox
 import glob
 
 # --- CONFIGURACIÓN DE PÁGINA ---
@@ -101,7 +101,7 @@ def cargar_datos_historicos():
                 # La lógica original eliminaba la última fila, la preservamos
                 if "Total" in str(df_hist.iloc[-1, 0]):
                     df_hist = df_hist.iloc[:-1]
-            lista_de_dataframes.append(df_hist)
+                lista_de_dataframes.append(df_hist)
         except Exception as e:
             st.warning(f"No se pudo leer el archivo histórico {archivo}: {e}")
             
@@ -130,6 +130,13 @@ def cargar_y_procesar_datos():
     
     # Aplica la misma lógica de procesamiento del código original
     df_renamed = df_combinado.rename(columns=lambda x: normalizar_nombre(x).lower().replace(' ', '_'))
+    
+    # ***** INICIO DE LA CORRECCIÓN *****
+    # Se eliminan las columnas duplicadas NUEVAMENTE después de renombrar.
+    # Esto soluciona el TypeError, ya que el paso anterior puede crear nuevos duplicados
+    # (ej. 'Importe' y 'importe' se convierten ambos en 'importe').
+    df_renamed = df_renamed.loc[:, ~df_renamed.columns.duplicated()]
+    # ***** FIN DE LA CORRECCIÓN *****
     
     df_renamed['serie'] = df_renamed['serie'].astype(str)
     df_renamed['fecha_documento'] = pd.to_datetime(df_renamed['fecha_documento'], errors='coerce')
@@ -213,10 +220,10 @@ def generar_excel_formateado(df: pd.DataFrame):
         importe_col_idx, dias_col_idx, formato_moneda = 6, 7, '"$"#,##0'
         for row_idx, row in enumerate(ws.iter_rows(min_row=first_data_row, max_row=last_data_row), start=first_data_row):
             if row_idx == first_data_row:
-                 for cell in row:
-                    cell.font = font_bold
-                    cell.alignment = Alignment(horizontal='center', vertical='center')
-                 continue
+                    for cell in row:
+                        cell.font = font_bold
+                        cell.alignment = Alignment(horizontal='center', vertical='center')
+                    continue
             row[importe_col_idx - 1].number_format = formato_moneda
             dias_cell = row[dias_col_idx - 1]
             try:
