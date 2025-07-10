@@ -71,7 +71,6 @@ def cargar_datos_desde_dropbox():
         REFRESH_TOKEN = st.secrets["dropbox"]["refresh_token"]
         
         # Inicializa el cliente de Dropbox con el refresh token
-        # La librería manejará la actualización del access token automáticamente
         with dropbox.Dropbox(
             app_key=APP_KEY,
             app_secret=APP_SECRET,
@@ -84,8 +83,9 @@ def cargar_datos_desde_dropbox():
             # Descarga el archivo
             metadata, res = dbx.files_download(path=path_archivo_dropbox)
             
-            # Lee el contenido del archivo en memoria
-            contenido_csv = res.content.decode('utf-8')
+            # --- LÍNEA CORREGIDA ---
+            # Lee el contenido del archivo en memoria usando la codificación 'latin-1'
+            contenido_csv = res.content.decode('latin-1')
             
             # Define los nombres de las columnas
             nombres_columnas = [
