@@ -477,7 +477,7 @@ def main():
                                         <p>Adjunto a este correo, encontrara su estado de cuenta completo para su revisión.</p>
                                         <p>Para su comodidad, puede realizar el pago de forma fácil y segura a través de nuestro <a href='{portal_link}'><b>Portal de Pagos en Línea</b></a>.</p>
                                         <p>{instrucciones}</p>
-                                        <p>Si ya realiza el pago, por favor, haga caso omiso de este recordatorio. Si tiene alguna consulta, no dude en contactarnos.</p>
+                                        <p>Si ya realizo el pago, por favor, haga caso omiso de este recordatorio. Si tiene alguna consulta, no dude en contactarnos.</p>
                                         <p>Atentamente,<br><b>Area Cartera Ferreinox SAS BIC</b></p>
                                     </body></html>
                                     """
