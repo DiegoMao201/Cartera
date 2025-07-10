@@ -6,3 +6,4 @@ statsmodels==0.14.2
 openpyxl
 fpdf2
 Plotly
+yagmail
