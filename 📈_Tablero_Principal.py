@@ -1,5 +1,5 @@
 # ======================================================================================
-# ARCHIVO: 📈_Tablero_Principal.py (v.Definitiva con Corrección de Duplicados)
+# ARCHIVO: 📈_Tablero_Principal.py (v.Definitiva con Corrección de Duplicados y Mejoras)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -382,12 +382,17 @@ def main():
         antiguedad_prom_vencida = (cartera_vencida_df['importe'] * cartera_vencida_df['dias_vencido']).sum() / total_vencido if total_vencido > 0 else 0
         
         st.header("Indicadores Clave de Rendimiento (KPIs)")
-        kpi_cols = st.columns(5)
-        kpi_cols[0].metric("💰 Cartera Total", f"${total_cartera:,.0f}")
-        kpi_cols[1].metric("🔥 Cartera Vencida", f"${total_vencido:,.0f}")
-        kpi_cols[2].metric("📈 % Vencido s/ Total", f"{porcentaje_vencido:.1f}%")
-        kpi_cols[3].metric("⏳ Antigüedad Prom. Vencida", f"{antiguedad_prom_vencida:.0f} días")
-        kpi_cols[4].metric(label="💥 Índice de Severidad (CSI)", value=f"{csi:.1f}")
+        # ***** INICIO DE LA MODIFICACIÓN DE KPIs *****
+        kpi_row1 = st.columns(3)
+        kpi_row2 = st.columns(2)
+
+        kpi_row1[0].metric("💰 Cartera Total", f"${total_cartera:,.0f}")
+        kpi_row1[1].metric("🔥 Cartera Vencida", f"${total_vencido:,.0f}")
+        kpi_row1[2].metric("📈 % Vencido s/ Total", f"{porcentaje_vencido:.1f}%")
+
+        kpi_row2[0].metric("⏳ Antigüedad Prom. Vencida", f"{antiguedad_prom_vencida:.0f} días")
+        kpi_row2[1].metric(label="💥 Índice de Severidad (CSI)", value=f"{csi:.1f}")
+        # ***** FIN DE LA MODIFICACIÓN DE KPIs *****
 
         with st.expander("🤖 **Análisis y Recomendaciones del Asistente IA**", expanded=True):
             kpis_dict = {'porcentaje_vencido': porcentaje_vencido, 'antiguedad_prom_vencida': antiguedad_prom_vencida, 'csi': csi}
@@ -463,8 +468,20 @@ def main():
                 telefono_cliente = telefono_raw.split('.')[0] if '.' in telefono_raw else telefono_raw
                 nit_cliente = str(info_cliente_raw.get('nit', 'N/A'))
                 cod_cliente = str(int(info_cliente_raw['cod_cliente'])) if pd.notna(info_cliente_raw['cod_cliente']) else "N/A"
+                
                 st.write(f"**Facturas para {cliente_seleccionado}:**")
                 st.dataframe(datos_cliente_seleccionado[['numero', 'fecha_documento', 'fecha_vencimiento', 'dias_vencido', 'importe']], use_container_width=True, hide_index=True)
+                
+                # ***** INICIO DE LA MODIFICACIÓN RESUMEN CLIENTE *****
+                total_cartera_cliente = datos_cliente_seleccionado['importe'].sum()
+                facturas_vencidas_cliente = datos_cliente_seleccionado[datos_cliente_seleccionado['dias_vencido'] > 0]
+                total_vencido_cliente = facturas_vencidas_cliente['importe'].sum()
+                
+                summary_cols = st.columns(2)
+                summary_cols[0].metric("🔥 Cartera Vencida del Cliente", f"${total_vencido_cliente:,.0f}")
+                summary_cols[1].metric("💰 Cartera Total del Cliente", f"${total_cartera_cliente:,.0f}")
+                # ***** FIN DE LA MODIFICACIÓN RESUMEN CLIENTE *****
+
                 pdf_bytes = generar_pdf_estado_cuenta(datos_cliente_seleccionado)
                 st.download_button(label="📄 Descargar Estado de Cuenta (PDF)", data=pdf_bytes, file_name=f"Estado_Cuenta_{normalizar_nombre(cliente_seleccionado).replace(' ', '_')}.pdf", mime="application/pdf")
                 st.markdown("---")
@@ -481,8 +498,6 @@ def main():
                             try:
                                 sender_email = st.secrets["email_credentials"]["sender_email"]
                                 sender_password = st.secrets["email_credentials"]["sender_password"]
-                                facturas_vencidas_cliente = datos_cliente_seleccionado[datos_cliente_seleccionado['dias_vencido'] > 0]
-                                total_vencido_cliente = facturas_vencidas_cliente['importe'].sum()
                                 portal_link = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
                                 instrucciones = f"<b>Instrucciones de acceso:</b><br> &nbsp; • <b>Usuario:</b> {nit_cliente} (Tu NIT)<br> &nbsp; • <b>Código Único:</b> {cod_cliente}"
                                 
@@ -527,17 +542,18 @@ def main():
                             except Exception as e:
                                 st.error(f"Error al enviar el correo: {e}")
 
+                # ***** INICIO DE LA MODIFICACIÓN DE WHATSAPP *****
                 with col_whatsapp:
                     st.subheader("📲 Enviar por WhatsApp")
                     numero_completo_para_mostrar = f"+57{telefono_cliente}" if telefono_cliente else "+57"
-                    numero_destino_wa = st.text_input("Verificar o modificar número de WhatsApp:", value=numero_completo_para_mostrar)
-                    facturas_vencidas_cliente = datos_cliente_seleccionado[datos_cliente_seleccionado['dias_vencido'] > 0]
+                    numero_destino_wa = st.text_input("Verificar o modificar número de WhatsApp:", value=numero_completo_para_mostrar, key="whatsapp_input")
+                    
                     if not facturas_vencidas_cliente.empty:
-                        total_vencido_cliente = facturas_vencidas_cliente['importe'].sum()
+                        total_vencido_cliente_wa = facturas_vencidas_cliente['importe'].sum()
                         dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
                         mensaje_whatsapp = (
                             f"👋 ¡Hola {cliente_seleccionado}! Te saludamos desde Ferreinox SAS BIC.\n\n"
-                            f"Tu estado de cuenta con un valor total vencido de *${total_vencido_cliente:,.0f}* ha sido enviado a tu correo. Tu factura más antigua tiene *{dias_max_vencido} días* de vencida.\n\n"
+                            f"Tu estado de cuenta con un valor total vencido de *${total_vencido_cliente_wa:,.0f}* ha sido enviado a tu correo. Tu factura más antigua tiene *{dias_max_vencido} días* de vencida.\n\n"
                             f"Para ponerte al día, puedes usar nuestro Portal de Pagos:\n"
                             f"🔗 https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/\n\n"
                             f"Tus datos de acceso son:\n"
@@ -545,15 +561,25 @@ def main():
                             f"🔑 *Código Único:* {cod_cliente}\n\n"
                             f"¡Agradecemos tu pronta gestión!"
                         )
-                        mensaje_codificado = quote(mensaje_whatsapp)
-                        numero_limpio = re.sub(r'\D', '', numero_destino_wa)
-                        if numero_limpio:
-                            url_whatsapp = f"https://wa.me/{numero_limpio}?text={mensaje_codificado}"
-                            st.markdown(f'<a href="{url_whatsapp}" target="_blank" class="button">📱 Enviar a WhatsApp ({numero_destino_wa})</a>', unsafe_allow_html=True)
-                        else:
-                            st.warning("Ingresa un número de teléfono válido.")
                     else:
-                        st.info("Este cliente no tiene facturas vencidas.")
+                        total_cartera_cliente_wa = datos_cliente_seleccionado['importe'].sum()
+                        mensaje_whatsapp = (
+                            f"👋 ¡Hola {cliente_seleccionado}! Te saludamos desde Ferreinox SAS BIC.\n\n"
+                            f"¡Felicitaciones! Tu cuenta está al día. Tu saldo total es de *${total_cartera_cliente_wa:,.0f}*.\n\n"
+                            f"Hemos enviado tu estado de cuenta al correo para tu referencia. Queremos recordarte también nuestros descuentos por pronto pago. ¡Aprovecha y ahorra!\n\n"
+                            f"Si tienes alguna consulta, puedes usar nuestro Portal:\n"
+                            f"🔗 https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/\n\n"
+                            f"¡Gracias por tu confianza!"
+                        )
+
+                    mensaje_codificado = quote(mensaje_whatsapp)
+                    numero_limpio = re.sub(r'\D', '', numero_destino_wa)
+                    if numero_limpio:
+                        url_whatsapp = f"https://wa.me/{numero_limpio}?text={mensaje_codificado}"
+                        st.markdown(f'<a href="{url_whatsapp}" target="_blank" class="button">📱 Enviar a WhatsApp ({numero_destino_wa})</a>', unsafe_allow_html=True)
+                    else:
+                        st.warning("Ingresa un número de teléfono válido para habilitar el botón de WhatsApp.")
+                # ***** FIN DE LA MODIFICACIÓN DE WHATSAPP *****
 
 if __name__ == '__main__':
     main()
