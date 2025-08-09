@@ -148,7 +148,7 @@ def cargar_y_procesar_datos():
 
 
 # ======================================================================================
-# --- CLASE PDF Y FUNCIONES AUXILIARES (LÓGICA ORIGINAL INTACTA) ---
+# --- CLASE PDF Y FUNCIONES AUXILIARES (LÓGICA ORIGINAL CON MODIFICACIÓN) ---
 # ======================================================================================
 class PDF(FPDF):
     def header(self):
@@ -241,33 +241,39 @@ def generar_excel_formateado(df: pd.DataFrame):
         ws[f"F{last_data_row + 3}"] = f"=SUMIF(G{first_data_row}:G{last_data_row},\">0\",F{first_data_row}:F{last_data_row})"; ws[f"F{last_data_row + 3}"].number_format = formato_moneda; ws[f"F{last_data_row + 3}"].font = font_green_bold
     return output.getvalue()
 
-def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
+# ***** INICIO DE LA MODIFICACIÓN DE LA FUNCIÓN PDF *****
+def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame, total_vencido_cliente: float):
     pdf = PDF()
     pdf.set_auto_page_break(auto=True, margin=45)
     pdf.add_page()
     if datos_cliente.empty:
         pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, 'No se encontraron facturas para este cliente.', 0, 1, 'C')
         return bytes(pdf.output())
+    
     datos_cliente_ordenados = datos_cliente.sort_values(by='fecha_vencimiento', ascending=True)
     info_cliente = datos_cliente_ordenados.iloc[0]
+    
     pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Cliente:', 0, 0); pdf.set_font('Arial', '', 11); pdf.cell(0, 10, info_cliente['nombrecliente'], 0, 1)
     pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Codigo de Cliente:', 0, 0); pdf.set_font('Arial', '', 11)
     cod_cliente_str = str(int(info_cliente['cod_cliente'])) if pd.notna(info_cliente['cod_cliente']) else "N/A"
     pdf.cell(0, 10, cod_cliente_str, 0, 1); pdf.ln(5)
+    
     pdf.set_font('Arial', '', 10)
     mensaje = ("Apreciado cliente, a continuación encontrará el detalle de su estado de cuenta a la fecha. "
                "Le invitamos a realizar su revisión y proceder con el pago de los valores vencidos. "
                "Puede realizar su pago de forma fácil y segura a través de nuestro PORTAL DE PAGOS en línea, "
                "cuyo enlace encontrará al final de este documento.")
     pdf.set_text_color(128, 128, 128); pdf.multi_cell(0, 5, mensaje, 0, 'J'); pdf.set_text_color(0, 0, 0); pdf.ln(10)
+    
     pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(0, 56, 101); pdf.set_text_color(255, 255, 255)
     pdf.cell(30, 10, 'Factura', 1, 0, 'C', 1); pdf.cell(40, 10, 'Fecha Factura', 1, 0, 'C', 1)
     pdf.cell(40, 10, 'Fecha Vencimiento', 1, 0, 'C', 1); pdf.cell(40, 10, 'Importe', 1, 1, 'C', 1)
+    
     pdf.set_font('Arial', '', 10)
     total_importe = 0
     for _, row in datos_cliente_ordenados.iterrows():
         pdf.set_text_color(0, 0, 0)
-        if row['dias_vencido'] > 0: pdf.set_fill_color(248, 241, 241)
+        if row['dias_vencido'] > 0: pdf.set_fill_color(255, 235, 238) # Rojo muy claro para vencidas
         else: pdf.set_fill_color(255, 255, 255)
         total_importe += row['importe']
         numero_factura_str = str(int(row['numero'])) if pd.notna(row['numero']) else "N/A"
@@ -277,11 +283,22 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame):
         pdf.cell(40, 10, fecha_doc_str, 1, 0, 'C', 1)
         pdf.cell(40, 10, fecha_ven_str, 1, 0, 'C', 1)
         pdf.cell(40, 10, f"${row['importe']:,.0f}", 1, 1, 'R', 1)
+        
+    # --- Tabla de Totales ---
     pdf.set_text_color(0, 0, 0)
-    pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(0, 56, 101); pdf.set_text_color(255, 255, 255)
+    pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(224, 224, 224); pdf.set_text_color(0, 0, 0)
     pdf.cell(110, 10, 'TOTAL ADEUDADO', 1, 0, 'R', 1)
+    pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(240, 240, 240);
     pdf.cell(40, 10, f"${total_importe:,.0f}", 1, 1, 'R', 1)
+    
+    # --- NUEVA SECCIÓN: Mostrar cartera vencida solo si existe ---
+    if total_vencido_cliente > 0:
+        pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(255, 204, 204); pdf.set_text_color(192, 0, 0) # Fondo y texto rojos
+        pdf.cell(110, 10, 'VALOR TOTAL VENCIDO', 1, 0, 'R', 1)
+        pdf.cell(40, 10, f"${total_vencido_cliente:,.0f}", 1, 1, 'R', 1)
+        
     return bytes(pdf.output())
+# ***** FIN DE LA MODIFICACIÓN DE LA FUNCIÓN PDF *****
 
 def generar_analisis_cartera(kpis: dict):
     comentarios = []
@@ -382,7 +399,6 @@ def main():
         antiguedad_prom_vencida = (cartera_vencida_df['importe'] * cartera_vencida_df['dias_vencido']).sum() / total_vencido if total_vencido > 0 else 0
         
         st.header("Indicadores Clave de Rendimiento (KPIs)")
-        # ***** INICIO DE LA MODIFICACIÓN DE KPIs *****
         kpi_row1 = st.columns(3)
         kpi_row2 = st.columns(2)
 
@@ -392,7 +408,6 @@ def main():
 
         kpi_row2[0].metric("⏳ Antigüedad Prom. Vencida", f"{antiguedad_prom_vencida:.0f} días")
         kpi_row2[1].metric(label="💥 Índice de Severidad (CSI)", value=f"{csi:.1f}")
-        # ***** FIN DE LA MODIFICACIÓN DE KPIs *****
 
         with st.expander("🤖 **Análisis y Recomendaciones del Asistente IA**", expanded=True):
             kpis_dict = {'porcentaje_vencido': porcentaje_vencido, 'antiguedad_prom_vencida': antiguedad_prom_vencida, 'csi': csi}
@@ -472,7 +487,6 @@ def main():
                 st.write(f"**Facturas para {cliente_seleccionado}:**")
                 st.dataframe(datos_cliente_seleccionado[['numero', 'fecha_documento', 'fecha_vencimiento', 'dias_vencido', 'importe']], use_container_width=True, hide_index=True)
                 
-                # ***** INICIO DE LA MODIFICACIÓN RESUMEN CLIENTE *****
                 total_cartera_cliente = datos_cliente_seleccionado['importe'].sum()
                 facturas_vencidas_cliente = datos_cliente_seleccionado[datos_cliente_seleccionado['dias_vencido'] > 0]
                 total_vencido_cliente = facturas_vencidas_cliente['importe'].sum()
@@ -480,9 +494,11 @@ def main():
                 summary_cols = st.columns(2)
                 summary_cols[0].metric("🔥 Cartera Vencida del Cliente", f"${total_vencido_cliente:,.0f}")
                 summary_cols[1].metric("💰 Cartera Total del Cliente", f"${total_cartera_cliente:,.0f}")
-                # ***** FIN DE LA MODIFICACIÓN RESUMEN CLIENTE *****
 
-                pdf_bytes = generar_pdf_estado_cuenta(datos_cliente_seleccionado)
+                # ***** INICIO DE LA MODIFICACIÓN DE LA LLAMADA A LA FUNCIÓN PDF *****
+                pdf_bytes = generar_pdf_estado_cuenta(datos_cliente_seleccionado, total_vencido_cliente)
+                # ***** FIN DE LA MODIFICACIÓN DE LA LLAMADA A LA FUNCIÓN PDF *****
+
                 st.download_button(label="📄 Descargar Estado de Cuenta (PDF)", data=pdf_bytes, file_name=f"Estado_Cuenta_{normalizar_nombre(cliente_seleccionado).replace(' ', '_')}.pdf", mime="application/pdf")
                 st.markdown("---")
                 col_email, col_whatsapp = st.columns(2)
@@ -542,7 +558,6 @@ def main():
                             except Exception as e:
                                 st.error(f"Error al enviar el correo: {e}")
 
-                # ***** INICIO DE LA MODIFICACIÓN DE WHATSAPP *****
                 with col_whatsapp:
                     st.subheader("📲 Enviar por WhatsApp")
                     numero_completo_para_mostrar = f"+57{telefono_cliente}" if telefono_cliente else "+57"
@@ -579,7 +594,6 @@ def main():
                         st.markdown(f'<a href="{url_whatsapp}" target="_blank" class="button">📱 Enviar a WhatsApp ({numero_destino_wa})</a>', unsafe_allow_html=True)
                     else:
                         st.warning("Ingresa un número de teléfono válido para habilitar el botón de WhatsApp.")
-                # ***** FIN DE LA MODIFICACIÓN DE WHATSAPP *****
 
 if __name__ == '__main__':
     main()
