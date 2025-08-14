@@ -523,12 +523,12 @@ def main():
                                     cuerpo_html = f"""
                                     <html><body style='font-family: Arial, sans-serif; color: #333;'>
                                         <p>Estimado(a) {cliente_seleccionado},</p>
-                                        <p>Recibe un cordial saludo del Área de Cartera de Ferreinox SAS BIC.</p>
-                                        <p>Nos ponemos en contacto para recordarle su saldo pendiente. Actualmente, las facturas vencidas suman un total de <b>${total_vencido_cliente:,.0f}</b>, y la factura más antigua tiene <b>{dias_max_vencido} días</b> de vencida.</p>
+                                        <p>Reciba un cordial saludo del área de cartera de FERREINOX SAS BIC.</p>
+                                        <p>Nos ponemos en contacto para recordarle su saldo pendiente. Actualmente las facturas vencidas suman un total de <b>${total_vencido_cliente:,.0f}</b>, y la factura más antigua tiene <b>{dias_max_vencido} días</b> de vencida.</p>
                                         <p>Adjunto a este correo, encontrará su estado de cuenta completo para su revisión.</p>
                                         <p>Para su comodidad, puede realizar el pago de forma fácil y segura a través de nuestro <a href='{portal_link}'><b>Portal de Pagos en Línea</b></a>.</p>
                                         <p>{instrucciones}</p>
-                                        <p>Si ya realizo el pago, por favor, haga caso omiso de este recordatorio. Si tiene alguna consulta, no dude en contactarnos.</p>
+                                        <p>Si ya realizó el pago, por favor envie por este medio el comprobante de la transaccion. Si tiene alguna consulta, no dude en contactarnos.</p>
                                         <p>Atentamente,<br><b>Area Cartera Ferreinox SAS BIC</b></p>
                                     </body></html>
                                     """
@@ -597,4 +597,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
