@@ -524,25 +524,25 @@ def main():
                                     <html><body style='font-family: Arial, sans-serif; color: #333;'>
                                         <p>Estimado(a) {cliente_seleccionado},</p>
                                         <p>Recibe un cordial saludo del Área de Cartera de Ferreinox SAS BIC.</p>
-                                        <p>Nos ponemos en contacto para recordarle su saldo pendiente. Actualmente, tus facturas vencidas suman un total de <b>${total_vencido_cliente:,.0f}</b>, y tu factura más antigua tiene <b>{dias_max_vencido} días</b> de vencida.</p>
-                                        <p>Adjunto a este correo, encontrara su estado de cuenta completo para su revisión.</p>
+                                        <p>Nos ponemos en contacto para recordarle su saldo pendiente. Actualmente, las facturas vencidas suman un total de <b>${total_vencido_cliente:,.0f}</b>, y la factura más antigua tiene <b>{dias_max_vencido} días</b> de vencida.</p>
+                                        <p>Adjunto a este correo, encontrará su estado de cuenta completo para su revisión.</p>
                                         <p>Para su comodidad, puede realizar el pago de forma fácil y segura a través de nuestro <a href='{portal_link}'><b>Portal de Pagos en Línea</b></a>.</p>
                                         <p>{instrucciones}</p>
-                                        <p>Si ya has realizado el pago, por favor, haz caso omiso de este recordatorio. Si tienes alguna consulta, no dudes en contactarnos.</p>
+                                        <p>Si ya realizo el pago, por favor, haga caso omiso de este recordatorio. Si tiene alguna consulta, no dude en contactarnos.</p>
                                         <p>Atentamente,<br><b>Area Cartera Ferreinox SAS BIC</b></p>
                                     </body></html>
                                     """
                                 else:
-                                    asunto = f"Tu Estado de Cuenta actualizado - {cliente_seleccionado}"
+                                    asunto = f"Su Estado de Cuenta actualizado - {cliente_seleccionado}"
                                     cuerpo_html = f"""
                                     <html><body style='font-family: Arial, sans-serif; color: #333;'>
                                         <p>Estimado(a) {cliente_seleccionado},</p>
                                         <p>Recibe un cordial saludo del Área de Cartera de Ferreinox SAS BIC.</p>
-                                        <p>Nos complace informarte que tu cuenta se encuentra al día. ¡Agradecemos tu excelente gestión y puntualidad en los pagos!</p>
-                                        <p>Para tu control y referencia, adjuntamos a este correo tu estado de cuenta completo.</p>
-                                        <p>Recuerda que para futuras consultas o pagos, nuestro <a href='{portal_link}'><b>Portal de Pagos en Línea</b></a> está siempre a tu disposición.</p>
+                                        <p>Nos complace informarle que su cuenta se encuentra al día. ¡Agradecemos su excelente gestión y puntualidad en los pagos!</p>
+                                        <p>Para su control y referencia, adjuntamos a este correo su estado de cuenta completo.</p>
+                                        <p>Recuerde que para futuras consultas o pagos, nuestro <a href='{portal_link}'><b>Portal de Pagos en Línea</b></a> está siempre a su disposición.</p>
                                         <p>{instrucciones}</p>
-                                        <p>Gracias por tu confianza en nosotros.</p>
+                                        <p>Gracias por su confianza en nosotros.</p>
                                         <p>Atentamente,<br><b>Area Cartera Ferreinox SAS BIC</b></p>
                                     </body></html>
                                     """
@@ -567,14 +567,14 @@ def main():
                         total_vencido_cliente_wa = facturas_vencidas_cliente['importe'].sum()
                         dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
                         mensaje_whatsapp = (
-                            f"👋 ¡Hola {cliente_seleccionado}! Te saludamos desde Ferreinox SAS BIC.\n\n"
-                            f"Tu estado de cuenta con un valor total vencido de *${total_vencido_cliente_wa:,.0f}* ha sido enviado a tu correo. Tu factura más antigua tiene *{dias_max_vencido} días* de vencida.\n\n"
-                            f"Para ponerte al día, puedes usar nuestro Portal de Pagos:\n"
+                            f"👋 ¡Hola {cliente_seleccionado}! Le saludamos desde Ferreinox SAS BIC.\n\n"
+                            f"Su estado de cuenta con un valor total vencido de *${total_vencido_cliente_wa:,.0f}* ha sido enviado a su correo. La factura más antigua tiene *{dias_max_vencido} días* de vencida.\n\n"
+                            f"Para ponerse al día, puede usar nuestro Portal de Pagos:\n"
                             f"🔗 https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/\n\n"
-                            f"Tus datos de acceso son:\n"
+                            f"Sus datos de acceso son:\n"
                             f"👤 *Usuario:* {nit_cliente} (Tu NIT)\n"
                             f"🔑 *Código Único:* {cod_cliente}\n\n"
-                            f"¡Agradecemos tu pronta gestión!"
+                            f"¡Agradecemos su pronta gestión!"
                         )
                     else:
                         total_cartera_cliente_wa = datos_cliente_seleccionado['importe'].sum()
@@ -597,3 +597,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
