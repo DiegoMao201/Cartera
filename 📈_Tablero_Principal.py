@@ -466,6 +466,11 @@ def main():
                 telefono_cliente = telefono_raw.split('.')[0] if '.' in telefono_raw else telefono_raw
                 nit_cliente = str(info_cliente_raw.get('nit', 'N/A'))
                 cod_cliente = str(int(info_cliente_raw['cod_cliente'])) if pd.notna(info_cliente_raw['cod_cliente']) else "N/A"
+                
+                # ***** CORRECCIÓN APLICADA AQUÍ *****
+                # Se define portal_link en un alcance superior para que esté disponible
+                # tanto para la lógica de email como para la de WhatsApp.
+                portal_link = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
 
                 st.write(f"**Facturas para {cliente_seleccionado}:**")
                 st.dataframe(datos_cliente_seleccionado[['numero', 'fecha_documento', 'fecha_vencimiento', 'dias_vencido', 'importe']], use_container_width=True, hide_index=True)
@@ -495,7 +500,6 @@ def main():
                             try:
                                 sender_email = st.secrets["email_credentials"]["sender_email"]
                                 sender_password = st.secrets["email_credentials"]["sender_password"]
-                                portal_link = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
                                 logo_path = "LOGO FERREINOX SAS BIC 2024.png"
 
                                 if total_vencido_cliente > 0:
