@@ -1,5 +1,5 @@
 ======================================================================================
-#ARCHIVO: Tablero_Principal.py (v.Definitiva con Corrección de Duplicados y Mejoras)
+#Tablero_Principal.py (v.Definitiva con Corrección de Duplicados y Mejoras)
 ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -654,4 +654,5 @@ else:
                     st.warning("Ingresa un número de teléfono válido para habilitar el botón de WhatsApp.")
 if name == 'main':
 main()
+
 
