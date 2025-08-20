@@ -67,19 +67,19 @@ def cargar_datos_desde_dropbox():
         APP_KEY = st.secrets["dropbox"]["app_key"]
         APP_SECRET = st.secrets["dropbox"]["app_secret"]
         REFRESH_TOKEN = st.secrets["dropbox"]["refresh_token"]
-        
+
         with dropbox.Dropbox(app_key=APP_KEY, app_secret=APP_SECRET, oauth2_refresh_token=REFRESH_TOKEN) as dbx:
             path_archivo_dropbox = '/data/cartera_detalle.csv'
             metadata, res = dbx.files_download(path=path_archivo_dropbox)
             contenido_csv = res.content.decode('latin-1')
-            
+
             nombres_columnas_originales = [
                 'Serie', 'Numero', 'Fecha Documento', 'Fecha Vencimiento', 'Cod Cliente',
                 'NombreCliente', 'Nit', 'Poblacion', 'Provincia', 'Telefono1', 'Telefono2',
                 'NomVendedor', 'Entidad Autoriza', 'E-Mail', 'Importe', 'Descuento',
                 'Cupo Aprobado', 'Dias Vencido'
             ]
-            
+
             df = pd.read_csv(StringIO(contenido_csv), header=None, names=nombres_columnas_originales, sep='|', engine='python')
             return df
     except Exception as e:
@@ -98,13 +98,12 @@ def cargar_datos_historicos():
         try:
             df_hist = pd.read_excel(archivo)
             if not df_hist.empty:
-                # La lógica original eliminaba la última fila, la preservamos
                 if "Total" in str(df_hist.iloc[-1, 0]):
                     df_hist = df_hist.iloc[:-1]
                 lista_de_dataframes.append(df_hist)
         except Exception as e:
             st.warning(f"No se pudo leer el archivo histórico {archivo}: {e}")
-            
+
     if lista_de_dataframes:
         return pd.concat(lista_de_dataframes, ignore_index=True)
     return pd.DataFrame()
@@ -116,45 +115,34 @@ def cargar_y_procesar_datos():
     """
     df_dropbox = cargar_datos_desde_dropbox()
     df_historico = cargar_datos_historicos()
-    
+
     df_combinado = pd.concat([df_dropbox, df_historico], ignore_index=True)
 
     if df_combinado.empty:
         st.error("No se pudieron cargar datos de ninguna fuente. La aplicación no puede continuar.")
         st.stop()
-        
-    # --- SOLUCIÓN AL ERROR TypeError ---
-    # Elimina columnas duplicadas que pueden venir de archivos Excel malformados,
-    # conservando la primera aparición de cada columna.
+
     df_combinado = df_combinado.loc[:, ~df_combinado.columns.duplicated()]
-    
-    # Aplica la misma lógica de procesamiento del código original
     df_renamed = df_combinado.rename(columns=lambda x: normalizar_nombre(x).lower().replace(' ', '_'))
-    
-    # ***** INICIO DE LA CORRECCIÓN *****
-    # Se eliminan las columnas duplicadas NUEVAMENTE después de renombrar.
-    # Esto soluciona el TypeError, ya que el paso anterior puede crear nuevos duplicados
-    # (ej. 'Importe' y 'importe' se convierten ambos en 'importe').
     df_renamed = df_renamed.loc[:, ~df_renamed.columns.duplicated()]
-    # ***** FIN DE LA CORRECCIÓN *****
-    
+
     df_renamed['serie'] = df_renamed['serie'].astype(str)
     df_renamed['fecha_documento'] = pd.to_datetime(df_renamed['fecha_documento'], errors='coerce')
     df_renamed['fecha_vencimiento'] = pd.to_datetime(df_renamed['fecha_vencimiento'], errors='coerce')
-    
+
     df_filtrado = df_renamed[~df_renamed['serie'].str.contains('W|X', case=False, na=False)]
-    
+
     return procesar_cartera(df_filtrado)
 
 
 # ======================================================================================
-# --- CLASE PDF Y FUNCIONES AUXILIARES (LÓGICA ORIGINAL CON MODIFICACIÓN) ---
+# --- CLASE PDF Y FUNCIONES AUXILIARES ---
 # ======================================================================================
 class PDF(FPDF):
     def header(self):
         try:
             self.image("LOGO FERREINOX SAS BIC 2024.png", 10, 8, 80)
-        except RuntimeError: # FPDF a veces lanza RuntimeError si el archivo está corrupto o no es un formato esperado
+        except RuntimeError:
             self.set_font('Arial', 'B', 12); self.cell(80, 10, 'Logo no encontrado o invalido', 0, 0, 'L')
         self.set_font('Arial', 'B', 18); self.cell(0, 10, 'Estado de Cuenta', 0, 1, 'R')
         self.set_font('Arial', 'I', 9); self.cell(0, 10, f'Generado el: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}', 0, 1, 'R')
@@ -180,7 +168,6 @@ ZONAS_SERIE = { "PEREIRA": [155, 189, 158, 439], "MANIZALES": [157, 238], "ARMEN
 
 def procesar_cartera(df: pd.DataFrame) -> pd.DataFrame:
     df_proc = df.copy()
-    # Estas conversiones ahora se hacen sobre un DataFrame limpio y sin duplicados
     df_proc['importe'] = pd.to_numeric(df_proc['importe'], errors='coerce').fillna(0)
     df_proc['numero'] = pd.to_numeric(df_proc['numero'], errors='coerce').fillna(0)
     df_proc.loc[df_proc['numero'] < 0, 'importe'] *= -1
@@ -220,10 +207,10 @@ def generar_excel_formateado(df: pd.DataFrame):
         importe_col_idx, dias_col_idx, formato_moneda = 6, 7, '"$"#,##0'
         for row_idx, row in enumerate(ws.iter_rows(min_row=first_data_row, max_row=last_data_row), start=first_data_row):
             if row_idx == first_data_row:
-                    for cell in row:
-                        cell.font = font_bold
-                        cell.alignment = Alignment(horizontal='center', vertical='center')
-                    continue
+                for cell in row:
+                    cell.font = font_bold
+                    cell.alignment = Alignment(horizontal='center', vertical='center')
+                continue
             row[importe_col_idx - 1].number_format = formato_moneda
             dias_cell = row[dias_col_idx - 1]
             try:
@@ -248,31 +235,31 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame, total_vencido_cliente
     if datos_cliente.empty:
         pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, 'No se encontraron facturas para este cliente.', 0, 1, 'C')
         return bytes(pdf.output())
-    
+
     datos_cliente_ordenados = datos_cliente.sort_values(by='fecha_vencimiento', ascending=True)
     info_cliente = datos_cliente_ordenados.iloc[0]
-    
+
     pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Cliente:', 0, 0); pdf.set_font('Arial', '', 11); pdf.cell(0, 10, info_cliente['nombrecliente'], 0, 1)
     pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Codigo de Cliente:', 0, 0); pdf.set_font('Arial', '', 11)
     cod_cliente_str = str(int(info_cliente['cod_cliente'])) if pd.notna(info_cliente['cod_cliente']) else "N/A"
     pdf.cell(0, 10, cod_cliente_str, 0, 1); pdf.ln(5)
-    
+
     pdf.set_font('Arial', '', 10)
     mensaje = ("Apreciado cliente, a continuación encontrará el detalle de su estado de cuenta a la fecha. "
                "Le invitamos a realizar su revisión y proceder con el pago de los valores vencidos. "
                "Puede realizar su pago de forma fácil y segura a través de nuestro PORTAL DE PAGOS en línea, "
                "cuyo enlace encontrará al final de este documento.")
     pdf.set_text_color(128, 128, 128); pdf.multi_cell(0, 5, mensaje, 0, 'J'); pdf.set_text_color(0, 0, 0); pdf.ln(10)
-    
+
     pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(0, 56, 101); pdf.set_text_color(255, 255, 255)
     pdf.cell(30, 10, 'Factura', 1, 0, 'C', 1); pdf.cell(40, 10, 'Fecha Factura', 1, 0, 'C', 1)
     pdf.cell(40, 10, 'Fecha Vencimiento', 1, 0, 'C', 1); pdf.cell(40, 10, 'Importe', 1, 1, 'C', 1)
-    
+
     pdf.set_font('Arial', '', 10)
     total_importe = 0
     for _, row in datos_cliente_ordenados.iterrows():
         pdf.set_text_color(0, 0, 0)
-        if row['dias_vencido'] > 0: pdf.set_fill_color(255, 235, 238) # Rojo muy claro para vencidas
+        if row['dias_vencido'] > 0: pdf.set_fill_color(255, 235, 238)
         else: pdf.set_fill_color(255, 255, 255)
         total_importe += row['importe']
         numero_factura_str = str(int(row['numero'])) if pd.notna(row['numero']) else "N/A"
@@ -282,20 +269,18 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame, total_vencido_cliente
         pdf.cell(40, 10, fecha_doc_str, 1, 0, 'C', 1)
         pdf.cell(40, 10, fecha_ven_str, 1, 0, 'C', 1)
         pdf.cell(40, 10, f"${row['importe']:,.0f}", 1, 1, 'R', 1)
-        
-    # --- Tabla de Totales ---
+
     pdf.set_text_color(0, 0, 0)
     pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(224, 224, 224); pdf.set_text_color(0, 0, 0)
     pdf.cell(110, 10, 'TOTAL ADEUDADO', 1, 0, 'R', 1)
     pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(240, 240, 240);
     pdf.cell(40, 10, f"${total_importe:,.0f}", 1, 1, 'R', 1)
-    
-    # --- NUEVA SECCIÓN: Mostrar cartera vencida solo si existe ---
+
     if total_vencido_cliente > 0:
-        pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(255, 204, 204); pdf.set_text_color(192, 0, 0) # Fondo y texto rojos
+        pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(255, 204, 204); pdf.set_text_color(192, 0, 0)
         pdf.cell(110, 10, 'VALOR TOTAL VENCIDO', 1, 0, 'R', 1)
         pdf.cell(40, 10, f"${total_vencido_cliente:,.0f}", 1, 1, 'R', 1)
-        
+
     return bytes(pdf.output())
 
 def generar_analisis_cartera(kpis: dict):
@@ -346,7 +331,7 @@ def main():
                     st.error("Contraseña incorrecta.")
     else:
         st.title("📊 Tablero de Cartera Ferreinox SAS BIC")
-        
+
         if st.button("🔄 Recargar Datos (Dropbox + Locales)"):
             st.cache_data.clear()
             st.success("Caché limpiado. Recargando todos los datos...")
@@ -364,17 +349,17 @@ def main():
                 st.rerun()
 
         cartera_procesada = cargar_y_procesar_datos()
-        
+
         st.sidebar.title("Filtros")
         if st.session_state['acceso_general']:
             vendedores_en_excel_display = ["Todos"] + sorted(cartera_procesada['nomvendedor'].dropna().unique())
             vendedor_sel = st.sidebar.selectbox("Filtrar por Vendedor:", vendedores_en_excel_display)
         else:
             vendedor_sel = st.session_state['vendedor_autenticado']
-        
+
         zonas_disponibles = ["Todas las Zonas"] + sorted(cartera_procesada['zona'].dropna().unique())
         zona_sel = st.sidebar.selectbox("Filtrar por Zona:", zonas_disponibles)
-        
+
         poblaciones_disponibles = ["Todas"] + sorted(cartera_procesada['poblacion'].dropna().unique())
         poblacion_sel = st.sidebar.selectbox("Filtrar por Población:", poblaciones_disponibles)
 
@@ -388,14 +373,14 @@ def main():
 
         if cartera_filtrada.empty:
             st.warning(f"No se encontraron datos para los filtros seleccionados."); st.stop()
-            
+
         total_cartera = cartera_filtrada['importe'].sum()
         cartera_vencida_df = cartera_filtrada[cartera_filtrada['dias_vencido'] > 0]
         total_vencido = cartera_vencida_df['importe'].sum()
         porcentaje_vencido = (total_vencido / total_cartera) * 100 if total_cartera > 0 else 0
         csi = (cartera_vencida_df['importe'] * cartera_vencida_df['dias_vencido']).sum() / total_cartera if total_cartera > 0 else 0
         antiguedad_prom_vencida = (cartera_vencida_df['importe'] * cartera_vencida_df['dias_vencido']).sum() / total_vencido if total_vencido > 0 else 0
-        
+
         st.header("Indicadores Clave de Rendimiento (KPIs)")
         kpi_row1 = st.columns(3)
         kpi_row2 = st.columns(2)
@@ -463,7 +448,7 @@ def main():
             columnas_a_ocultar_existentes = [col for col in ['provincia', 'telefono1', 'telefono2', 'entidad_autoriza', 'e_mail', 'descuento', 'cupo_aprobado', 'nomvendedor_norm', 'zona'] if col in columnas_disponibles]
             cartera_para_mostrar = cartera_filtrada.drop(columns=columnas_a_ocultar_existentes, errors='ignore')
             st.dataframe(cartera_para_mostrar, use_container_width=True, hide_index=True)
-            
+
         st.markdown("---")
         st.header("⚙️ Herramientas de Gestión")
         st.subheader("Generar y Enviar Estado de Cuenta por Cliente")
@@ -472,7 +457,7 @@ def main():
             st.warning("No hay clientes para mostrar con los filtros actuales.")
         else:
             cliente_seleccionado = st.selectbox("Busca y selecciona un cliente para gestionar su cuenta:", [""] + lista_clientes, format_func=lambda x: 'Selecciona un cliente...' if x == "" else x, key="cliente_selector")
-            
+
             if cliente_seleccionado:
                 datos_cliente_seleccionado = cartera_filtrada[cartera_filtrada['nombrecliente'] == cliente_seleccionado].copy()
                 info_cliente_raw = datos_cliente_seleccionado.iloc[0]
@@ -481,14 +466,14 @@ def main():
                 telefono_cliente = telefono_raw.split('.')[0] if '.' in telefono_raw else telefono_raw
                 nit_cliente = str(info_cliente_raw.get('nit', 'N/A'))
                 cod_cliente = str(int(info_cliente_raw['cod_cliente'])) if pd.notna(info_cliente_raw['cod_cliente']) else "N/A"
-                
+
                 st.write(f"**Facturas para {cliente_seleccionado}:**")
                 st.dataframe(datos_cliente_seleccionado[['numero', 'fecha_documento', 'fecha_vencimiento', 'dias_vencido', 'importe']], use_container_width=True, hide_index=True)
-                
+
                 total_cartera_cliente = datos_cliente_seleccionado['importe'].sum()
                 facturas_vencidas_cliente = datos_cliente_seleccionado[datos_cliente_seleccionado['dias_vencido'] > 0]
                 total_vencido_cliente = facturas_vencidas_cliente['importe'].sum()
-                
+
                 summary_cols = st.columns(2)
                 summary_cols[0].metric("🔥 Cartera Vencida del Cliente", f"${total_vencido_cliente:,.0f}")
                 summary_cols[1].metric("💰 Cartera Total del Cliente", f"${total_cartera_cliente:,.0f}")
@@ -502,7 +487,7 @@ def main():
                 with col_email:
                     st.subheader("✉️ Enviar por Correo Electrónico")
                     email_destino = st.text_input("Verificar o modificar correo:", value=correo_cliente)
-                    
+
                     if st.button("📧 Enviar Correo con Estado de Cuenta"):
                         if not email_destino or email_destino == 'Correo no disponible' or '@' not in email_destino:
                             st.error("Dirección de correo no válida o no disponible.")
@@ -511,12 +496,13 @@ def main():
                                 sender_email = st.secrets["email_credentials"]["sender_email"]
                                 sender_password = st.secrets["email_credentials"]["sender_password"]
                                 portal_link = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
-                                
+                                logo_path = "LOGO FERREINOX SAS BIC 2024.png"
+
                                 if total_vencido_cliente > 0:
                                     dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
-                                    asunto = f"Recordatorio de saldo pendiente – {cliente_seleccionado}"
+                                    asunto = f"Recordatorio de Saldo Pendiente – {cliente_seleccionado}"
                                     
-                                    # ***** INICIO DE LA MODIFICACIÓN DEL CUERPO DEL CORREO *****
+                                    # ***** INICIO DE LA NUEVA PLANTILLA DE CORREO PROFESIONAL *****
                                     cuerpo_html = f"""
                                     <!DOCTYPE html>
                                     <html lang="es">
@@ -525,75 +511,58 @@ def main():
                                         <meta name="viewport" content="width=device-width, initial-scale=1.0">
                                         <title>Recordatorio de Saldo Pendiente</title>
                                     </head>
-                                    <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f4f5f7;">
-                                        <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; margin: 20px auto; border-collapse: collapse; background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+                                    <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f1f5f9;">
+                                        <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; margin: 20px auto; border-collapse: collapse;">
                                             <tr>
                                                 <td align="center" style="padding: 20px 0;">
-                                                    <img src="https://i.imgur.com/G200i1f.png" alt="Logo Ferreinox" width="250" style="display: block;">
+                                                    <img src="cid:logo_ferreinox" alt="Logo Ferreinox" width="250" style="display: block;">
                                                 </td>
                                             </tr>
                                             <tr>
-                                                <td style="padding: 25px 30px 20px 30px;">
-                                                    <h1 style="color: #003865; margin: 0 0 15px 0; font-size: 24px; font-weight: bold;">Recordatorio de Saldo Pendiente</h1>
-                                                    <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 12px 0;">
+                                                <td style="background-color: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.05);">
+                                                    <h1 style="color: #0f172a; margin: 0 0 15px 0; font-size: 24px; font-weight: bold; text-align: center;">Recordatorio de Saldo Pendiente</h1>
+                                                    <p style="color: #334155; font-size: 16px; line-height: 1.6; margin: 0 0 12px 0;">
                                                         Hola, <strong>{cliente_seleccionado}</strong> 👋
                                                     </p>
-                                                    <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 12px 0;">
-                                                        Queremos recordarte que actualmente tienes un saldo pendiente por un valor de <strong style="color: #D32F2F; font-size: 17px;">${total_vencido_cliente:,.0f}</strong>. La factura más antigua ya lleva <strong>{dias_max_vencido} días vencida</strong>.
+                                                    <p style="color: #334155; font-size: 16px; line-height: 1.6; margin: 0 0 20px 0;">
+                                                        Te contactamos para recordarte que tienes un saldo vencido de <strong style="color: #dc2626; font-size: 17px;">${total_vencido_cliente:,.0f}</strong>. Tu factura más antigua tiene <strong>{dias_max_vencido} días vencida</strong>.
                                                     </p>
-                                                    <p style="color: #555555; font-size: 16px; margin: 0 0 20px 0;">
-                                                        Adjunto a este correo encontrarás tu estado de cuenta detallado para tu revisión.
-                                                    </p>
-                                                    <p style="color: #333333; font-size: 16px; margin: 0 0 10px 0;">
-                                                        Para facilitar tu pago, puedes usar nuestro Portal de Recaudos en Línea. Solo necesitas los siguientes datos:
+                                                    <p style="color: #475569; font-size: 16px; margin: 0 0 25px 0;">
+                                                        Adjunto a este correo encontrarás el estado de cuenta detallado para tu referencia.
                                                     </p>
                                                     
-                                                    <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse: collapse; background-color: #f8f9fa; border: 1px solid #dee2e6; margin: 15px 0 25px 0; border-radius: 6px;">
-                                                        <tr style="background-color: #e9ecef; border-bottom: 2px solid #dee2e6;">
-                                                            <th style="padding: 12px 15px; text-align: left; font-size: 15px; color: #495057;">Concepto</th>
-                                                            <th style="padding: 12px 15px; text-align: left; font-size: 15px; color: #495057;">Dato</th>
-                                                        </tr>
-                                                        <tr>
-                                                            <td style="padding: 12px 15px; font-size: 15px; color: #333; border-top: 1px solid #dee2e6;"><b>NIT/CC para Ingresar:</b></td>
-                                                            <td style="padding: 12px 15px; font-size: 15px; color: #333; border-top: 1px solid #dee2e6;">{nit_cliente}</td>
-                                                        </tr>
-                                                        <tr>
-                                                            <td style="padding: 12px 15px; font-size: 15px; color: #333; border-top: 1px solid #dee2e6;"><b>Código Único Interno:</b></td>
-                                                            <td style="padding: 12px 15px; font-size: 15px; color: #333; border-top: 1px solid #dee2e6;">{cod_cliente}</td>
-                                                        </tr>
-                                                    </table>
+                                                    <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; border-radius: 6px; margin-bottom: 25px; text-align: center;">
+                                                        <p style="margin: 0 0 8px 0; font-size: 15px; color: #1e293b;">Para realizar tu pago, utiliza estos datos en nuestro portal:</p>
+                                                        <p style="margin: 0; font-size: 16px; color: #0f172a; line-height: 1.5;">
+                                                            <strong>NIT/CC:</strong> {nit_cliente}<br>
+                                                            <strong>Código Único Interno:</strong> {cod_cliente}
+                                                        </p>
+                                                    </div>
 
                                                     <table border="0" cellpadding="0" cellspacing="0" width="100%">
                                                         <tr>
                                                             <td align="center" style="padding: 10px 0 20px 0;">
-                                                                <a href="{portal_link}" target="_blank" style="display: inline-block; padding: 14px 35px; font-size: 18px; font-weight: bold; color: #ffffff; background-color: #dc2626; border-radius: 8px; text-decoration: none; box-shadow: 0 4px 10px rgba(220, 38, 38, 0.4);">
-                                                                    Realizar Pago Aquí
+                                                                <a href="{portal_link}" target="_blank" title="Realizar Pago">
+                                                                    <img src="https://i.ibb.co/jZ8PzVj/boton-pago-profesional.png" alt="Botón para Realizar Pago Aquí" style="display: block; border: 0; width: 280px; max-width: 100%;">
                                                                 </a>
                                                             </td>
                                                         </tr>
                                                     </table>
                                                     
-                                                    <p style="color: #555555; font-size: 15px; margin-top: 15px; margin-bottom: 0;">
-                                                        Si tienes alguna duda o ya realizaste el pago, por favor contáctanos.
-                                                    </p>
-                                                     <p style="color: #555555; font-size: 15px; margin-top: 5px; margin-bottom: 0;">
-                                                        ¡Gracias por tu gestión!
+                                                    <p style="color: #475569; font-size: 14px; margin-top: 15px; text-align: center; line-height: 1.5;">
+                                                        Si ya realizaste el pago, por favor omite este mensaje. Si tienes alguna duda, no dudes en contactarnos.
+                                                        <br>¡Gracias por tu gestión!
                                                     </p>
                                                 </td>
                                             </tr>
                                             <tr>
-                                                <td bgcolor="#f4f5f7" style="padding: 25px 30px; text-align: center; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; border-top: 1px solid #e9ecef;">
-                                                    <p style="margin: 0; font-size: 14px; color: #555555; font-weight: bold;">Área de Recaudos - Ferreinox SAS BIC</p>
-                                                    <p style="margin: 10px 0 10px 0; font-size: 13px; color: #555555; line-height: 1.6;">
+                                                <td style="padding: 25px 30px; text-align: center;">
+                                                    <p style="margin: 0; font-size: 14px; color: #475569; font-weight: bold;">Área de Recaudos - Ferreinox SAS BIC</p>
+                                                    <p style="margin: 10px 0 10px 0; font-size: 13px; color: #475569; line-height: 1.6;">
                                                         <b>Líneas de WhatsApp:</b><br>
                                                         Armenia <a href="https://wa.me/573165219904" style="color:#0058A7; text-decoration:none;">316 5219904</a> ● 
                                                         Manizales <a href="https://wa.me/573108501359" style="color:#0058A7; text-decoration:none;">310 8501359</a> ● 
                                                         Pereira <a href="https://wa.me/573142087169" style="color:#0058A7; text-decoration:none;">314 2087169</a>
-                                                    </p>
-                                                    <p style="margin: 0; font-size: 13px; color: #555555;">
-                                                        Síguenos en
-                                                        <a href="https://www.instagram.com/FerreinoxTiendapintuco" style="color: #0058A7; text-decoration: none;">Instagram</a> y
-                                                        <a href="https://www.facebook.com/FerreinoxTiendapintuco" style="color: #0058A7; text-decoration: none;">Facebook</a>
                                                     </p>
                                                 </td>
                                             </tr>
@@ -601,68 +570,73 @@ def main():
                                     </body>
                                     </html>
                                     """
-                                    email_contents = [cuerpo_html]
-                                    # ***** FIN DE LA MODIFICACIÓN DEL CUERPO DEL CORREO *****
-
+                                    # ***** FIN DE LA NUEVA PLANTILLA DE CORREO PROFESIONAL *****
+                                    
                                 else:
-                                    asunto = f"Su Estado de Cuenta actualizado - {cliente_seleccionado}"
-                                    instrucciones = f"<b>Instrucciones de acceso:</b><br> &nbsp; • <b>Usuario:</b> {nit_cliente} (Tu NIT)<br> &nbsp; • <b>Código Único:</b> {cod_cliente}"
+                                    # Correo para clientes al día (se mantiene simple y directo)
+                                    asunto = f"Tu Estado de Cuenta actualizado - {cliente_seleccionado}"
                                     cuerpo_html = f"""
                                     <html><body style='font-family: Arial, sans-serif; color: #333;'>
                                         <p>Estimado(a) {cliente_seleccionado},</p>
                                         <p>Recibe un cordial saludo del Área de Cartera de Ferreinox SAS BIC.</p>
-                                        <p>Nos complace informarle que su cuenta se encuentra al día. ¡Agradecemos su excelente gestión y puntualidad en los pagos!</p>
-                                        <p>Para su control y referencia, adjuntamos a este correo su estado de cuenta completo.</p>
-                                        <p>Recuerde que para futuras consultas o pagos, nuestro <a href='{portal_link}'><b>Portal de Pagos en Línea</b></a> está siempre a su disposición.</p>
-                                        <p>{instrucciones}</p>
-                                        <p>Gracias por su confianza en nosotros.</p>
-                                        <p>Atentamente,<br><b>Area Cartera Ferreinox SAS BIC</b></p>
+                                        <p>Nos complace informarle que tu cuenta se encuentra al día. ¡Agradecemos tu excelente gestión y puntualidad en los pagos!</p>
+                                        <p>Para tu control y referencia, adjuntamos a este correo tu estado de cuenta completo.</p>
+                                        <p>Gracias por tu confianza en nosotros.</p>
+                                        <p>Atentamente,<br><b>Área de Cartera Ferreinox SAS BIC</b></p>
                                     </body></html>
                                     """
-                                    email_contents = [cuerpo_html] 
                                 
                                 with st.spinner(f"Enviando correo a {email_destino}..."):
                                     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                                         tmp.write(pdf_bytes)
                                         tmp_path = tmp.name
+
                                     yag = yagmail.SMTP(sender_email, sender_password)
+                                    
+                                    # Preparar contenidos para yagmail, incluyendo la imagen incrustada del logo
+                                    email_contents = [cuerpo_html]
+                                    if os.path.exists(logo_path):
+                                        email_contents.append(yagmail.inline(logo_path, 'logo_ferreinox'))
+                                    
                                     yag.send(
-                                        to=email_destino, 
-                                        subject=asunto, 
-                                        contents=email_contents, 
+                                        to=email_destino,
+                                        subject=asunto,
+                                        contents=email_contents,
                                         attachments=tmp_path
                                     )
                                     os.remove(tmp_path)
                                 st.success(f"¡Correo enviado exitosamente a {email_destino}!")
+                            
+                            except FileNotFoundError:
+                                st.error(f"Error Crítico: No se encontró el archivo del logo '{logo_path}'. Asegúrate de que el archivo esté en el mismo directorio que la aplicación.")
                             except Exception as e:
                                 st.error(f"Error al enviar el correo: {e}")
+
 
                 with col_whatsapp:
                     st.subheader("📲 Enviar por WhatsApp")
                     numero_completo_para_mostrar = f"+57{telefono_cliente}" if telefono_cliente else "+57"
                     numero_destino_wa = st.text_input("Verificar o modificar número de WhatsApp:", value=numero_completo_para_mostrar, key="whatsapp_input")
-                    
+
                     if not facturas_vencidas_cliente.empty:
                         total_vencido_cliente_wa = facturas_vencidas_cliente['importe'].sum()
                         dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
                         mensaje_whatsapp = (
-                            f"👋 ¡Hola {cliente_seleccionado}! Le saludamos desde Ferreinox SAS BIC.\n\n"
-                            f"Su estado de cuenta con un valor total vencido de *${total_vencido_cliente_wa:,.0f}* ha sido enviado a su correo. La factura más antigua tiene *{dias_max_vencido} días* de vencida.\n\n"
-                            f"Para ponerse al día, puede usar nuestro Portal de Pagos:\n"
-                            f"🔗 https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/\n\n"
-                            f"Sus datos de acceso son:\n"
-                            f"👤 *Usuario:* {nit_cliente} (Tu NIT)\n"
+                            f"👋 ¡Hola {cliente_seleccionado}! Te saludamos desde Ferreinox SAS BIC.\n\n"
+                            f"Te recordamos que tienes un saldo vencido de *${total_vencido_cliente_wa:,.0f}*. La factura más antigua tiene *{dias_max_vencido} días* de vencida.\n\n"
+                            f"Para ponerte al día, puedes usar nuestro Portal de Pagos:\n"
+                            f"🔗 {portal_link}\n\n"
+                            f"Tus datos de acceso son:\n"
+                            f"👤 *Usuario (NIT):* {nit_cliente}\n"
                             f"🔑 *Código Único:* {cod_cliente}\n\n"
-                            f"¡Agradecemos su pronta gestión!"
+                            f"Hemos enviado el estado de cuenta detallado a tu correo. ¡Agradecemos tu pronta gestión!"
                         )
                     else:
                         total_cartera_cliente_wa = datos_cliente_seleccionado['importe'].sum()
                         mensaje_whatsapp = (
                             f"👋 ¡Hola {cliente_seleccionado}! Te saludamos desde Ferreinox SAS BIC.\n\n"
                             f"¡Felicitaciones! Tu cuenta está al día. Tu saldo total es de *${total_cartera_cliente_wa:,.0f}*.\n\n"
-                            f"Hemos enviado tu estado de cuenta al correo para tu referencia. Queremos recordarte también nuestros descuentos por pronto pago. ¡Aprovecha y ahorra!\n\n"
-                            f"Si tienes alguna consulta, puedes usar nuestro Portal:\n"
-                            f"🔗 https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/\n\n"
+                            f"Hemos enviado tu estado de cuenta al correo para tu referencia.\n\n"
                             f"¡Gracias por tu confianza!"
                         )
 
