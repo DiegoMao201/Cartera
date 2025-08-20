@@ -154,8 +154,8 @@ class PDF(FPDF):
     def header(self):
         try:
             self.image("LOGO FERREINOX SAS BIC 2024.png", 10, 8, 80)
-        except FileNotFoundError:
-            self.set_font('Arial', 'B', 12); self.cell(80, 10, 'Logo no encontrado', 0, 0, 'L')
+        except RuntimeError: # FPDF a veces lanza RuntimeError si el archivo está corrupto o no es un formato esperado
+            self.set_font('Arial', 'B', 12); self.cell(80, 10, 'Logo no encontrado o invalido', 0, 0, 'L')
         self.set_font('Arial', 'B', 18); self.cell(0, 10, 'Estado de Cuenta', 0, 1, 'R')
         self.set_font('Arial', 'I', 9); self.cell(0, 10, f'Generado el: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}', 0, 1, 'R')
         self.ln(5); self.set_line_width(0.5); self.set_draw_color(220, 220, 220); self.line(10, 35, 200, 35); self.ln(10)
@@ -354,8 +354,6 @@ def main():
 
         with st.sidebar:
             try:
-                # NOTA: Para que el logo aparezca en el correo, debe estar alojado en línea.
-                # He puesto un marcador de posición 'URL_DEL_LOGO_EN_INTERNET'.
                 st.image("LOGO FERREINOX SAS BIC 2024.png", use_container_width=True)
             except FileNotFoundError:
                 st.warning("Logo no encontrado.")
@@ -513,9 +511,7 @@ def main():
                                 sender_email = st.secrets["email_credentials"]["sender_email"]
                                 sender_password = st.secrets["email_credentials"]["sender_password"]
                                 portal_link = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
-                                # NOTA: Para que el logo aparezca en el correo, debe estar alojado en línea (en un servidor web o servicio de hosting de imágenes).
-                                # Reemplace 'URL_DEL_LOGO_EN_INTERNET' con el enlace público a su imagen.
-                                logo_url = "URL_DEL_LOGO_EN_INTERNET/LOGO FERREINOX SAS BIC 2024.png"
+                                logo_path = "LOGO FERREINOX SAS BIC 2024.png"
                                 
                                 if total_vencido_cliente > 0:
                                     dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
@@ -533,11 +529,11 @@ def main():
                                     <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f5f7;">
                                         <table border="0" cellpadding="0" cellspacing="0" width="100%">
                                             <tr>
-                                                <td style="padding: 20px 0 20px 0;" align="center">
+                                                <td style="padding: 0 0 20px 0;" align="center">
                                                     <table align="center" border="0" cellpadding="0" cellspacing="0" width="600" style="border-collapse: collapse; background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
                                                         <tr>
                                                             <td align="center" style="padding: 25px 20px 15px 20px; border-bottom: 1px solid #eeeeee;">
-                                                                <img src="{logo_url}" alt="Logo Ferreinox SAS BIC" width="250" style="display: block;" />
+                                                                <img src="{logo_path}" alt="Logo Ferreinox SAS BIC" width="250" style="display: block;" />
                                                             </td>
                                                         </tr>
                                                         <tr>
@@ -601,7 +597,8 @@ def main():
                                     </body>
                                     </html>
                                     """
-                                    email_contents = [cuerpo_html]
+                                    # Se incluye el HTML y la ruta de la imagen para que yagmail la inserte
+                                    email_contents = [cuerpo_html, logo_path]
                                     # ***** FIN DE LA MODIFICACIÓN DEL CUERPO DEL CORREO *****
 
                                 else:
@@ -619,7 +616,7 @@ def main():
                                         <p>Atentamente,<br><b>Area Cartera Ferreinox SAS BIC</b></p>
                                     </body></html>
                                     """
-                                    email_contents = [cuerpo_html]
+                                    email_contents = [cuerpo_html] # Sin imagen para los que están al día
                                 
                                 with st.spinner(f"Enviando correo a {email_destino}..."):
                                     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
@@ -635,7 +632,7 @@ def main():
                                     os.remove(tmp_path)
                                 st.success(f"¡Correo enviado exitosamente a {email_destino}!")
                             except FileNotFoundError:
-                                st.error("Error: No se encontró la imagen 'Ferreinox Recaudos en línea.png'. Asegúrate de que esté en el directorio raíz de la aplicación.")
+                                st.error(f"Error: No se encontró la imagen '{logo_path}'. Asegúrate de que esté en el mismo directorio que la aplicación.")
                             except Exception as e:
                                 st.error(f"Error al enviar el correo: {e}")
 
