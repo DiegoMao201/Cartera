@@ -518,8 +518,7 @@ def main():
                                     asunto = f"Recordatorio de saldo pendiente – {cliente_seleccionado}"
                                     
                                     # ***** INICIO DE LA MODIFICACIÓN DEL CUERPO DEL CORREO *****
-                                    cuerpo_html = f"""
-                                    <!DOCTYPE html>
+                                    cuerpo_html = f"""<!DOCTYPE html>
                                     <html lang="es">
                                     <head>
                                     <meta charset="UTF-8">
@@ -527,65 +526,59 @@ def main():
                                     <title>Recordatorio de Saldo Pendiente</title>
                                     </head>
                                     <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f5f7;">
-                                        <table border="0" cellpadding="0" cellspacing="0" width="100%">
+                                        <table align="center" border="0" cellpadding="0" cellspacing="0" width="600" style="margin: 20px auto; border-collapse: collapse; background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
                                             <tr>
-                                                <td style="padding: 0;" align="center">
-                                                    <table align="center" border="0" cellpadding="0" cellspacing="0" width="600" style="border-collapse: collapse; background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+                                                <td style="padding: 25px 30px 20px 30px;">
+                                                    <h2 style="color: #003865; margin: 0 0 15px 0; font-size: 22px;">Recordatorio de Saldo Pendiente</h2>
+                                                    <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 12px 0;">
+                                                        Hola, <strong>{cliente_seleccionado}</strong> 👋
+                                                    </p>
+                                                    <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 12px 0;">
+                                                        Queremos recordarte que actualmente tienes un saldo pendiente por <span style="font-weight: bold; color: #D32F2F; font-size: 17px;">${total_vencido_cliente:,.0f}</span>. La factura más antigua ya lleva <b>{dias_max_vencido} días vencida</b>.
+                                                    </p>
+                                                    <p style="color: #555555; font-size: 16px; margin: 0 0 20px 0;">
+                                                        Adjunto encontrarás tu estado de cuenta para que lo revises con calma.
+                                                    </p>
+                                                    <p style="color: #333333; font-size: 16px; margin: 0 0 10px 0;">
+                                                        Puedes consultar y realizar pagos a través de nuestro <a href="{portal_link}" target="_blank" style="color: #0058A7; text-decoration: none; font-weight: bold;">Portal de Recaudos en Línea</a> con los siguientes datos:
+                                                    </p>
+                                                    
+                                                    <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse: collapse; background-color: #f0f2f6; border-left: 4px solid #0058A7; margin: 15px 0 25px 0;">
                                                         <tr>
-                                                            <td style="padding: 25px 30px 20px 30px;">
-                                                                <h2 style="color: #003865; margin: 0 0 15px 0; font-size: 22px;">Recordatorio de Saldo Pendiente</h2>
-                                                                <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 12px 0;">
-                                                                    Hola, <strong>{cliente_seleccionado}</strong> 👋
-                                                                </p>
-                                                                <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 12px 0;">
-                                                                    Queremos recordarte que actualmente tienes un saldo pendiente por <span style="font-weight: bold; color: #D32F2F; font-size: 17px;">${total_vencido_cliente:,.0f}</span>. La factura más antigua ya lleva <b>{dias_max_vencido} días vencida</b>.
-                                                                </p>
-                                                                <p style="color: #555555; font-size: 16px; margin: 0 0 20px 0;">
-                                                                    Adjunto encontrarás tu estado de cuenta para que lo revises con calma.
-                                                                </p>
-                                                                <p style="color: #333333; font-size: 16px; margin: 0 0 10px 0;">
-                                                                    Puedes consultar y realizar pagos a través de nuestro <a href="{portal_link}" target="_blank" style="color: #0058A7; text-decoration: none; font-weight: bold;">Portal de Recaudos en Línea</a> con los siguientes datos:
-                                                                </p>
-                                                                
-                                                                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse: collapse; background-color: #f0f2f6; border-left: 4px solid #0058A7; margin: 15px 0 25px 0;">
-                                                                    <tr>
-                                                                        <td style="padding: 12px 15px;">
-                                                                            <p style="margin: 0; font-size: 15px; color: #333;"><b>NIT/CC:</b> {nit_cliente}</p>
-                                                                            <p style="margin: 8px 0 0 0; font-size: 15px; color: #333;"><b>Código único interno:</b> {cod_cliente}</p>
-                                                                        </td>
-                                                                    </tr>
-                                                                </table>
-                                                                
-                                                                <table border="0" cellpadding="0" cellspacing="0" width="100%">
-                                                                    <tr>
-                                                                        <td align="center" style="padding: 5px 0 15px 0;">
-                                                                            <a href="{portal_link}" target="_blank" style="display: inline-block; padding: 14px 30px; font-size: 16px; font-weight: bold; color: #ffffff; background-color: #D32F2F; border: none; border-radius: 8px; text-decoration: none; box-shadow: 0 4px 10px 0 rgba(211, 47, 47, 0.4); transition: all 0.3s ease;">
-                                                                                REALIZAR PAGO AQUÍ
-                                                                            </a>
-                                                                        </td>
-                                                                    </tr>
-                                                                </table>
-                                                                
-                                                                <p style="color: #555555; font-size: 15px; margin-top: 15px; margin-bottom: 0;">
-                                                                    Si tienes alguna duda o necesitas enviar soportes de pago, no dudes en contactarnos.
-                                                                </p>
-                                                            </td>
-                                                        </tr>
-                                                        <tr>
-                                                            <td bgcolor="#f4f5f7" style="padding: 20px 30px; text-align: center; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;">
-                                                                <p style="margin: 0; font-size: 14px; color: #555555;"><b>Área de Recaudos - Ferreinox SAS BIC</b></p>
-                                                                <p style="margin: 8px 0 8px 0; font-size: 13px; color: #555555; line-height: 1.5;">
-                                                                    <b>Líneas de WhatsApp:</b><br>
-                                                                    Armenia <a href="https://wa.me/573165219904" style="color:#0058A7;">316 5219904</a> ● Manizales <a href="https://wa.me/573108501359" style="color:#0058A7;">310 8501359</a> ● Pereira <a href="https://wa.me/573142087169" style="color:#0058A7;">314 2087169</a>
-                                                                </p>
-                                                                <p style="margin: 0; font-size: 13px; color: #555555;">
-                                                                    Síguenos en
-                                                                    <a href="https://www.instagram.com/FerreinoxTiendapintuco" style="color: #0058A7; text-decoration: none;">Instagram</a> y
-                                                                    <a href="https://www.facebook.com/FerreinoxTiendapintuco" style="color: #0058A7; text-decoration: none;">Facebook</a>
-                                                                </p>
+                                                            <td style="padding: 12px 15px;">
+                                                                <p style="margin: 0; font-size: 15px; color: #333;"><b>NIT/CC:</b> {nit_cliente}</p>
+                                                                <p style="margin: 8px 0 0 0; font-size: 15px; color: #333;"><b>Código único interno:</b> {cod_cliente}</p>
                                                             </td>
                                                         </tr>
                                                     </table>
+                                                    
+                                                    <table border="0" cellpadding="0" cellspacing="0" width="100%">
+                                                        <tr>
+                                                            <td align="center" style="padding: 5px 0 15px 0;">
+                                                                <a href="{portal_link}" target="_blank" style="display: inline-block; padding: 14px 30px; font-size: 16px; font-weight: bold; color: #ffffff; background-color: #D32F2F; border: none; border-radius: 8px; text-decoration: none; box-shadow: 0 4px 10px 0 rgba(211, 47, 47, 0.4); transition: all 0.3s ease;">
+                                                                    REALIZAR PAGO AQUÍ
+                                                                </a>
+                                                            </td>
+                                                        </tr>
+                                                    </table>
+                                                    
+                                                    <p style="color: #555555; font-size: 15px; margin-top: 15px; margin-bottom: 0;">
+                                                        Si tienes alguna duda o necesitas enviar soportes de pago, no dudes en contactarnos.
+                                                    </p>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td bgcolor="#f4f5f7" style="padding: 20px 30px; text-align: center; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;">
+                                                    <p style="margin: 0; font-size: 14px; color: #555555;"><b>Área de Recaudos - Ferreinox SAS BIC</b></p>
+                                                    <p style="margin: 8px 0 8px 0; font-size: 13px; color: #555555; line-height: 1.5;">
+                                                        <b>Líneas de WhatsApp:</b><br>
+                                                        Armenia <a href="https://wa.me/573165219904" style="color:#0058A7;">316 5219904</a> ● Manizales <a href="https://wa.me/573108501359" style="color:#0058A7;">310 8501359</a> ● Pereira <a href="https://wa.me/573142087169" style="color:#0058A7;">314 2087169</a>
+                                                    </p>
+                                                    <p style="margin: 0; font-size: 13px; color: #555555;">
+                                                        Síguenos en
+                                                        <a href="https://www.instagram.com/FerreinoxTiendapintuco" style="color: #0058A7; text-decoration: none;">Instagram</a> y
+                                                        <a href="https://www.facebook.com/FerreinoxTiendapintuco" style="color: #0058A7; text-decoration: none;">Facebook</a>
+                                                    </p>
                                                 </td>
                                             </tr>
                                         </table>
