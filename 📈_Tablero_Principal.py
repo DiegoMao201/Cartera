@@ -647,30 +647,41 @@ def main():
                                         tmp.write(pdf_bytes)
                                         tmp_path = tmp.name
 
-                                    yag = yagmail.SMTP(sender_email, sender_password)
+                                    try:
+                                        yag = yagmail.SMTP(sender_email, sender_password)
+                                        
+                                        # ==========================================================
+                                        # --- BLOQUE DE CÓDIGO CORREGIDO ---
+                                        # Se construye una lista `contenidos_correo`.
+                                        # 1. El primer elemento es el cuerpo del correo (cuerpo_html).
+                                        # 2. El segundo es la ruta al archivo PDF a adjuntar (tmp_path).
+                                        # 3. El tercero es el objeto de imagen en línea para el logo.
+                                        # Esta estructura evita el error de decodificación.
+                                        # ==========================================================
+                                        contenidos_correo = [cuerpo_html]
+                                        contenidos_correo.append(tmp_path)
+                                        
+                                        if os.path.exists(logo_path):
+                                            contenidos_correo.append(yagmail.inline(logo_path, 'logo_ferreinox'))
+                                        else:
+                                            st.warning("Archivo de logo no encontrado. El correo se enviará sin el logo.")
+                                            
+                                        yag.send(
+                                            to=email_destino,
+                                            subject=asunto,
+                                            contents=contenidos_correo
+                                        )
+                                        st.success(f"¡Correo enviado exitosamente a {email_destino}!")
                                     
-                                    # ***** CORRECCIÓN APLICADA AQUÍ *****
-                                    # Se crea una lista 'contenidos_correo' que incluye el cuerpo HTML, 
-                                    # el PDF adjunto y la imagen del logo para ser usada en el cuerpo.
-                                    # Esto resuelve el error de decodificación.
-                                    contenidos_correo = [cuerpo_html]
-                                    contenidos_correo.append(tmp_path)
-                                    if os.path.exists(logo_path):
-                                        contenidos_correo.append(yagmail.inline(logo_path, 'logo_ferreinox'))
-                                    
-                                    yag.send(
-                                        to=email_destino,
-                                        subject=asunto,
-                                        contents=contenidos_correo
-                                    )
-                                    os.remove(tmp_path)
-                                st.success(f"¡Correo enviado exitosamente a {email_destino}!")
+                                    finally:
+                                        # Asegurarse de que el archivo temporal siempre se elimine
+                                        if os.path.exists(tmp_path):
+                                            os.remove(tmp_path)
                             
                             except FileNotFoundError:
                                 st.error(f"Error Crítico: No se encontró el archivo del logo '{logo_path}'. Asegúrate de que el archivo esté en el mismo directorio que la aplicación.")
                             except Exception as e:
                                 st.error(f"Error al enviar el correo: {e}")
-
 
                 with col_whatsapp:
                     st.subheader("📲 Enviar por WhatsApp")
