@@ -502,6 +502,7 @@ def main():
                                 if total_vencido_cliente > 0:
                                     dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
                                     asunto = f"Recordatorio de Saldo Pendiente – {cliente_seleccionado}"
+                                    # --- PLANTILLA HTML MEJORADA PARA CORREO DE COBRO ---
                                     cuerpo_html = f"""
                                     <!DOCTYPE html>
                                     <html lang="es">
@@ -511,29 +512,42 @@ def main():
                                         <title>Recordatorio de Saldo Pendiente</title>
                                     </head>
                                     <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f1f5f9;">
+                                        <div style="display:none;font-size:1px;color:#333333;line-height:1px;max-height:0px;max-width:0px;opacity:0;overflow:hidden;">
+                                            Tienes un saldo vencido de ${total_vencido_cliente:,.0f}. Revisa los detalles y realiza tu pago fácilmente.
+                                        </div>
                                         <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; margin: 20px auto; border-collapse: collapse;">
                                             <tr>
                                                 <td align="center" style="padding: 20px 0;">
-                                                    <img src="cid:logo_ferreinox" alt="Logo Ferreinox" width="250" style="display: block;">
+                                                    <img src="cid:logo_ferreinox" alt="Logo Ferreinox" width="250" style="display: block; border: 0;">
                                                 </td>
                                             </tr>
                                             <tr>
-                                                <td style="background-color: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.05);">
-                                                    <h1 style="color: #0f172a; margin: 0 0 15px 0; font-size: 24px; font-weight: bold; text-align: center;">Recordatorio de Saldo Pendiente</h1>
+                                                <td style="background-color: #ffffff; padding: 30px 40px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08);">
+                                                    <h1 style="color: #0f172a; margin: 0 0 15px 0; font-size: 26px; font-weight: bold; text-align: center;">Recordatorio de Saldo Pendiente</h1>
                                                     <p style="color: #334155; font-size: 16px; line-height: 1.6; margin: 0 0 12px 0;">
                                                         Hola, <strong>{cliente_seleccionado}</strong> 👋
                                                     </p>
-                                                    <p style="color: #334155; font-size: 16px; line-height: 1.6; margin: 0 0 20px 0;">
-                                                        Te contactamos para recordarte que tienes un saldo vencido de <strong style="color: #dc2626; font-size: 17px;">${total_vencido_cliente:,.0f}</strong>. Tu factura más antigua tiene <strong>{dias_max_vencido} días vencida</strong>.
+                                                    <p style="color: #334155; font-size: 16px; line-height: 1.6; margin: 0 0 24px 0;">
+                                                        Te contactamos para recordarte amablemente sobre tu estado de cuenta. Hemos identificado un saldo vencido y te invitamos a revisarlo.
                                                     </p>
-                                                    <p style="color: #475569; font-size: 16px; margin: 0 0 25px 0;">
-                                                        Adjunto a este correo encontrarás el estado de cuenta detallado para tu referencia.
+                                                    <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; margin-bottom: 25px;">
+                                                        <tr>
+                                                            <td style="padding: 20px; text-align: center;">
+                                                                <p style="margin: 0 0 5px 0; font-size: 14px; color: #991b1b;">VALOR TOTAL VENCIDO</p>
+                                                                <p style="margin: 0; font-size: 32px; color: #b91c1c; font-weight: bold;">${total_vencido_cliente:,.0f}</p>
+                                                                <p style="margin: 10px 0 0 0; font-size: 14px; color: #991b1b;">Tu factura más antigua tiene <strong>{dias_max_vencido} días de vencimiento</strong>.</p>
+                                                            </td>
+                                                        </tr>
+                                                    </table>
+                                                    <p style="color: #475569; font-size: 16px; margin: 0 0 25px 0; text-align: center;">
+                                                        Para tu comodidad, hemos adjuntado el estado de cuenta detallado en formato PDF a este correo.
                                                     </p>
-                                                    <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; border-radius: 6px; margin-bottom: 25px; text-align: center;">
-                                                        <p style="margin: 0 0 8px 0; font-size: 15px; color: #1e293b;">Para realizar tu pago, utiliza estos datos en nuestro portal:</p>
-                                                        <p style="margin: 0; font-size: 16px; color: #0f172a; line-height: 1.5;">
-                                                            <strong>NIT/CC:</strong> {nit_cliente}<br>
-                                                            <strong>Código Único Interno:</strong> {cod_cliente}
+                                                    <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 20px; border-radius: 8px; margin-bottom: 25px; text-align: center;">
+                                                        <h2 style="margin: 0 0 15px 0; font-size: 18px; color: #1e293b;">Paga Fácil y Seguro en Línea</h2>
+                                                        <p style="margin: 0 0 8px 0; font-size: 15px; color: #334155;">Utiliza los siguientes datos en nuestro portal de pagos:</p>
+                                                        <p style="margin: 0; font-size: 16px; color: #0f172a; line-height: 1.7;">
+                                                            <strong>NIT/CC:</strong> <span style="background-color: #e2e8f0; padding: 2px 6px; border-radius: 4px;">{nit_cliente}</span><br>
+                                                            <strong>Código Único Interno:</strong> <span style="background-color: #e2e8f0; padding: 2px 6px; border-radius: 4px;">{cod_cliente}</span>
                                                         </p>
                                                     </div>
                                                     <table border="0" cellpadding="0" cellspacing="0" width="100%">
@@ -547,13 +561,13 @@ def main():
                                                     </table>
                                                     <p style="color: #475569; font-size: 14px; margin-top: 15px; text-align: center; line-height: 1.5;">
                                                         Si ya realizaste el pago, por favor omite este mensaje. Si tienes alguna duda, no dudes en contactarnos.
-                                                        <br>¡Gracias por tu gestión!
+                                                        <br>¡Agradecemos tu pronta gestión!
                                                     </p>
                                                 </td>
                                             </tr>
                                             <tr>
                                                 <td style="padding: 25px 30px; text-align: center;">
-                                                    <p style="margin: 0; font-size: 14px; color: #475569; font-weight: bold;">Área de Recaudos - Ferreinox SAS BIC</p>
+                                                    <p style="margin: 0; font-size: 14px; color: #475569; font-weight: bold;">Área de Cartera y Recaudos - Ferreinox SAS BIC</p>
                                                     <p style="margin: 10px 0 10px 0; font-size: 13px; color: #475569; line-height: 1.6;">
                                                         <b>Líneas de WhatsApp:</b><br>
                                                         Armenia <a href="https://wa.me/573165219904" style="color:#0058A7; text-decoration:none;">316 5219904</a> ● 
@@ -567,16 +581,65 @@ def main():
                                     </html>
                                     """
                                 else:
-                                    asunto = f"Tu Estado de Cuenta actualizado - {cliente_seleccionado}"
+                                    asunto = f"Tu Estado de Cuenta Actualizado - {cliente_seleccionado}"
+                                    # --- PLANTILLA HTML MEJORADA PARA CORREO AL DÍA ---
                                     cuerpo_html = f"""
-                                    <html><body style='font-family: Arial, sans-serif; color: #333;'>
-                                        <p>Estimado(a) {cliente_seleccionado},</p>
-                                        <p>Recibe un cordial saludo del Área de Cartera de Ferreinox SAS BIC.</p>
-                                        <p>Nos complace informarle que tu cuenta se encuentra al día. ¡Agradecemos tu excelente gestión y puntualidad en los pagos!</p>
-                                        <p>Para tu control y referencia, adjuntamos a este correo tu estado de cuenta completo.</p>
-                                        <p>Gracias por tu confianza en nosotros.</p>
-                                        <p>Atentamente,<br><b>Área de Cartera Ferreinox SAS BIC</b></p>
-                                    </body></html>
+                                    <!DOCTYPE html>
+                                    <html lang="es">
+                                    <head>
+                                        <meta charset="UTF-8">
+                                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                                        <title>Tu Estado de Cuenta Actualizado</title>
+                                    </head>
+                                    <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f1f5f9;">
+                                        <div style="display:none;font-size:1px;color:#333333;line-height:1px;max-height:0px;max-width:0px;opacity:0;overflow:hidden;">
+                                            ¡Buenas noticias! Tu cuenta está al día. Adjuntamos tu estado de cuenta para tu referencia.
+                                        </div>
+                                        <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; margin: 20px auto; border-collapse: collapse;">
+                                            <tr>
+                                                <td align="center" style="padding: 20px 0;">
+                                                    <img src="cid:logo_ferreinox" alt="Logo Ferreinox" width="250" style="display: block; border: 0;">
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="background-color: #ffffff; padding: 30px 40px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08);">
+                                                    <h1 style="color: #0f172a; margin: 0 0 15px 0; font-size: 26px; font-weight: bold; text-align: center;">Tu Cuenta está al Día</h1>
+                                                    <p style="color: #334155; font-size: 16px; line-height: 1.6; margin: 0 0 12px 0;">
+                                                        Hola, <strong>{cliente_seleccionado}</strong> ✅
+                                                    </p>
+                                                    <p style="color: #334155; font-size: 16px; line-height: 1.6; margin: 0 0 24px 0;">
+                                                        Recibe un cordial saludo del equipo de Ferreinox SAS BIC.
+                                                    </p>
+                                                    <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; margin-bottom: 25px;">
+                                                        <tr>
+                                                            <td style="padding: 20px; text-align: center;">
+                                                                <p style="margin: 0; font-size: 20px; color: #166534; font-weight: bold;">¡Felicitaciones! Tu cuenta no presenta saldos vencidos.</p>
+                                                                <p style="margin: 10px 0 0 0; font-size: 14px; color: #15803d;">Agradecemos enormemente tu puntualidad y excelente gestión de pagos.</p>
+                                                            </td>
+                                                        </tr>
+                                                    </table>
+                                                    <p style="color: #475569; font-size: 16px; margin: 0 0 25px 0; text-align: center;">
+                                                        Para tu control y referencia, hemos adjuntado tu estado de cuenta completo en formato PDF a este correo.
+                                                    </p>
+                                                    <p style="color: #475569; font-size: 14px; margin-top: 15px; text-align: center; line-height: 1.5;">
+                                                        Gracias por tu confianza en nosotros. ¡Seguimos a tu disposición!
+                                                    </p>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 25px 30px; text-align: center;">
+                                                    <p style="margin: 0; font-size: 14px; color: #475569; font-weight: bold;">Área de Cartera y Recaudos - Ferreinox SAS BIC</p>
+                                                    <p style="margin: 10px 0 10px 0; font-size: 13px; color: #475569; line-height: 1.6;">
+                                                        <b>Líneas de WhatsApp:</b><br>
+                                                        Armenia <a href="https://wa.me/573165219904" style="color:#0058A7; text-decoration:none;">316 5219904</a> ● 
+                                                        Manizales <a href="https://wa.me/573108501359" style="color:#0058A7; text-decoration:none;">310 8501359</a> ● 
+                                                        Pereira <a href="https://wa.me/573142087169" style="color:#0058A7; text-decoration:none;">314 2087169</a>
+                                                    </p>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </body>
+                                    </html>
                                     """
                                 
                                 with st.spinner(f"Enviando correo a {email_destino}..."):
@@ -587,17 +650,18 @@ def main():
                                     yag = yagmail.SMTP(sender_email, sender_password)
                                     
                                     # ***** CORRECCIÓN APLICADA AQUÍ *****
-                                    # Se crea una lista 'adjuntos' para el PDF y la imagen inline.
-                                    # El cuerpo del correo (cuerpo_html) se pasa directamente a 'contents'.
-                                    adjuntos = [tmp_path]
+                                    # Se crea una lista 'contenidos_correo' que incluye el cuerpo HTML, 
+                                    # el PDF adjunto y la imagen del logo para ser usada en el cuerpo.
+                                    # Esto resuelve el error de decodificación.
+                                    contenidos_correo = [cuerpo_html]
+                                    contenidos_correo.append(tmp_path)
                                     if os.path.exists(logo_path):
-                                        adjuntos.append(yagmail.inline(logo_path, 'logo_ferreinox'))
+                                        contenidos_correo.append(yagmail.inline(logo_path, 'logo_ferreinox'))
                                     
                                     yag.send(
                                         to=email_destino,
                                         subject=asunto,
-                                        contents=cuerpo_html,
-                                        attachments=adjuntos
+                                        contents=contenidos_correo
                                     )
                                     os.remove(tmp_path)
                                 st.success(f"¡Correo enviado exitosamente a {email_destino}!")
