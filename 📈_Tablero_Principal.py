@@ -497,7 +497,6 @@ def main():
                             try:
                                 sender_email = st.secrets["email_credentials"]["sender_email"]
                                 sender_password = st.secrets["email_credentials"]["sender_password"]
-                                logo_path = "LOGO FERREINOX SAS BIC 2024.png"
 
                                 if total_vencido_cliente > 0:
                                     dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
@@ -518,7 +517,7 @@ def main():
                                         <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; margin: 20px auto; border-collapse: collapse;">
                                             <tr>
                                                 <td align="center" style="padding: 20px 0;">
-                                                    <img src="cid:logo_ferreinox" alt="Logo Ferreinox" width="250" style="display: block; border: 0;">
+                                                    <h1 style="color: #003865; margin: 0; font-size: 28px;">Ferreinox SAS BIC</h1>
                                                 </td>
                                             </tr>
                                             <tr>
@@ -598,7 +597,7 @@ def main():
                                         <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; margin: 20px auto; border-collapse: collapse;">
                                             <tr>
                                                 <td align="center" style="padding: 20px 0;">
-                                                    <img src="cid:logo_ferreinox" alt="Logo Ferreinox" width="250" style="display: block; border: 0;">
+                                                    <h1 style="color: #003865; margin: 0; font-size: 28px;">Ferreinox SAS BIC</h1>
                                                 </td>
                                             </tr>
                                             <tr>
@@ -652,20 +651,11 @@ def main():
                                         
                                         # ==========================================================
                                         # --- BLOQUE DE CÓDIGO CORREGIDO ---
-                                        # Se construye una lista `contenidos_correo`.
-                                        # 1. El primer elemento es el cuerpo del correo (cuerpo_html).
-                                        # 2. El segundo es la ruta al archivo PDF a adjuntar (tmp_path).
-                                        # 3. El tercero es el objeto de imagen en línea para el logo.
-                                        # Esta estructura evita el error de decodificación.
+                                        # Se crea una lista simple con el cuerpo HTML y el adjunto PDF.
+                                        # Se eliminó la lógica del logo para evitar el error.
                                         # ==========================================================
-                                        contenidos_correo = [cuerpo_html]
-                                        contenidos_correo.append(tmp_path)
+                                        contenidos_correo = [cuerpo_html, tmp_path]
                                         
-                                        if os.path.exists(logo_path):
-                                            contenidos_correo.append(yagmail.inline(logo_path, 'logo_ferreinox'))
-                                        else:
-                                            st.warning("Archivo de logo no encontrado. El correo se enviará sin el logo.")
-                                            
                                         yag.send(
                                             to=email_destino,
                                             subject=asunto,
@@ -678,8 +668,6 @@ def main():
                                         if os.path.exists(tmp_path):
                                             os.remove(tmp_path)
                             
-                            except FileNotFoundError:
-                                st.error(f"Error Crítico: No se encontró el archivo del logo '{logo_path}'. Asegúrate de que el archivo esté en el mismo directorio que la aplicación.")
                             except Exception as e:
                                 st.error(f"Error al enviar el correo: {e}")
 
