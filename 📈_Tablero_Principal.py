@@ -511,68 +511,84 @@ def main():
                                 sender_email = st.secrets["email_credentials"]["sender_email"]
                                 sender_password = st.secrets["email_credentials"]["sender_password"]
                                 portal_link = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
-                                logo_path = "LOGO FERREINOX SAS BIC 2024.png"
                                 
                                 if total_vencido_cliente > 0:
                                     dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
                                     asunto = f"Recordatorio de saldo pendiente – {cliente_seleccionado}"
                                     
                                     # ***** INICIO DE LA MODIFICACIÓN DEL CUERPO DEL CORREO *****
-                                    cuerpo_html = f"""<!DOCTYPE html>
+                                    cuerpo_html = f"""
+                                    <!DOCTYPE html>
                                     <html lang="es">
                                     <head>
-                                    <meta charset="UTF-8">
-                                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                                    <title>Recordatorio de Saldo Pendiente</title>
+                                        <meta charset="UTF-8">
+                                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                                        <title>Recordatorio de Saldo Pendiente</title>
                                     </head>
-                                    <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f5f7;">
-                                        <table align="center" border="0" cellpadding="0" cellspacing="0" width="600" style="margin: 0 auto; border-collapse: collapse; background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+                                    <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f4f5f7;">
+                                        <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; margin: 20px auto; border-collapse: collapse; background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+                                            <tr>
+                                                <td align="center" style="padding: 20px 0;">
+                                                    <img src="https://i.imgur.com/G200i1f.png" alt="Logo Ferreinox" width="250" style="display: block;">
+                                                </td>
+                                            </tr>
                                             <tr>
                                                 <td style="padding: 25px 30px 20px 30px;">
-                                                    <h2 style="color: #003865; margin: 0 0 15px 0; font-size: 22px;">Recordatorio de Saldo Pendiente</h2>
+                                                    <h1 style="color: #003865; margin: 0 0 15px 0; font-size: 24px; font-weight: bold;">Recordatorio de Saldo Pendiente</h1>
                                                     <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 12px 0;">
                                                         Hola, <strong>{cliente_seleccionado}</strong> 👋
                                                     </p>
                                                     <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 12px 0;">
-                                                        Queremos recordarte que actualmente tienes un saldo pendiente por <span style="font-weight: bold; color: #D32F2F; font-size: 17px;">${total_vencido_cliente:,.0f}</span>. La factura más antigua ya lleva <b>{dias_max_vencido} días vencida</b>.
+                                                        Queremos recordarte que actualmente tienes un saldo pendiente por un valor de <strong style="color: #D32F2F; font-size: 17px;">${total_vencido_cliente:,.0f}</strong>. La factura más antigua ya lleva <strong>{dias_max_vencido} días vencida</strong>.
                                                     </p>
                                                     <p style="color: #555555; font-size: 16px; margin: 0 0 20px 0;">
-                                                        Adjunto encontrarás tu estado de cuenta para que lo revises con calma.
+                                                        Adjunto a este correo encontrarás tu estado de cuenta detallado para tu revisión.
                                                     </p>
                                                     <p style="color: #333333; font-size: 16px; margin: 0 0 10px 0;">
-                                                        Puedes consultar y realizar pagos a través de nuestro <a href="{portal_link}" target="_blank" style="color: #0058A7; text-decoration: none; font-weight: bold;">Portal de Recaudos en Línea</a> con los siguientes datos:
+                                                        Para facilitar tu pago, puedes usar nuestro Portal de Recaudos en Línea. Solo necesitas los siguientes datos:
                                                     </p>
                                                     
-                                                    <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse: collapse; background-color: #f0f2f6; border-left: 4px solid #0058A7; margin: 15px 0 25px 0;">
+                                                    <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse: collapse; background-color: #f8f9fa; border: 1px solid #dee2e6; margin: 15px 0 25px 0; border-radius: 6px;">
+                                                        <tr style="background-color: #e9ecef; border-bottom: 2px solid #dee2e6;">
+                                                            <th style="padding: 12px 15px; text-align: left; font-size: 15px; color: #495057;">Concepto</th>
+                                                            <th style="padding: 12px 15px; text-align: left; font-size: 15px; color: #495057;">Dato</th>
+                                                        </tr>
                                                         <tr>
-                                                            <td style="padding: 12px 15px;">
-                                                                <p style="margin: 0; font-size: 15px; color: #333;"><b>NIT/CC:</b> {nit_cliente}</p>
-                                                                <p style="margin: 8px 0 0 0; font-size: 15px; color: #333;"><b>Código único interno:</b> {cod_cliente}</p>
-                                                            </td>
+                                                            <td style="padding: 12px 15px; font-size: 15px; color: #333; border-top: 1px solid #dee2e6;"><b>NIT/CC para Ingresar:</b></td>
+                                                            <td style="padding: 12px 15px; font-size: 15px; color: #333; border-top: 1px solid #dee2e6;">{nit_cliente}</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td style="padding: 12px 15px; font-size: 15px; color: #333; border-top: 1px solid #dee2e6;"><b>Código Único Interno:</b></td>
+                                                            <td style="padding: 12px 15px; font-size: 15px; color: #333; border-top: 1px solid #dee2e6;">{cod_cliente}</td>
                                                         </tr>
                                                     </table>
-                                                    
+
                                                     <table border="0" cellpadding="0" cellspacing="0" width="100%">
                                                         <tr>
-                                                            <td align="center" style="padding: 5px 0 15px 0;">
-                                                                <a href="{portal_link}" target="_blank" style="display: inline-block; padding: 14px 30px; font-size: 16px; font-weight: bold; color: #ffffff; background-color: #D32F2F; border: none; border-radius: 8px; text-decoration: none; box-shadow: 0 4px 10px 0 rgba(211, 47, 47, 0.4); transition: all 0.3s ease;">
-                                                                    REALIZAR PAGO AQUÍ
+                                                            <td align="center" style="padding: 10px 0 20px 0;">
+                                                                <a href="{portal_link}" target="_blank" style="display: inline-block; padding: 14px 35px; font-size: 18px; font-weight: bold; color: #ffffff; background-color: #dc2626; border-radius: 8px; text-decoration: none; box-shadow: 0 4px 10px rgba(220, 38, 38, 0.4);">
+                                                                    Realizar Pago Aquí
                                                                 </a>
                                                             </td>
                                                         </tr>
                                                     </table>
                                                     
                                                     <p style="color: #555555; font-size: 15px; margin-top: 15px; margin-bottom: 0;">
-                                                        Si tienes alguna duda o necesitas enviar soportes de pago, no dudes en contactarnos.
+                                                        Si tienes alguna duda o ya realizaste el pago, por favor contáctanos.
+                                                    </p>
+                                                     <p style="color: #555555; font-size: 15px; margin-top: 5px; margin-bottom: 0;">
+                                                        ¡Gracias por tu gestión!
                                                     </p>
                                                 </td>
                                             </tr>
                                             <tr>
-                                                <td bgcolor="#f4f5f7" style="padding: 20px 30px; text-align: center; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;">
-                                                    <p style="margin: 0; font-size: 14px; color: #555555;"><b>Área de Recaudos - Ferreinox SAS BIC</b></p>
-                                                    <p style="margin: 8px 0 8px 0; font-size: 13px; color: #555555; line-height: 1.5;">
+                                                <td bgcolor="#f4f5f7" style="padding: 25px 30px; text-align: center; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; border-top: 1px solid #e9ecef;">
+                                                    <p style="margin: 0; font-size: 14px; color: #555555; font-weight: bold;">Área de Recaudos - Ferreinox SAS BIC</p>
+                                                    <p style="margin: 10px 0 10px 0; font-size: 13px; color: #555555; line-height: 1.6;">
                                                         <b>Líneas de WhatsApp:</b><br>
-                                                        Armenia <a href="https://wa.me/573165219904" style="color:#0058A7;">316 5219904</a> ● Manizales <a href="https://wa.me/573108501359" style="color:#0058A7;">310 8501359</a> ● Pereira <a href="https://wa.me/573142087169" style="color:#0058A7;">314 2087169</a>
+                                                        Armenia <a href="https://wa.me/573165219904" style="color:#0058A7; text-decoration:none;">316 5219904</a> ● 
+                                                        Manizales <a href="https://wa.me/573108501359" style="color:#0058A7; text-decoration:none;">310 8501359</a> ● 
+                                                        Pereira <a href="https://wa.me/573142087169" style="color:#0058A7; text-decoration:none;">314 2087169</a>
                                                     </p>
                                                     <p style="margin: 0; font-size: 13px; color: #555555;">
                                                         Síguenos en
@@ -585,7 +601,6 @@ def main():
                                     </body>
                                     </html>
                                     """
-                                    # Se envía solo el HTML, sin la ruta de la imagen
                                     email_contents = [cuerpo_html]
                                     # ***** FIN DE LA MODIFICACIÓN DEL CUERPO DEL CORREO *****
 
@@ -604,7 +619,7 @@ def main():
                                         <p>Atentamente,<br><b>Area Cartera Ferreinox SAS BIC</b></p>
                                     </body></html>
                                     """
-                                    email_contents = [cuerpo_html] # Sin imagen para los que están al día
+                                    email_contents = [cuerpo_html] 
                                 
                                 with st.spinner(f"Enviando correo a {email_destino}..."):
                                     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
@@ -619,8 +634,6 @@ def main():
                                     )
                                     os.remove(tmp_path)
                                 st.success(f"¡Correo enviado exitosamente a {email_destino}!")
-                            except FileNotFoundError:
-                                st.error(f"Error: No se encontró la imagen '{logo_path}'. Asegúrate de que esté en el mismo directorio que la aplicación.")
                             except Exception as e:
                                 st.error(f"Error al enviar el correo: {e}")
 
