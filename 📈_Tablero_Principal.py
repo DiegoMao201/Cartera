@@ -515,25 +515,47 @@ def main():
                                 sender_email = st.secrets["email_credentials"]["sender_email"]
                                 sender_password = st.secrets["email_credentials"]["sender_password"]
                                 portal_link = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
-                                instrucciones = f"<b>Instrucciones de acceso:</b><br> &nbsp; • <b>Usuario:</b> {nit_cliente} (Tu NIT)<br> &nbsp; • <b>Código Único:</b> {cod_cliente}"
                                 
                                 if total_vencido_cliente > 0:
                                     dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
-                                    asunto = f"Recordatorio de Saldo Pendiente - {cliente_seleccionado}"
+                                    asunto = f"Recordatorio de saldo pendiente – {cliente_seleccionado}"
+                                    
+                                    # ***** INICIO DE LA MODIFICACIÓN DEL CUERPO DEL CORREO *****
                                     cuerpo_html = f"""
                                     <html><body style='font-family: Arial, sans-serif; color: #333;'>
-                                        <p>Estimado(a) {cliente_seleccionado},</p>
-                                        <p>Reciba un cordial saludo del área de cartera de FERREINOX SAS BIC.</p>
-                                        <p>Nos ponemos en contacto para recordarle su saldo pendiente. Actualmente las facturas vencidas suman un total de <b>${total_vencido_cliente:,.0f}</b>, y la factura más antigua tiene <b>{dias_max_vencido} días</b> de vencida.</p>
-                                        <p>Adjunto a este correo, encontrará su estado de cuenta completo para su revisión.</p>
-                                        <p>Para su comodidad, puede realizar el pago de forma fácil y segura a través de nuestro <a href='{portal_link}'><b>Portal de Pagos en Línea</b></a>.</p>
-                                        <p>{instrucciones}</p>
-                                        <p>Si ya realizó el pago, por favor envie por este medio el comprobante de la transaccion. Si tiene alguna consulta, no dude en contactarnos.</p>
-                                        <p>Atentamente,<br><b>Area Cartera Ferreinox SAS BIC</b></p>
+                                        <p>Hola, {cliente_seleccionado} 👋</p>
+                                        <p>Queremos recordarte que actualmente tienes un saldo pendiente por <b>${total_vencido_cliente:,.0f}</b>. La factura más antigua ya lleva <b>{dias_max_vencido} días vencida</b>.</p>
+                                        <p>Adjunto encontrarás tu estado de cuenta para que lo revises con calma.</p>
+                                        <p>Puedes consultar y realizar pagos a través de nuestro <b><a href='{portal_link}'>Portal de Recaudos en Línea</a></b> para clientes de crédito*, con los siguientes datos:</p>
+                                        <p>
+                                            <b>NIT/CC:</b> {nit_cliente}<br>
+                                            <b>Código único interno:</b> {cod_cliente}
+                                        </p>
+                                        <a href='{portal_link}'>
+                                            <img src="Ferreinox Recaudos en línea.png" alt="Recaudos en Línea - Paga Aquí" style="max-width: 100%; height: auto; border: 0;">
+                                        </a>
+                                        <p>Si tienes alguna duda, necesitas apoyo o enviar soportes, estamos aquí para ayudarte.</p>
+                                        <p>
+                                            <b>Área de Recaudos</b><br>
+                                            <b>Ferreinox SAS BIC</b>
+                                        </p>
+                                        <p>
+                                            Líneas de WhatsApp<br>
+                                            Armenia 316 5219904 ● Manizales 310 8501359 ● Pereira 314 2087169
+                                        </p>
+                                        <p>
+                                            Síguenos en nuestras redes sociales: 
+                                            <a href="https://www.instagram.com/FerreinoxTiendapintuco">Instagram</a> y 
+                                            <a href="https://www.facebook.com/FerreinoxTiendapintuco">Facebook</a> como @FerreinoxTiendapintuco
+                                        </p>
                                     </body></html>
                                     """
+                                    email_contents = [cuerpo_html, 'Ferreinox Recaudos en línea.png']
+                                    # ***** FIN DE LA MODIFICACIÓN DEL CUERPO DEL CORREO *****
+
                                 else:
                                     asunto = f"Su Estado de Cuenta actualizado - {cliente_seleccionado}"
+                                    instrucciones = f"<b>Instrucciones de acceso:</b><br> &nbsp; • <b>Usuario:</b> {nit_cliente} (Tu NIT)<br> &nbsp; • <b>Código Único:</b> {cod_cliente}"
                                     cuerpo_html = f"""
                                     <html><body style='font-family: Arial, sans-serif; color: #333;'>
                                         <p>Estimado(a) {cliente_seleccionado},</p>
@@ -546,15 +568,23 @@ def main():
                                         <p>Atentamente,<br><b>Area Cartera Ferreinox SAS BIC</b></p>
                                     </body></html>
                                     """
+                                    email_contents = [cuerpo_html] # Sin imagen para los que están al día
                                 
                                 with st.spinner(f"Enviando correo a {email_destino}..."):
                                     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                                         tmp.write(pdf_bytes)
                                         tmp_path = tmp.name
                                     yag = yagmail.SMTP(sender_email, sender_password)
-                                    yag.send(to=email_destino, subject=asunto, contents=cuerpo_html, attachments=tmp_path)
+                                    yag.send(
+                                        to=email_destino, 
+                                        subject=asunto, 
+                                        contents=email_contents, 
+                                        attachments=tmp_path
+                                    )
                                     os.remove(tmp_path)
                                 st.success(f"¡Correo enviado exitosamente a {email_destino}!")
+                            except FileNotFoundError:
+                                st.error("Error: No se encontró la imagen 'Ferreinox Recaudos en línea.png'. Asegúrate de que esté en el directorio raíz de la aplicación.")
                             except Exception as e:
                                 st.error(f"Error al enviar el correo: {e}")
 
@@ -597,5 +627,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
