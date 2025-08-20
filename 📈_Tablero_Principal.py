@@ -528,28 +528,24 @@ def main():
                                     <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f4f4;">
                                         <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; border-collapse: collapse;">
                                             <tr>
-                                                <td align="center" style="padding: 20px 0;">
-                                                    </td>
-                                            </tr>
-                                            <tr>
-                                                <td bgcolor="#ffffff" style="padding: 30px 25px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
-                                                    <h2 style="color: #003865; margin-top: 0;">Recordatorio de Saldo Pendiente</h2>
-                                                    <p style="color: #333333; font-size: 16px; line-height: 1.6;">
+                                                <td bgcolor="#ffffff" style="padding: 25px 25px 20px 25px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+                                                    <h2 style="color: #003865; margin-top: 0; margin-bottom: 15px;">Recordatorio de Saldo Pendiente</h2>
+                                                    <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 10px 0;">
                                                         Hola, <strong>{cliente_seleccionado}</strong> 👋
                                                     </p>
-                                                    <p style="color: #333333; font-size: 16px; line-height: 1.6;">
+                                                    <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 10px 0;">
                                                         Queremos recordarte que actualmente tienes un saldo pendiente por <span style="font-weight: bold; color: #D32F2F; font-size: 17px;">${total_vencido_cliente:,.0f}</span>. La factura más antigua ya lleva <b>{dias_max_vencido} días vencida</b>.
                                                     </p>
-                                                    <p style="color: #555555; font-size: 16px;">
+                                                    <p style="color: #555555; font-size: 16px; margin: 0 0 15px 0;">
                                                         Adjunto encontrarás tu estado de cuenta para que lo revises con calma.
                                                     </p>
-                                                    <p style="color: #333333; font-size: 16px; margin-top: 25px;">
-                                                        Puedes consultar y realizar pagos a través de nuestro <b>Portal de Recaudos en Línea</b> con los siguientes datos:
+                                                    <p style="color: #333333; font-size: 16px; margin: 0 0 10px 0;">
+                                                        Puedes consultar y realizar pagos a través de nuestro <a href="{portal_link}" target="_blank" style="color: #0058A7; text-decoration: none; font-weight: bold;">Portal de Recaudos en Línea</a> con los siguientes datos:
                                                     </p>
                                                     
-                                                    <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse: collapse; background-color: #F0F2F6; border-left: 4px solid #0058A7; margin: 20px 0;">
+                                                    <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse: collapse; background-color: #F0F2F6; border-left: 4px solid #0058A7; margin: 15px 0;">
                                                         <tr>
-                                                            <td style="padding: 15px;">
+                                                            <td style="padding: 12px 15px;">
                                                                 <p style="margin: 0; font-size: 15px; color: #333;"><b>NIT/CC:</b> {nit_cliente}</p>
                                                                 <p style="margin: 8px 0 0 0; font-size: 15px; color: #333;"><b>Código único interno:</b> {cod_cliente}</p>
                                                             </td>
@@ -558,21 +554,21 @@ def main():
 
                                                     <table border="0" cellpadding="0" cellspacing="0" width="100%">
                                                         <tr>
-                                                            <td align="center" style="padding: 15px 0;">
-                                                                <a href="{portal_link}" target="_blank" style="display: inline-block; padding: 14px 28px; font-size: 18px; font-weight: bold; color: #ffffff; background-color: #D32F2F; border-radius: 8px; text-decoration: none;">
+                                                            <td align="center" style="padding: 15px 0 10px 0;">
+                                                                <a href="{portal_link}" target="_blank" style="display: inline-block; padding: 15px 35px; font-size: 18px; font-weight: bold; color: #ffffff; background-image: linear-gradient(to right, #E53935 0%, #B71C1C 51%, #E53935 100%); border: none; border-radius: 10px; text-decoration: none; box-shadow: 0 4px 15px 0 rgba(211, 47, 47, 0.4); transition: all 0.4s ease-in-out;">
                                                                     PAGAR AQUÍ
                                                                 </a>
                                                             </td>
                                                         </tr>
                                                     </table>
 
-                                                    <p style="color: #555555; font-size: 16px; margin-top: 20px;">
+                                                    <p style="color: #555555; font-size: 16px; margin-top: 15px; margin-bottom: 0;">
                                                         Si tienes alguna duda, necesitas apoyo o enviar soportes, estamos aquí para ayudarte.
                                                     </p>
                                                 </td>
                                             </tr>
                                             <tr>
-                                                <td bgcolor="#f4f4f4" style="padding: 25px; text-align: center; border-top: 1px solid #dddddd; font-size: 13px; color: #555555; line-height: 1.5;">
+                                                <td bgcolor="#f4f4f4" style="padding: 20px; text-align: center; border-top: 1px solid #dddddd; font-size: 13px; color: #555555; line-height: 1.5;">
                                                     <b>Área de Recaudos - Ferreinox SAS BIC</b><br>
                                                     <b>Líneas de WhatsApp:</b><br>
                                                     Armenia <a href="https://wa.me/573165219904" style="color:#0058A7;">316 5219904</a> ● Manizales <a href="https://wa.me/573108501359" style="color:#0058A7;">310 8501359</a> ● Pereira <a href="https://wa.me/573142087169" style="color:#0058A7;">314 2087169</a><br><br>
@@ -585,7 +581,7 @@ def main():
                                     </body>
                                     </html>
                                     """
-                                    email_contents = [cuerpo_html] # Se remueve la imagen adjunta, el botón es ahora HTML/CSS
+                                    email_contents = [cuerpo_html]
                                     # ***** FIN DE LA MODIFICACIÓN DEL CUERPO DEL CORREO *****
 
                                 else:
