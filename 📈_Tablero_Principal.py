@@ -529,13 +529,8 @@ def main():
                                     <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f5f7;">
                                         <table border="0" cellpadding="0" cellspacing="0" width="100%">
                                             <tr>
-                                                <td style="padding: 0 0 20px 0;" align="center">
+                                                <td style="padding: 20px 0 20px 0;" align="center">
                                                     <table align="center" border="0" cellpadding="0" cellspacing="0" width="600" style="border-collapse: collapse; background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
-                                                        <tr>
-                                                            <td align="center" style="padding: 25px 20px 15px 20px; border-bottom: 1px solid #eeeeee;">
-                                                                <img src="{logo_path}" alt="Logo Ferreinox SAS BIC" width="250" style="display: block;" />
-                                                            </td>
-                                                        </tr>
                                                         <tr>
                                                             <td style="padding: 25px 30px 20px 30px;">
                                                                 <h2 style="color: #003865; margin: 0 0 15px 0; font-size: 22px;">Recordatorio de Saldo Pendiente</h2>
@@ -597,8 +592,8 @@ def main():
                                     </body>
                                     </html>
                                     """
-                                    # Se incluye el HTML y la ruta de la imagen para que yagmail la inserte
-                                    email_contents = [cuerpo_html, logo_path]
+                                    # Se envía solo el HTML, sin la ruta de la imagen
+                                    email_contents = [cuerpo_html]
                                     # ***** FIN DE LA MODIFICACIÓN DEL CUERPO DEL CORREO *****
 
                                 else:
