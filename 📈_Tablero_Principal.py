@@ -501,142 +501,477 @@ def main():
                                 if total_vencido_cliente > 0:
                                     dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
                                     asunto = f"Recordatorio de Saldo Pendiente – {cliente_seleccionado}"
-                                    # --- PLANTILLA HTML MEJORADA PARA CORREO DE COBRO ---
+                                    # --- PLANTILLA HTML PARA CLIENTES CON DEUDA ---
                                     cuerpo_html = f"""
                                     <!DOCTYPE html>
                                     <html lang="es">
                                     <head>
                                         <meta charset="UTF-8">
                                         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                                        <title>Recordatorio de Saldo Pendiente</title>
+                                        <title>Recordatorio de Saldo Pendiente - Ferreinox</title>
+                                        <style>
+                                            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+                                            
+                                            * {{
+                                                margin: 0;
+                                                padding: 0;
+                                                box-sizing: border-box;
+                                            }}
+                                            
+                                            body {{
+                                                font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                                                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                                                min-height: 100vh;
+                                                padding: 20px 0;
+                                            }}
+                                            
+                                            .email-container {{
+                                                max-width: 650px;
+                                                margin: 0 auto;
+                                                background: #ffffff;
+                                                border-radius: 20px;
+                                                overflow: hidden;
+                                                box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15);
+                                            }}
+                                            
+                                            .header {{
+                                                background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+                                                padding: 40px 30px;
+                                                text-align: center;
+                                                position: relative;
+                                            }}
+                                            
+                                            .header::before {{
+                                                content: '';
+                                                position: absolute;
+                                                top: 0;
+                                                left: 0;
+                                                right: 0;
+                                                bottom: 0;
+                                                background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M 10 0 L 0 0 0 10" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="0.5"/></pattern></defs><rect width="100" height="100" fill="url(%23grid)"/></svg>');
+                                                opacity: 0.3;
+                                            }}
+                                            
+                                            .logo {{
+                                                position: relative;
+                                                z-index: 2;
+                                                max-width: 280px;
+                                                height: auto;
+                                                margin-bottom: 20px;
+                                            }}
+                                            
+                                            .header-title {{
+                                                color: #ffffff;
+                                                font-size: 28px;
+                                                font-weight: 700;
+                                                margin: 0;
+                                                position: relative;
+                                                z-index: 2;
+                                                text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+                                            }}
+                                            
+                                            .content {{
+                                                padding: 50px 40px;
+                                            }}
+                                            
+                                            .greeting {{
+                                                font-size: 18px;
+                                                color: #1f2937;
+                                                margin-bottom: 15px;
+                                                font-weight: 500;
+                                            }}
+                                            
+                                            .intro-text {{
+                                                font-size: 16px;
+                                                color: #4b5563;
+                                                line-height: 1.7;
+                                                margin-bottom: 35px;
+                                            }}
+                                            
+                                            .alert-box {{
+                                                background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+                                                border: 2px solid #f87171;
+                                                border-radius: 16px;
+                                                padding: 30px;
+                                                text-align: center;
+                                                margin-bottom: 35px;
+                                                position: relative;
+                                                overflow: hidden;
+                                            }}
+                                            
+                                            .alert-box::before {{
+                                                content: '⚠️';
+                                                position: absolute;
+                                                top: -10px;
+                                                right: -10px;
+                                                font-size: 40px;
+                                                opacity: 0.1;
+                                            }}
+                                            
+                                            .alert-label {{
+                                                font-size: 14px;
+                                                color: #991b1b;
+                                                font-weight: 600;
+                                                text-transform: uppercase;
+                                                letter-spacing: 1px;
+                                                margin-bottom: 10px;
+                                            }}
+                                            
+                                            .amount {{
+                                                font-size: 42px;
+                                                color: #dc2626;
+                                                font-weight: 800;
+                                                margin: 15px 0;
+                                                text-shadow: 0 2px 4px rgba(220, 38, 38, 0.2);
+                                            }}
+                                            
+                                            .days-overdue {{
+                                                font-size: 15px;
+                                                color: #7f1d1d;
+                                                font-weight: 500;
+                                                background: rgba(220, 38, 38, 0.1);
+                                                padding: 8px 16px;
+                                                border-radius: 20px;
+                                                display: inline-block;
+                                                margin-top: 10px;
+                                            }}
+                                            
+                                            .pdf-notice {{
+                                                background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+                                                border: 2px solid #0ea5e9;
+                                                border-radius: 12px;
+                                                padding: 20px;
+                                                text-align: center;
+                                                margin: 30px 0;
+                                                font-size: 16px;
+                                                color: #0c4a6e;
+                                            }}
+                                            
+                                            .payment-section {{
+                                                background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+                                                border: 2px solid #e2e8f0;
+                                                border-radius: 16px;
+                                                padding: 35px;
+                                                margin: 35px 0;
+                                                text-align: center;
+                                            }}
+                                            
+                                            .payment-title {{
+                                                font-size: 22px;
+                                                color: #1e293b;
+                                                font-weight: 700;
+                                                margin-bottom: 15px;
+                                                display: flex;
+                                                align-items: center;
+                                                justify-content: center;
+                                                gap: 10px;
+                                            }}
+                                            
+                                            .payment-subtitle {{
+                                                font-size: 16px;
+                                                color: #475569;
+                                                margin-bottom: 25px;
+                                            }}
+                                            
+                                            .credentials {{
+                                                display: grid;
+                                                grid-template-columns: 1fr 1fr;
+                                                gap: 20px;
+                                                margin: 25px 0;
+                                            }}
+                                            
+                                            .credential-item {{
+                                                background: #ffffff;
+                                                border: 2px solid #e5e7eb;
+                                                border-radius: 12px;
+                                                padding: 20px;
+                                                text-align: center;
+                                            }}
+                                            
+                                            .credential-label {{
+                                                font-size: 14px;
+                                                color: #6b7280;
+                                                font-weight: 600;
+                                                margin-bottom: 8px;
+                                                text-transform: uppercase;
+                                                letter-spacing: 0.5px;
+                                            }}
+                                            
+                                            .credential-value {{
+                                                font-size: 18px;
+                                                color: #111827;
+                                                font-weight: 700;
+                                                font-family: 'Courier New', monospace;
+                                                background: #f3f4f6;
+                                                padding: 10px;
+                                                border-radius: 8px;
+                                            }}
+                                            
+                                            .payment-button {{
+                                                display: inline-block;
+                                                background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+                                                color: #ffffff;
+                                                text-decoration: none;
+                                                padding: 18px 40px;
+                                                border-radius: 50px;
+                                                font-size: 18px;
+                                                font-weight: 700;
+                                                text-transform: uppercase;
+                                                letter-spacing: 1px;
+                                                box-shadow: 0 10px 25px rgba(5, 150, 105, 0.3);
+                                                transition: all 0.3s ease;
+                                                margin: 25px 0;
+                                            }}
+                                            
+                                            .payment-button:hover {{
+                                                transform: translateY(-2px);
+                                                box-shadow: 0 15px 35px rgba(5, 150, 105, 0.4);
+                                            }}
+                                            
+                                            .footer-note {{
+                                                background: #fafafa;
+                                                border-radius: 12px;
+                                                padding: 25px;
+                                                font-size: 15px;
+                                                color: #6b7280;
+                                                line-height: 1.6;
+                                                text-align: center;
+                                                margin-top: 30px;
+                                            }}
+                                            
+                                            .footer {{
+                                                background: #1f2937;
+                                                padding: 40px 30px;
+                                                text-align: center;
+                                                color: #d1d5db;
+                                            }}
+                                            
+                                            .company-name {{
+                                                font-size: 18px;
+                                                font-weight: 700;
+                                                color: #ffffff;
+                                                margin-bottom: 20px;
+                                            }}
+                                            
+                                            .contact-info {{
+                                                font-size: 14px;
+                                                line-height: 1.8;
+                                                margin-bottom: 15px;
+                                            }}
+                                            
+                                            .whatsapp-links {{
+                                                display: flex;
+                                                justify-content: center;
+                                                gap: 30px;
+                                                flex-wrap: wrap;
+                                                margin-top: 20px;
+                                            }}
+                                            
+                                            .whatsapp-link {{
+                                                background: #25d366;
+                                                color: #ffffff;
+                                                text-decoration: none;
+                                                padding: 12px 20px;
+                                                border-radius: 25px;
+                                                font-weight: 600;
+                                                display: flex;
+                                                align-items: center;
+                                                gap: 8px;
+                                                transition: all 0.3s ease;
+                                            }}
+                                            
+                                            .whatsapp-link:hover {{
+                                                background: #20ba5a;
+                                                transform: translateY(-2px);
+                                            }}
+                                            
+                                            @media (max-width: 600px) {{
+                                                .email-container {{
+                                                    margin: 10px;
+                                                    border-radius: 15px;
+                                                }}
+                                                
+                                                .content {{
+                                                    padding: 30px 25px;
+                                                }}
+                                                
+                                                .credentials {{
+                                                    grid-template-columns: 1fr;
+                                                }}
+                                                
+                                                .amount {{
+                                                    font-size: 32px;
+                                                }}
+                                                
+                                                .whatsapp-links {{
+                                                    flex-direction: column;
+                                                    align-items: center;
+                                                }}
+                                            }}
+                                        </style>
                                     </head>
-                                    <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f1f5f9;">
+                                    <body>
                                         <div style="display:none;font-size:1px;color:#333333;line-height:1px;max-height:0px;max-width:0px;opacity:0;overflow:hidden;">
                                             Tienes un saldo vencido de ${total_vencido_cliente:,.0f}. Revisa los detalles y realiza tu pago fácilmente.
                                         </div>
-                                        <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; margin: 20px auto; border-collapse: collapse;">
-                                            <tr>
-                                                <td align="center" style="padding: 20px 0;">
-                                                    <h1 style="color: #003865; margin: 0; font-size: 28px;">Ferreinox SAS BIC</h1>
-                                                </td>
-                                            </tr>
-                                            <tr>
-                                                <td style="background-color: #ffffff; padding: 30px 40px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08);">
-                                                    <h1 style="color: #0f172a; margin: 0 0 15px 0; font-size: 26px; font-weight: bold; text-align: center;">Recordatorio de Saldo Pendiente</h1>
-                                                    <p style="color: #334155; font-size: 16px; line-height: 1.6; margin: 0 0 12px 0;">
-                                                        Hola, <strong>{cliente_seleccionado}</strong> 👋
-                                                    </p>
-                                                    <p style="color: #334155; font-size: 16px; line-height: 1.6; margin: 0 0 24px 0;">
-                                                        Te contactamos para recordarte amablemente sobre tu estado de cuenta. Hemos identificado un saldo vencido y te invitamos a revisarlo.
-                                                    </p>
-                                                    <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; margin-bottom: 25px;">
-                                                        <tr>
-                                                            <td style="padding: 20px; text-align: center;">
-                                                                <p style="margin: 0 0 5px 0; font-size: 14px; color: #991b1b;">VALOR TOTAL VENCIDO</p>
-                                                                <p style="margin: 0; font-size: 32px; color: #b91c1c; font-weight: bold;">${total_vencido_cliente:,.0f}</p>
-                                                                <p style="margin: 10px 0 0 0; font-size: 14px; color: #991b1b;">Tu factura más antigua tiene <strong>{dias_max_vencido} días de vencimiento</strong>.</p>
-                                                            </td>
-                                                        </tr>
-                                                    </table>
-                                                    <p style="color: #475569; font-size: 16px; margin: 0 0 25px 0; text-align: center;">
-                                                        Para tu comodidad, hemos adjuntado el estado de cuenta detallado en formato PDF a este correo.
-                                                    </p>
-                                                    <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 20px; border-radius: 8px; margin-bottom: 25px; text-align: center;">
-                                                        <h2 style="margin: 0 0 15px 0; font-size: 18px; color: #1e293b;">Paga Fácil y Seguro en Línea</h2>
-                                                        <p style="margin: 0 0 8px 0; font-size: 15px; color: #334155;">Utiliza los siguientes datos en nuestro portal de pagos:</p>
-                                                        <p style="margin: 0; font-size: 16px; color: #0f172a; line-height: 1.7;">
-                                                            <strong>NIT/CC:</strong> <span style="background-color: #e2e8f0; padding: 2px 6px; border-radius: 4px;">{nit_cliente}</span><br>
-                                                            <strong>Código Único Interno:</strong> <span style="background-color: #e2e8f0; padding: 2px 6px; border-radius: 4px;">{cod_cliente}</span>
-                                                        </p>
+
+                                        <div class="email-container">
+                                            <div class="header">
+                                                <h1 class="header-title">Recordatorio de Saldo Pendiente</h1>
+                                            </div>
+
+                                            <div class="content">
+                                                <p class="greeting">Hola, <strong>{cliente_seleccionado}</strong> 👋</p>
+                                                
+                                                <p class="intro-text">
+                                                    Te contactamos para recordarte amablemente sobre tu estado de cuenta. Hemos identificado un saldo vencido y te invitamos a revisarlo para mantener tu cuenta al día.
+                                                </p>
+
+                                                <div class="alert-box">
+                                                    <div class="alert-label">Valor Total Vencido</div>
+                                                    <div class="amount">${total_vencido_cliente:,.0f}</div>
+                                                    <div class="days-overdue">
+                                                        📅 Tu factura más antigua tiene <strong>{dias_max_vencido} días</strong> de vencimiento
                                                     </div>
-                                                    <table border="0" cellpadding="0" cellspacing="0" width="100%">
-                                                        <tr>
-                                                            <td align="center" style="padding: 10px 0 20px 0;">
-                                                                <a href="{portal_link}" target="_blank" title="Realizar Pago">
-                                                                    <img src="https://i.ibb.co/jZ8PzVj/boton-pago-profesional.png" alt="Botón para Realizar Pago Aquí" style="display: block; border: 0; width: 280px; max-width: 100%;">
-                                                                </a>
-                                                            </td>
-                                                        </tr>
-                                                    </table>
-                                                    <p style="color: #475569; font-size: 14px; margin-top: 15px; text-align: center; line-height: 1.5;">
-                                                        Si ya realizaste el pago, por favor omite este mensaje. Si tienes alguna duda, no dudes en contactarnos.
-                                                        <br>¡Agradecemos tu pronta gestión!
+                                                </div>
+
+                                                <div class="pdf-notice">
+                                                    📄 <strong>Estado de cuenta adjunto:</strong> Hemos incluido el detalle completo en formato PDF para tu revisión.
+                                                </div>
+
+                                                <div class="payment-section">
+                                                    <h2 class="payment-title">
+                                                        💳 Paga Fácil y Seguro en Línea
+                                                    </h2>
+                                                    <p class="payment-subtitle">
+                                                        Utiliza los siguientes datos en nuestro portal de pagos:
                                                     </p>
-                                                </td>
-                                            </tr>
-                                            <tr>
-                                                <td style="padding: 25px 30px; text-align: center;">
-                                                    <p style="margin: 0; font-size: 14px; color: #475569; font-weight: bold;">Área de Cartera y Recaudos - Ferreinox SAS BIC</p>
-                                                    <p style="margin: 10px 0 10px 0; font-size: 13px; color: #475569; line-height: 1.6;">
-                                                        <b>Líneas de WhatsApp:</b><br>
-                                                        Armenia <a href="https://wa.me/573165219904" style="color:#0058A7; text-decoration:none;">316 5219904</a> ● 
-                                                        Manizales <a href="https://wa.me/573108501359" style="color:#0058A7; text-decoration:none;">310 8501359</a> ● 
-                                                        Pereira <a href="https://wa.me/573142087169" style="color:#0058A7; text-decoration:none;">314 2087169</a>
-                                                    </p>
-                                                </td>
-                                            </tr>
-                                        </table>
+                                                    
+                                                    <div class="credentials">
+                                                        <div class="credential-item">
+                                                            <div class="credential-label">NIT/CC</div>
+                                                            <div class="credential-value">{nit_cliente}</div>
+                                                        </div>
+                                                        <div class="credential-item">
+                                                            <div class="credential-label">Código Interno</div>
+                                                            <div class="credential-value">{cod_cliente}</div>
+                                                        </div>
+                                                    </div>
+
+                                                    <a href="{portal_link}" class="payment-button" target="_blank">
+                                                        🚀 Realizar Pago Ahora
+                                                    </a>
+                                                </div>
+
+                                                <div class="footer-note">
+                                                    <strong>💡 Nota importante:</strong> Si ya realizaste el pago, por favor omite este mensaje. Si tienes alguna duda o necesitas asistencia, no dudes en contactarnos. ¡Agradecemos tu pronta gestión!
+                                                </div>
+                                            </div>
+
+                                            <div class="footer">
+                                                <div class="company-name">Área de Cartera y Recaudos - Ferreinox SAS BIC</div>
+                                                
+                                                <div class="contact-info">
+                                                    <strong>Líneas de Atención WhatsApp</strong>
+                                                </div>
+                                                
+                                                <div class="whatsapp-links">
+                                                    <a href="https://wa.me/573165219904" class="whatsapp-link">
+                                                        📱 Armenia: 316 5219904
+                                                    </a>
+                                                    <a href="https://wa.me/573108501359" class="whatsapp-link">
+                                                        📱 Manizales: 310 8501359
+                                                    </a>
+                                                    <a href="https://wa.me/573142087169" class="whatsapp-link">
+                                                        📱 Pereira: 314 2087169
+                                                    </a>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </body>
                                     </html>
                                     """
                                 else:
                                     asunto = f"Tu Estado de Cuenta Actualizado - {cliente_seleccionado}"
-                                    # --- PLANTILLA HTML MEJORADA PARA CORREO AL DÍA ---
+                                    # --- PLANTILLA HTML PARA CLIENTES AL DÍA ---
                                     cuerpo_html = f"""
                                     <!DOCTYPE html>
                                     <html lang="es">
                                     <head>
                                         <meta charset="UTF-8">
                                         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                                        <title>Tu Estado de Cuenta Actualizado</title>
+                                        <title>Estado de Cuenta al Día - Ferreinox</title>
+                                        <style>
+                                            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+                                            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+                                            body {{
+                                                font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                                                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                                                min-height: 100vh;
+                                                padding: 20px 0;
+                                            }}
+                                            .email-container {{ max-width: 650px; margin: 0 auto; background: #ffffff; border-radius: 20px; overflow: hidden; box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15); }}
+                                            .header {{ background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); padding: 40px 30px; text-align: center; position: relative; }}
+                                            .header::before {{ content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M 10 0 L 0 0 0 10" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="0.5"/></pattern></defs><rect width="100" height="100" fill="url(%23grid)"/></svg>'); opacity: 0.3; }}
+                                            .header-title {{ color: #ffffff; font-size: 28px; font-weight: 700; margin: 0; position: relative; z-index: 2; text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); }}
+                                            .content {{ padding: 50px 40px; }}
+                                            .greeting {{ font-size: 18px; color: #1f2937; margin-bottom: 15px; font-weight: 500; }}
+                                            .intro-text {{ font-size: 16px; color: #4b5563; line-height: 1.7; margin-bottom: 35px; }}
+                                            .success-box {{ background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border: 2px solid #4ade80; border-radius: 16px; padding: 30px; text-align: center; margin-bottom: 35px; position: relative; overflow: hidden; }}
+                                            .success-box::before {{ content: '✅'; position: absolute; top: -10px; right: -10px; font-size: 40px; opacity: 0.1; }}
+                                            .success-label {{ font-size: 14px; color: #15803d; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }}
+                                            .success-message {{ font-size: 24px; color: #166534; font-weight: 700; margin: 15px 0; }}
+                                            .pdf-notice {{ background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border: 2px solid #0ea5e9; border-radius: 12px; padding: 20px; text-align: center; margin: 30px 0; font-size: 16px; color: #0c4a6e; }}
+                                            .footer-note {{ background: #fafafa; border-radius: 12px; padding: 25px; font-size: 15px; color: #6b7280; line-height: 1.6; text-align: center; margin-top: 30px; }}
+                                            .footer {{ background: #1f2937; padding: 40px 30px; text-align: center; color: #d1d5db; }}
+                                            .company-name {{ font-size: 18px; font-weight: 700; color: #ffffff; margin-bottom: 20px; }}
+                                            .contact-info {{ font-size: 14px; line-height: 1.8; margin-bottom: 15px; }}
+                                            .whatsapp-links {{ display: flex; justify-content: center; gap: 30px; flex-wrap: wrap; margin-top: 20px; }}
+                                            .whatsapp-link {{ background: #25d366; color: #ffffff; text-decoration: none; padding: 12px 20px; border-radius: 25px; font-weight: 600; display: flex; align-items: center; gap: 8px; transition: all 0.3s ease; }}
+                                            .whatsapp-link:hover {{ background: #20ba5a; transform: translateY(-2px); }}
+                                            @media (max-width: 600px) {{
+                                                .email-container {{ margin: 10px; border-radius: 15px; }}
+                                                .content {{ padding: 30px 25px; }}
+                                                .success-message {{ font-size: 20px; }}
+                                                .whatsapp-links {{ flex-direction: column; align-items: center; }}
+                                            }}
+                                        </style>
                                     </head>
-                                    <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f1f5f9;">
+                                    <body>
                                         <div style="display:none;font-size:1px;color:#333333;line-height:1px;max-height:0px;max-width:0px;opacity:0;overflow:hidden;">
                                             ¡Buenas noticias! Tu cuenta está al día. Adjuntamos tu estado de cuenta para tu referencia.
                                         </div>
-                                        <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; margin: 20px auto; border-collapse: collapse;">
-                                            <tr>
-                                                <td align="center" style="padding: 20px 0;">
-                                                    <h1 style="color: #003865; margin: 0; font-size: 28px;">Ferreinox SAS BIC</h1>
-                                                </td>
-                                            </tr>
-                                            <tr>
-                                                <td style="background-color: #ffffff; padding: 30px 40px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08);">
-                                                    <h1 style="color: #0f172a; margin: 0 0 15px 0; font-size: 26px; font-weight: bold; text-align: center;">Tu Cuenta está al Día</h1>
-                                                    <p style="color: #334155; font-size: 16px; line-height: 1.6; margin: 0 0 12px 0;">
-                                                        Hola, <strong>{cliente_seleccionado}</strong> ✅
-                                                    </p>
-                                                    <p style="color: #334155; font-size: 16px; line-height: 1.6; margin: 0 0 24px 0;">
-                                                        Recibe un cordial saludo del equipo de Ferreinox SAS BIC.
-                                                    </p>
-                                                    <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; margin-bottom: 25px;">
-                                                        <tr>
-                                                            <td style="padding: 20px; text-align: center;">
-                                                                <p style="margin: 0; font-size: 20px; color: #166534; font-weight: bold;">¡Felicitaciones! Tu cuenta no presenta saldos vencidos.</p>
-                                                                <p style="margin: 10px 0 0 0; font-size: 14px; color: #15803d;">Agradecemos enormemente tu puntualidad y excelente gestión de pagos.</p>
-                                                            </td>
-                                                        </tr>
-                                                    </table>
-                                                    <p style="color: #475569; font-size: 16px; margin: 0 0 25px 0; text-align: center;">
-                                                        Para tu control y referencia, hemos adjuntado tu estado de cuenta completo en formato PDF a este correo.
-                                                    </p>
-                                                    <p style="color: #475569; font-size: 14px; margin-top: 15px; text-align: center; line-height: 1.5;">
-                                                        Gracias por tu confianza en nosotros. ¡Seguimos a tu disposición!
-                                                    </p>
-                                                </td>
-                                            </tr>
-                                            <tr>
-                                                <td style="padding: 25px 30px; text-align: center;">
-                                                    <p style="margin: 0; font-size: 14px; color: #475569; font-weight: bold;">Área de Cartera y Recaudos - Ferreinox SAS BIC</p>
-                                                    <p style="margin: 10px 0 10px 0; font-size: 13px; color: #475569; line-height: 1.6;">
-                                                        <b>Líneas de WhatsApp:</b><br>
-                                                        Armenia <a href="https://wa.me/573165219904" style="color:#0058A7; text-decoration:none;">316 5219904</a> ● 
-                                                        Manizales <a href="https://wa.me/573108501359" style="color:#0058A7; text-decoration:none;">310 8501359</a> ● 
-                                                        Pereira <a href="https://wa.me/573142087169" style="color:#0058A7; text-decoration:none;">314 2087169</a>
-                                                    </p>
-                                                </td>
-                                            </tr>
-                                        </table>
+                                        <div class="email-container">
+                                            <div class="header">
+                                                <h1 class="header-title">Tu Cuenta está al Día</h1>
+                                            </div>
+                                            <div class="content">
+                                                <p class="greeting">Hola, <strong>{cliente_seleccionado}</strong> 👍</p>
+                                                <p class="intro-text">
+                                                    Recibe un cordial saludo del equipo de Ferreinox. Nos complace informarte sobre el estado actual de tu cuenta con nosotros.
+                                                </p>
+                                                <div class="success-box">
+                                                    <div class="success-label">¡Felicitaciones!</div>
+                                                    <div class="success-message">No presentas saldos vencidos</div>
+                                                    <p style="color: #15803d; font-size: 15px; margin-top: 10px;">Agradecemos tu puntualidad y excelente gestión de pagos.</p>
+                                                </div>
+                                                <div class="pdf-notice">
+                                                    📄 <strong>Estado de cuenta adjunto:</strong> Para tu control y referencia, hemos incluido el detalle completo en formato PDF.
+                                                </div>
+                                                <div class="footer-note">
+                                                    <strong>💡 Nota:</strong> Si tienes alguna consulta sobre tu estado de cuenta o próximos vencimientos, no dudes en contactarnos. ¡Gracias por tu confianza!
+                                                </div>
+                                            </div>
+                                            <div class="footer">
+                                                <div class="company-name">Área de Cartera y Recaudos - Ferreinox SAS BIC</div>
+                                                <div class="contact-info"><strong>Líneas de Atención WhatsApp</strong></div>
+                                                <div class="whatsapp-links">
+                                                    <a href="https://wa.me/573165219904" class="whatsapp-link">📱 Armenia: 316 5219904</a>
+                                                    <a href="https://wa.me/573108501359" class="whatsapp-link">📱 Manizales: 310 8501359</a>
+                                                    <a href="https://wa.me/573142087169" class="whatsapp-link">📱 Pereira: 314 2087169</a>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </body>
                                     </html>
                                     """
@@ -649,11 +984,6 @@ def main():
                                     try:
                                         yag = yagmail.SMTP(sender_email, sender_password)
                                         
-                                        # ==========================================================
-                                        # --- BLOQUE DE CÓDIGO CORREGIDO ---
-                                        # Se crea una lista simple con el cuerpo HTML y el adjunto PDF.
-                                        # Se eliminó la lógica del logo para evitar el error.
-                                        # ==========================================================
                                         contenidos_correo = [cuerpo_html, tmp_path]
                                         
                                         yag.send(
@@ -664,7 +994,6 @@ def main():
                                         st.success(f"¡Correo enviado exitosamente a {email_destino}!")
                                     
                                     finally:
-                                        # Asegurarse de que el archivo temporal siempre se elimine
                                         if os.path.exists(tmp_path):
                                             os.remove(tmp_path)
                             
