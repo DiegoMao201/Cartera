@@ -526,7 +526,7 @@ def main():
                                     <title>Recordatorio de Saldo Pendiente</title>
                                     </head>
                                     <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f5f7;">
-                                        <table align="center" border="0" cellpadding="0" cellspacing="0" width="600" style="margin: 20px auto; border-collapse: collapse; background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+                                        <table align="center" border="0" cellpadding="0" cellspacing="0" width="600" style="margin: 0 auto; border-collapse: collapse; background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
                                             <tr>
                                                 <td style="padding: 25px 30px 20px 30px;">
                                                     <h2 style="color: #003865; margin: 0 0 15px 0; font-size: 22px;">Recordatorio de Saldo Pendiente</h2>
