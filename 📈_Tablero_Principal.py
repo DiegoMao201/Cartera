@@ -241,7 +241,6 @@ def generar_excel_formateado(df: pd.DataFrame):
         ws[f"F{last_data_row + 3}"] = f"=SUMIF(G{first_data_row}:G{last_data_row},\">0\",F{first_data_row}:F{last_data_row})"; ws[f"F{last_data_row + 3}"].number_format = formato_moneda; ws[f"F{last_data_row + 3}"].font = font_green_bold
     return output.getvalue()
 
-# ***** INICIO DE LA MODIFICACIÓN DE LA FUNCIÓN PDF *****
 def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame, total_vencido_cliente: float):
     pdf = PDF()
     pdf.set_auto_page_break(auto=True, margin=45)
@@ -298,7 +297,6 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame, total_vencido_cliente
         pdf.cell(40, 10, f"${total_vencido_cliente:,.0f}", 1, 1, 'R', 1)
         
     return bytes(pdf.output())
-# ***** FIN DE LA MODIFICACIÓN DE LA FUNCIÓN PDF *****
 
 def generar_analisis_cartera(kpis: dict):
     comentarios = []
@@ -495,9 +493,7 @@ def main():
                 summary_cols[0].metric("🔥 Cartera Vencida del Cliente", f"${total_vencido_cliente:,.0f}")
                 summary_cols[1].metric("💰 Cartera Total del Cliente", f"${total_cartera_cliente:,.0f}")
 
-                # ***** INICIO DE LA MODIFICACIÓN DE LA LLAMADA A LA FUNCIÓN PDF *****
                 pdf_bytes = generar_pdf_estado_cuenta(datos_cliente_seleccionado, total_vencido_cliente)
-                # ***** FIN DE LA MODIFICACIÓN DE LA LLAMADA A LA FUNCIÓN PDF *****
 
                 st.download_button(label="📄 Descargar Estado de Cuenta (PDF)", data=pdf_bytes, file_name=f"Estado_Cuenta_{normalizar_nombre(cliente_seleccionado).replace(' ', '_')}.pdf", mime="application/pdf")
                 st.markdown("---")
@@ -522,34 +518,37 @@ def main():
                                     
                                     # ***** INICIO DE LA MODIFICACIÓN DEL CUERPO DEL CORREO *****
                                     cuerpo_html = f"""
-                                    <html><body style='font-family: Arial, sans-serif; color: #333;'>
-                                        <p>Hola, {cliente_seleccionado} 👋</p>
-                                        <p>Queremos recordarte que actualmente tienes un saldo pendiente por <b>${total_vencido_cliente:,.0f}</b>. La factura más antigua ya lleva <b>{dias_max_vencido} días vencida</b>.</p>
+                                    <html>
+                                    <body style='font-family: Arial, sans-serif; color: #333; font-size: 14px; line-height: 1.6;'>
+                                        <p>Hola, <strong>{cliente_seleccionado}</strong> 👋</p>
+                                        <p>Queremos recordarte que actualmente tienes un saldo pendiente por <b style="color:#D32F2F;">${total_vencido_cliente:,.0f}</b>. La factura más antigua ya lleva <b>{dias_max_vencido} días vencida</b>.</p>
                                         <p>Adjunto encontrarás tu estado de cuenta para que lo revises con calma.</p>
-                                        <p>Puedes consultar y realizar pagos a través de nuestro <b><a href='{portal_link}'>Portal de Recaudos en Línea</a></b> para clientes de crédito*, con los siguientes datos:</p>
-                                        <p>
+                                        <p style="margin-top: 20px;">Puedes consultar y realizar pagos a través de nuestro <b><a href='{portal_link}' style="color: #0058A7; text-decoration: none;">Portal de Recaudos en Línea</a></b> para clientes de crédito*, con los siguientes datos:</p>
+                                        <div style="background-color: #F0F2F6; padding: 12px; border-left: 4px solid #0058A7; margin: 15px 0;">
                                             <b>NIT/CC:</b> {nit_cliente}<br>
                                             <b>Código único interno:</b> {cod_cliente}
+                                        </div>
+                                        <p style="text-align: center; margin: 25px 0;">
+                                            <a href='{portal_link}' title="Pagar aquí">
+                                                <img src="Ferreinox Recaudos en línea.png" alt="Botón para pagar facturas en línea en Ferreinox" style="max-width: 450px; height: auto; border: 0;">
+                                            </a>
                                         </p>
-                                        <a href='{portal_link}'>
-                                            <img src="Ferreinox Recaudos en línea.png" alt="Recaudos en Línea - Paga Aquí" style="max-width: 100%; height: auto; border: 0;">
-                                        </a>
                                         <p>Si tienes alguna duda, necesitas apoyo o enviar soportes, estamos aquí para ayudarte.</p>
-                                        <p>
+                                        <hr style="border: 0; border-top: 1px solid #ddd; margin: 25px 0;">
+                                        <div style="font-size: 12px; color: #555; line-height: 1.5;">
                                             <b>Área de Recaudos</b><br>
-                                            <b>Ferreinox SAS BIC</b>
-                                        </p>
-                                        <p>
-                                            Líneas de WhatsApp<br>
-                                            Armenia 316 5219904 ● Manizales 310 8501359 ● Pereira 314 2087169
-                                        </p>
-                                        <p>
+                                            <b>Ferreinox SAS BIC</b><br><br>
+                                            <b>Líneas de WhatsApp</b><br>
+                                            Armenia 316 5219904 ● Manizales 310 8501359 ● Pereira 314 2087169<br><br>
                                             Síguenos en nuestras redes sociales: 
-                                            <a href="https://www.instagram.com/FerreinoxTiendapintuco">Instagram</a> y 
-                                            <a href="https://www.facebook.com/FerreinoxTiendapintuco">Facebook</a> como @FerreinoxTiendapintuco
-                                        </p>
-                                    </body></html>
+                                            <a href="https://www.instagram.com/FerreinoxTiendapintuco" style="color: #0058A7; text-decoration: none;">Instagram</a> y 
+                                            <a href="https://www.facebook.com/FerreinoxTiendapintuco" style="color: #0058A7; text-decoration: none;">Facebook</a> como @FerreinoxTiendapintuco
+                                        </div>
+                                    </body>
+                                    </html>
                                     """
+                                    # La imagen debe estar en la misma carpeta que el script.
+                                    # Yagmail la encontrará y la incrustará automáticamente.
                                     email_contents = [cuerpo_html, 'Ferreinox Recaudos en línea.png']
                                     # ***** FIN DE LA MODIFICACIÓN DEL CUERPO DEL CORREO *****
 
