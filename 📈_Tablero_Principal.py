@@ -467,9 +467,6 @@ def main():
                 nit_cliente = str(info_cliente_raw.get('nit', 'N/A'))
                 cod_cliente = str(int(info_cliente_raw['cod_cliente'])) if pd.notna(info_cliente_raw['cod_cliente']) else "N/A"
                 
-                # ***** CORRECCIÓN APLICADA AQUÍ *****
-                # Se define portal_link en un alcance superior para que esté disponible
-                # tanto para la lógica de email como para la de WhatsApp.
                 portal_link = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
 
                 st.write(f"**Facturas para {cliente_seleccionado}:**")
@@ -505,8 +502,6 @@ def main():
                                 if total_vencido_cliente > 0:
                                     dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
                                     asunto = f"Recordatorio de Saldo Pendiente – {cliente_seleccionado}"
-                                    
-                                    # ***** INICIO DE LA NUEVA PLANTILLA DE CORREO PROFESIONAL *****
                                     cuerpo_html = f"""
                                     <!DOCTYPE html>
                                     <html lang="es">
@@ -534,7 +529,6 @@ def main():
                                                     <p style="color: #475569; font-size: 16px; margin: 0 0 25px 0;">
                                                         Adjunto a este correo encontrarás el estado de cuenta detallado para tu referencia.
                                                     </p>
-                                                    
                                                     <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; border-radius: 6px; margin-bottom: 25px; text-align: center;">
                                                         <p style="margin: 0 0 8px 0; font-size: 15px; color: #1e293b;">Para realizar tu pago, utiliza estos datos en nuestro portal:</p>
                                                         <p style="margin: 0; font-size: 16px; color: #0f172a; line-height: 1.5;">
@@ -542,7 +536,6 @@ def main():
                                                             <strong>Código Único Interno:</strong> {cod_cliente}
                                                         </p>
                                                     </div>
-
                                                     <table border="0" cellpadding="0" cellspacing="0" width="100%">
                                                         <tr>
                                                             <td align="center" style="padding: 10px 0 20px 0;">
@@ -552,7 +545,6 @@ def main():
                                                             </td>
                                                         </tr>
                                                     </table>
-                                                    
                                                     <p style="color: #475569; font-size: 14px; margin-top: 15px; text-align: center; line-height: 1.5;">
                                                         Si ya realizaste el pago, por favor omite este mensaje. Si tienes alguna duda, no dudes en contactarnos.
                                                         <br>¡Gracias por tu gestión!
@@ -574,10 +566,7 @@ def main():
                                     </body>
                                     </html>
                                     """
-                                    # ***** FIN DE LA NUEVA PLANTILLA DE CORREO PROFESIONAL *****
-                                    
                                 else:
-                                    # Correo para clientes al día (se mantiene simple y directo)
                                     asunto = f"Tu Estado de Cuenta actualizado - {cliente_seleccionado}"
                                     cuerpo_html = f"""
                                     <html><body style='font-family: Arial, sans-serif; color: #333;'>
@@ -597,16 +586,18 @@ def main():
 
                                     yag = yagmail.SMTP(sender_email, sender_password)
                                     
-                                    # Preparar contenidos para yagmail, incluyendo la imagen incrustada del logo
-                                    email_contents = [cuerpo_html]
+                                    # ***** CORRECCIÓN APLICADA AQUÍ *****
+                                    # Se crea una lista 'adjuntos' para el PDF y la imagen inline.
+                                    # El cuerpo del correo (cuerpo_html) se pasa directamente a 'contents'.
+                                    adjuntos = [tmp_path]
                                     if os.path.exists(logo_path):
-                                        email_contents.append(yagmail.inline(logo_path, 'logo_ferreinox'))
+                                        adjuntos.append(yagmail.inline(logo_path, 'logo_ferreinox'))
                                     
                                     yag.send(
                                         to=email_destino,
                                         subject=asunto,
-                                        contents=email_contents,
-                                        attachments=tmp_path
+                                        contents=cuerpo_html,
+                                        attachments=adjuntos
                                     )
                                     os.remove(tmp_path)
                                 st.success(f"¡Correo enviado exitosamente a {email_destino}!")
