@@ -510,13 +510,13 @@ def main():
                                       <meta name="viewport" content="width=device-width, initial-scale=1.0">
                                       <title>Recordatorio de Saldo Pendiente</title>
                                     </head>
-                                    <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #4c57c0;">
-                                      <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #4c57c0;">
+                                    <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f4f4f4;">
+                                      <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f4f4f4;">
                                         <tr>
                                           <td align="center" style="padding: 20px 10px;">
-                                            <table width="600" border="0" cellspacing="0" cellpadding="0" style="max-width: 600px; background-color: #ffffff; border-radius: 8px; overflow: hidden;">
+                                            <table width="600" border="0" cellspacing="0" cellpadding="0" style="max-width: 600px; background-color: #ffffff; border-radius: 8px; overflow: hidden; border: 1px solid #e0e0e0;">
                                               <tr>
-                                                <td align="center" style="background-color: #2b3a99; padding: 22px 20px;">
+                                                <td align="center" style="background-color: #003865; padding: 20px;">
                                                   <h1 style="color: #ffffff; font-size: 22px; font-weight: 600; margin: 0;">
                                                     Recordatorio de Saldo Pendiente
                                                   </h1>
@@ -532,11 +532,11 @@ def main():
                                                   </p>
                                                   <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #fff2f2; border: 1px solid #ffcccc; border-radius: 8px; text-align: center; margin-bottom: 15px;">
                                                     <tr>
-                                                      <td style="padding: 18px;">
-                                                        <div style="font-size: 12px; color: #cc0000; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">
+                                                      <td style="padding: 15px;">
+                                                        <div style="font-size: 12px; color: #cc0000; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">
                                                           VALOR TOTAL VENCIDO
                                                         </div>
-                                                        <div style="font-size: 32px; color: #cc0000; font-weight: 700; margin-bottom: 10px;">
+                                                        <div style="font-size: 30px; color: #cc0000; font-weight: 700; margin-bottom: 8px;">
                                                           ${total_vencido_cliente:,.0f}
                                                         </div>
                                                         <div style="font-size: 13px; color: #a30000; background-color: #ffe5e5; padding: 5px 10px; border-radius: 4px; display: inline-block;">
@@ -547,30 +547,30 @@ def main():
                                                   </table>
                                                   <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #eaf6ff; border: 1px solid #bde0ff; border-radius: 8px; text-align: center; margin-bottom: 20px;">
                                                     <tr>
-                                                      <td style="padding: 12px; font-size: 14px; color: #005a99;">
+                                                      <td style="padding: 10px; font-size: 14px; color: #005a99;">
                                                         📄 <strong>Estado de cuenta adjunto:</strong> Hemos incluido el detalle completo en formato PDF para tu revisión.
                                                       </td>
                                                     </tr>
                                                   </table>
-                                                  <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; text-align: center;">
+                                                  <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px;">
                                                     <tr>
-                                                      <td style="padding: 20px;">
+                                                      <td style="padding: 20px;" align="center">
                                                         <h2 style="font-size: 17px; color: #333; font-weight: 600; margin: 0 0 8px 0;">
                                                           💳 Paga Fácil y Seguro en Línea
                                                         </h2>
                                                         <p style="font-size: 14px; color: #555; margin: 0 0 18px 0;">
                                                           Utiliza los siguientes datos en nuestro portal de pagos:
                                                         </p>
-                                                        <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                        <table width="80%" border="0" cellspacing="0" cellpadding="0" style="max-width: 400px;">
                                                           <tr>
                                                             <td width="50%" align="center" style="padding-right: 5px;">
-                                                              <div style="background-color: #e9ecef; border-radius: 6px; padding: 10px;">
+                                                              <div style="background-color: #e9ecef; border-radius: 6px; padding: 8px;">
                                                                 <div style="font-size: 11px; color: #6c757d; font-weight: 600; margin-bottom: 4px; text-transform: uppercase;">NIT/CC</div>
                                                                 <div style="font-size: 15px; color: #212529; font-weight: 700;">{nit_cliente}</div>
                                                               </div>
                                                             </td>
                                                             <td width="50%" align="center" style="padding-left: 5px;">
-                                                              <div style="background-color: #e9ecef; border-radius: 6px; padding: 10px;">
+                                                              <div style="background-color: #e9ecef; border-radius: 6px; padding: 8px;">
                                                                 <div style="font-size: 11px; color: #6c757d; font-weight: 600; margin-bottom: 4px; text-transform: uppercase;">CÓDIGO INTERNO</div>
                                                                 <div style="font-size: 15px; color: #212529; font-weight: 700;">{cod_cliente}</div>
                                                               </div>
@@ -579,8 +579,8 @@ def main():
                                                         </table>
                                                         <table border="0" cellspacing="0" cellpadding="0" style="margin-top: 20px;">
                                                           <tr>
-                                                            <td align="center" bgcolor="#458b5f" style="border-radius: 50px;">
-                                                              <a href="{portal_link}" target="_blank" style="font-size: 15px; font-weight: bold; color: #ffffff; text-decoration: none; border-radius: 50px; padding: 14px 28px; display: inline-block;">
+                                                            <td align="center" bgcolor="#28a745" style="border-radius: 50px;">
+                                                              <a href="{portal_link}" target="_blank" style="font-size: 15px; font-weight: bold; color: #ffffff; text-decoration: none; border-radius: 50px; padding: 12px 25px; display: inline-block;">
                                                                 🚀 REALIZAR PAGO AHORA
                                                               </a>
                                                             </td>
@@ -631,13 +631,13 @@ def main():
                                       <meta name="viewport" content="width=device-width, initial-scale=1.0">
                                       <title>Estado de Cuenta al Día</title>
                                     </head>
-                                    <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #4c57c0;">
-                                      <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #4c57c0;">
+                                    <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f4f4f4;">
+                                      <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f4f4f4;">
                                         <tr>
                                           <td align="center" style="padding: 20px 10px;">
-                                            <table width="600" border="0" cellspacing="0" cellpadding="0" style="max-width: 600px; background-color: #ffffff; border-radius: 8px; overflow: hidden;">
+                                            <table width="600" border="0" cellspacing="0" cellpadding="0" style="max-width: 600px; background-color: #ffffff; border-radius: 8px; overflow: hidden; border: 1px solid #e0e0e0;">
                                               <tr>
-                                                <td align="center" style="background-color: #2b3a99; padding: 22px 20px;">
+                                                <td align="center" style="background-color: #003865; padding: 20px;">
                                                   <h1 style="color: #ffffff; font-size: 22px; font-weight: 600; margin: 0;">
                                                     Tu Cuenta está al Día
                                                   </h1>
@@ -653,7 +653,7 @@ def main():
                                                   </p>
                                                   <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f0fff4; border: 1px solid #cce5d4; border-radius: 8px; text-align: center; margin-bottom: 15px;">
                                                     <tr>
-                                                      <td style="padding: 18px;">
+                                                      <td style="padding: 15px;">
                                                         <div style="font-size: 12px; color: #155724; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">
                                                           ¡FELICITACIONES!
                                                         </div>
