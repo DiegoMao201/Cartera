@@ -501,7 +501,7 @@ def main():
                                 if total_vencido_cliente > 0:
                                     dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
                                     asunto = f"Recordatorio de Saldo Pendiente – {cliente_seleccionado}"
-                                    # --- [PLANTILLA FINAL - MÁS COMPACTA] HTML PARA CLIENTES CON DEUDA ---
+                                    # --- [INICIO] PLANTILLA HTML 2 COLUMNAS - CLIENTES CON DEUDA ---
                                     cuerpo_html = f"""
                                     <!DOCTYPE html>
                                     <html lang="es">
@@ -530,58 +530,53 @@ def main():
                                                   <p style="font-size: 14px; color: #555555; line-height: 1.5; margin: 0 0 20px 0;">
                                                     Te contactamos para recordarte amablemente sobre tu estado de cuenta. Hemos identificado un saldo vencido y te invitamos a revisarlo para mantener tu cuenta al día.
                                                   </p>
-                                                  <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #fff2f2; border: 1px solid #ffcccc; border-radius: 8px; text-align: center; margin-bottom: 15px;">
+                                                  
+                                                  <table width="100%" border="0" cellspacing="0" cellpadding="0">
                                                     <tr>
-                                                      <td style="padding: 15px;">
-                                                        <div style="font-size: 12px; color: #cc0000; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">
-                                                          VALOR TOTAL VENCIDO
-                                                        </div>
-                                                        <div style="font-size: 30px; color: #cc0000; font-weight: 700; margin-bottom: 8px;">
-                                                          ${total_vencido_cliente:,.0f}
-                                                        </div>
-                                                        <div style="font-size: 13px; color: #a30000; background-color: #ffe5e5; padding: 5px 10px; border-radius: 4px; display: inline-block;">
-                                                          Tu factura más antigua tiene <strong>{dias_max_vencido} días</strong> de vencimiento
-                                                        </div>
-                                                      </td>
-                                                    </tr>
-                                                  </table>
-                                                  <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #eaf6ff; border: 1px solid #bde0ff; border-radius: 8px; text-align: center; margin-bottom: 20px;">
-                                                    <tr>
-                                                      <td style="padding: 10px; font-size: 14px; color: #005a99;">
-                                                        📄 <strong>Estado de cuenta adjunto:</strong> Hemos incluido el detalle completo en formato PDF para tu revisión.
-                                                      </td>
-                                                    </tr>
-                                                  </table>
-                                                  <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px;">
-                                                    <tr>
-                                                      <td style="padding: 20px;" align="center">
-                                                        <h2 style="font-size: 17px; color: #333; font-weight: 600; margin: 0 0 8px 0;">
-                                                          💳 Paga Fácil y Seguro en Línea
-                                                        </h2>
-                                                        <p style="font-size: 14px; color: #555; margin: 0 0 18px 0;">
-                                                          Utiliza los siguientes datos en nuestro portal de pagos:
-                                                        </p>
-                                                        <table width="80%" border="0" cellspacing="0" cellpadding="0" style="max-width: 400px;">
+                                                      <td width="50%" valign="top" style="padding-right: 10px;">
+                                                        <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #fff2f2; border: 1px solid #ffcccc; border-radius: 8px; text-align: center; margin-bottom: 15px;">
                                                           <tr>
-                                                            <td width="50%" align="center" style="padding-right: 5px;">
-                                                              <div style="background-color: #e9ecef; border-radius: 6px; padding: 8px;">
-                                                                <div style="font-size: 11px; color: #6c757d; font-weight: 600; margin-bottom: 4px; text-transform: uppercase;">NIT/CC</div>
-                                                                <div style="font-size: 15px; color: #212529; font-weight: 700;">{nit_cliente}</div>
+                                                            <td style="padding: 15px;">
+                                                              <div style="font-size: 12px; color: #cc0000; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">
+                                                                VALOR TOTAL VENCIDO
                                                               </div>
-                                                            </td>
-                                                            <td width="50%" align="center" style="padding-left: 5px;">
-                                                              <div style="background-color: #e9ecef; border-radius: 6px; padding: 8px;">
-                                                                <div style="font-size: 11px; color: #6c757d; font-weight: 600; margin-bottom: 4px; text-transform: uppercase;">CÓDIGO INTERNO</div>
-                                                                <div style="font-size: 15px; color: #212529; font-weight: 700;">{cod_cliente}</div>
+                                                              <div style="font-size: 30px; color: #cc0000; font-weight: 700; margin-bottom: 8px;">
+                                                                ${total_vencido_cliente:,.0f}
+                                                              </div>
+                                                              <div style="font-size: 13px; color: #a30000; background-color: #ffe5e5; padding: 5px 10px; border-radius: 4px; display: inline-block;">
+                                                                Tu factura más antigua tiene <strong>{dias_max_vencido} días</strong> de vencimiento
                                                               </div>
                                                             </td>
                                                           </tr>
                                                         </table>
-                                                        <table border="0" cellspacing="0" cellpadding="0" style="margin-top: 20px;">
+                                                        <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #eaf6ff; border: 1px solid #bde0ff; border-radius: 8px; text-align: center;">
                                                           <tr>
-                                                            <td align="center" bgcolor="#28a745" style="border-radius: 50px;">
-                                                              <a href="{portal_link}" target="_blank" style="font-size: 15px; font-weight: bold; color: #ffffff; text-decoration: none; border-radius: 50px; padding: 12px 25px; display: inline-block;">
-                                                                🚀 REALIZAR PAGO AHORA
+                                                            <td style="padding: 10px; font-size: 14px; color: #005a99;">
+                                                              📄 <strong>Estado de cuenta adjunto:</strong> Hemos incluido el detalle completo en formato PDF para tu revisión.
+                                                            </td>
+                                                          </tr>
+                                                        </table>
+                                                      </td>
+                                                      <td width="50%" valign="top" style="padding-left: 10px;">
+                                                        <table width="100%" height="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px;">
+                                                          <tr>
+                                                            <td style="padding: 20px;" align="center">
+                                                              <h2 style="font-size: 17px; color: #333; font-weight: 600; margin: 0 0 8px 0;">
+                                                                💳 Paga Fácil y Seguro
+                                                              </h2>
+                                                              <p style="font-size: 14px; color: #555; margin: 0 0 18px 0;">
+                                                                Usa estos datos en el portal:
+                                                              </p>
+                                                              <div style="background-color: #e9ecef; border-radius: 6px; padding: 8px; margin-bottom: 8px;">
+                                                                <div style="font-size: 11px; color: #6c757d; font-weight: 600; text-transform: uppercase;">NIT/CC</div>
+                                                                <div style="font-size: 15px; color: #212529; font-weight: 700;">{nit_cliente}</div>
+                                                              </div>
+                                                              <div style="background-color: #e9ecef; border-radius: 6px; padding: 8px; margin-bottom: 20px;">
+                                                                <div style="font-size: 11px; color: #6c757d; font-weight: 600; text-transform: uppercase;">CÓDIGO INTERNO</div>
+                                                                <div style="font-size: 15px; color: #212529; font-weight: 700;">{cod_cliente}</div>
+                                                              </div>
+                                                              <a href="{portal_link}" target="_blank" style="font-size: 15px; font-weight: bold; color: #ffffff; text-decoration: none; border-radius: 50px; padding: 12px 25px; display: inline-block; background-color:#28a745;">
+                                                                🚀 REALIZAR PAGO
                                                               </a>
                                                             </td>
                                                           </tr>
@@ -598,19 +593,11 @@ def main():
                                                 <td align="center" style="background-color: #343a40; padding: 20px;">
                                                   <div style="color: #ffffff; font-size: 15px; font-weight: bold; margin-bottom: 8px;">Área de Cartera y Recaudos - Ferreinox SAS BIC</div>
                                                   <div style="color: #adb5bd; font-size: 13px; margin-bottom: 12px;">Líneas de Atención WhatsApp</div>
-                                                  <table border="0" cellspacing="0" cellpadding="0">
-                                                    <tr>
-                                                      <td align="center" style="padding: 4px;">
-                                                         <a href="https://wa.me/573165219904" target="_blank" style="background-color: #28a745; color: #ffffff; padding: 7px 14px; border-radius: 5px; text-decoration: none; font-size: 12px; font-weight: 600; display: inline-block;">📱 Armenia: 316 5219904</a>
-                                                      </td>
-                                                      <td align="center" style="padding: 4px;">
-                                                         <a href="https://wa.me/573108501359" target="_blank" style="background-color: #28a745; color: #ffffff; padding: 7px 14px; border-radius: 5px; text-decoration: none; font-size: 12px; font-weight: 600; display: inline-block;">📱 Manizales: 310 8501359</a>
-                                                      </td>
-                                                      <td align="center" style="padding: 4px;">
-                                                         <a href="https://wa.me/573142087169" target="_blank" style="background-color: #28a745; color: #ffffff; padding: 7px 14px; border-radius: 5px; text-decoration: none; font-size: 12px; font-weight: 600; display: inline-block;">📱 Pereira: 314 2087169</a>
-                                                      </td>
-                                                    </tr>
-                                                  </table>
+                                                  <table border="0" cellspacing="0" cellpadding="0"><tr>
+                                                    <td align="center" style="padding: 4px;"><a href="https://wa.me/573165219904" target="_blank" style="background-color: #28a745; color: #ffffff; padding: 7px 14px; border-radius: 5px; text-decoration: none; font-size: 12px; font-weight: 600; display: inline-block;">📱 Armenia</a></td>
+                                                    <td align="center" style="padding: 4px;"><a href="https://wa.me/573108501359" target="_blank" style="background-color: #28a745; color: #ffffff; padding: 7px 14px; border-radius: 5px; text-decoration: none; font-size: 12px; font-weight: 600; display: inline-block;">📱 Manizales</a></td>
+                                                    <td align="center" style="padding: 4px;"><a href="https://wa.me/573142087169" target="_blank" style="background-color: #28a745; color: #ffffff; padding: 7px 14px; border-radius: 5px; text-decoration: none; font-size: 12px; font-weight: 600; display: inline-block;">📱 Pereira</a></td>
+                                                  </tr></table>
                                                 </td>
                                               </tr>
                                             </table>
@@ -620,9 +607,10 @@ def main():
                                     </body>
                                     </html>
                                     """
+                                    # --- [FIN] PLANTILLA HTML 2 COLUMNAS - CLIENTES CON DEUDA ---
                                 else:
                                     asunto = f"Tu Estado de Cuenta Actualizado - {cliente_seleccionado}"
-                                    # --- [PLANTILLA FINAL - MÁS COMPACTA] HTML PARA CLIENTES AL DÍA ---
+                                    # --- [INICIO] PLANTILLA HTML 2 COLUMNAS - CLIENTES AL DÍA ---
                                     cuerpo_html = f"""
                                     <!DOCTYPE html>
                                     <html lang="es">
@@ -651,27 +639,36 @@ def main():
                                                   <p style="font-size: 14px; color: #555555; line-height: 1.5; margin: 0 0 20px 0;">
                                                     Recibe un cordial saludo del equipo de Ferreinox. Nos complace informarte sobre el estado actual de tu cuenta con nosotros.
                                                   </p>
-                                                  <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f0fff4; border: 1px solid #cce5d4; border-radius: 8px; text-align: center; margin-bottom: 15px;">
+                                                  
+                                                  <table width="100%" border="0" cellspacing="0" cellpadding="0">
                                                     <tr>
-                                                      <td style="padding: 15px;">
-                                                        <div style="font-size: 12px; color: #155724; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">
-                                                          ¡FELICITACIONES!
-                                                        </div>
-                                                        <div style="font-size: 20px; color: #155724; font-weight: 700; margin-bottom: 10px;">
-                                                          No presentas saldos vencidos
-                                                        </div>
-                                                        <p style="color: #155724; font-size: 13px; margin: 0;">Agradecemos tu puntualidad y excelente gestión de pagos.</p>
+                                                      <td width="50%" valign="top" style="padding-right: 10px;">
+                                                         <table width="100%" height="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f0fff4; border: 1px solid #cce5d4; border-radius: 8px; text-align: center;">
+                                                          <tr>
+                                                            <td style="padding: 15px;">
+                                                              <div style="font-size: 12px; color: #155724; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">
+                                                                ¡FELICITACIONES!
+                                                              </div>
+                                                              <div style="font-size: 20px; color: #155724; font-weight: 700; margin-bottom: 10px;">
+                                                                No presentas saldos vencidos
+                                                              </div>
+                                                              <p style="color: #155724; font-size: 13px; margin: 0;">Agradecemos tu puntualidad.</p>
+                                                            </td>
+                                                          </tr>
+                                                        </table>
+                                                      </td>
+                                                      <td width="50%" valign="top" style="padding-left: 10px;">
+                                                        <table width="100%" height="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #eaf6ff; border: 1px solid #bde0ff; border-radius: 8px; text-align: center;">
+                                                          <tr>
+                                                            <td style="padding: 12px; font-size: 14px; color: #005a99;">
+                                                              📄 <strong>Estado de cuenta adjunto:</strong> Para tu control y referencia, hemos incluido el detalle completo en formato PDF.
+                                                            </td>
+                                                          </tr>
+                                                        </table>
                                                       </td>
                                                     </tr>
                                                   </table>
-                                                  <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #eaf6ff; border: 1px solid #bde0ff; border-radius: 8px; text-align: center; margin-bottom: 20px;">
-                                                    <tr>
-                                                      <td style="padding: 12px; font-size: 14px; color: #005a99;">
-                                                        📄 <strong>Estado de cuenta adjunto:</strong> Para tu control y referencia, hemos incluido el detalle completo en formato PDF.
-                                                      </td>
-                                                    </tr>
-                                                  </table>
-                                                   <p style="font-size: 12px; color: #6c757d; line-height: 1.5; margin: 20px 0 0 0; text-align: center;">
+                                                  <p style="font-size: 12px; color: #6c757d; line-height: 1.5; margin: 20px 0 0 0; text-align: center;">
                                                     💡 <strong>Nota:</strong> Si tienes alguna consulta sobre tu estado de cuenta, no dudes en contactarnos. ¡Gracias por tu confianza!
                                                   </p>
                                                 </td>
@@ -680,19 +677,11 @@ def main():
                                                 <td align="center" style="background-color: #343a40; padding: 20px;">
                                                   <div style="color: #ffffff; font-size: 15px; font-weight: bold; margin-bottom: 8px;">Área de Cartera y Recaudos - Ferreinox SAS BIC</div>
                                                   <div style="color: #adb5bd; font-size: 13px; margin-bottom: 12px;">Líneas de Atención WhatsApp</div>
-                                                  <table border="0" cellspacing="0" cellpadding="0">
-                                                    <tr>
-                                                      <td align="center" style="padding: 4px;">
-                                                         <a href="https://wa.me/573165219904" target="_blank" style="background-color: #28a745; color: #ffffff; padding: 7px 14px; border-radius: 5px; text-decoration: none; font-size: 12px; font-weight: 600; display: inline-block;">📱 Armenia: 316 5219904</a>
-                                                      </td>
-                                                      <td align="center" style="padding: 4px;">
-                                                         <a href="https://wa.me/573108501359" target="_blank" style="background-color: #28a745; color: #ffffff; padding: 7px 14px; border-radius: 5px; text-decoration: none; font-size: 12px; font-weight: 600; display: inline-block;">📱 Manizales: 310 8501359</a>
-                                                      </td>
-                                                      <td align="center" style="padding: 4px;">
-                                                         <a href="https://wa.me/573142087169" target="_blank" style="background-color: #28a745; color: #ffffff; padding: 7px 14px; border-radius: 5px; text-decoration: none; font-size: 12px; font-weight: 600; display: inline-block;">📱 Pereira: 314 2087169</a>
-                                                      </td>
-                                                    </tr>
-                                                  </table>
+                                                  <table border="0" cellspacing="0" cellpadding="0"><tr>
+                                                    <td align="center" style="padding: 4px;"><a href="https://wa.me/573165219904" target="_blank" style="background-color: #28a745; color: #ffffff; padding: 7px 14px; border-radius: 5px; text-decoration: none; font-size: 12px; font-weight: 600; display: inline-block;">📱 Armenia</a></td>
+                                                    <td align="center" style="padding: 4px;"><a href="https://wa.me/573108501359" target="_blank" style="background-color: #28a745; color: #ffffff; padding: 7px 14px; border-radius: 5px; text-decoration: none; font-size: 12px; font-weight: 600; display: inline-block;">📱 Manizales</a></td>
+                                                    <td align="center" style="padding: 4px;"><a href="https://wa.me/573142087169" target="_blank" style="background-color: #28a745; color: #ffffff; padding: 7px 14px; border-radius: 5px; text-decoration: none; font-size: 12px; font-weight: 600; display: inline-block;">📱 Pereira</a></td>
+                                                  </tr></table>
                                                 </td>
                                               </tr>
                                             </table>
@@ -702,6 +691,7 @@ def main():
                                     </body>
                                     </html>
                                     """
+                                    # --- [FIN] PLANTILLA HTML 2 COLUMNAS - CLIENTES AL DÍA ---
                                 
                                 with st.spinner(f"Enviando correo a {email_destino}..."):
                                     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
