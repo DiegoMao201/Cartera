@@ -1,1176 +1,604 @@
 # ======================================================================================
-# ARCHIVO: Cuadre_Diario_Caja_Final.py
-# VERSIÓN: Con Reporte Gerencial por Correo (Diseño Profesional Corregido y Funcional)
+# ARCHIVO: Tablero_Principal.py (v.Final con Diseño Súper Compacto y Botón Personalizado)
 # ======================================================================================
 import streamlit as st
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
-import json
 import pandas as pd
-import re
-import io
+import toml
+import os
+from io import BytesIO, StringIO
+import plotly.express as px
+import plotly.graph_objects as go
 from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils import get_column_letter
-import hashlib
+from openpyxl.drawing.image import Image as XLImage
+from openpyxl.worksheet.table import Table, TableStyleInfo
+import unicodedata
+import re
+from datetime import datetime
+from fpdf import FPDF
 import yagmail
-import smtplib
+from urllib.parse import quote
+import tempfile
+import dropbox
+import glob
 
-# --- FUNCIÓN PARA VERIFICAR LA CONTRASEÑA ---
-def check_password():
-    """
-    Muestra un formulario de login y retorna True si la contraseña es correcta.
-    """
-    # Si el usuario ya está autenticado en la sesión actual, no se le vuelve a pedir.
-    if st.session_state.get("authenticated", False):
-        return True
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(
+    page_title="Tablero Principal",
+    page_icon="📈",
+    layout="wide"
+)
 
-    st.header("🔐 Autenticación Requerida")
-    st.write("Por favor, ingrese la contraseña para acceder al formulario.")
+# --- PALETA DE COLORES Y CSS ---
+PALETA_COLORES = {
+    "primario": "#003865",
+    "secundario": "#0058A7",
+    "acento": "#FFC300",
+    "fondo_claro": "#F0F2F6",
+    "texto_claro": "#FFFFFF",
+    "texto_oscuro": "#31333F",
+    "alerta_rojo": "#D32F2F",
+    "alerta_naranja": "#F57C00",
+    "alerta_amarillo": "#FBC02D",
+    "exito_verde": "#388E3C"
+}
+st.markdown(f"""
+<style>
+    .stApp {{ background-color: {PALETA_COLORES['fondo_claro']}; }}
+    .stMetric {{ background-color: #FFFFFF; border-radius: 10px; padding: 15px; border: 1px solid #CCCCCC; }}
+    .stTabs [data-baseweb="tab-list"] {{ gap: 24px; }}
+    .stTabs [data-baseweb="tab"] {{ height: 50px; white-space: pre-wrap; background-color: transparent; border-radius: 4px 4px 0px 0px; border-bottom: 2px solid #C0C0C0; }}
+    .stTabs [aria-selected="true"] {{ border-bottom: 2px solid {PALETA_COLORES['primario']}; color: {PALETA_COLORES['primario']}; font-weight: bold; }}
+    div[data-baseweb="input"], div[data-baseweb="select"], div.st-multiselect, div.st-text-area {{ background-color: #FFFFFF; border: 1.5px solid {PALETA_COLORES['secundario']}; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); padding-left: 5px; }}
+    .button {{ display: inline-block; padding: 10px 20px; color: white; background-color: #25D366; border-radius: 5px; text-align: center; text-decoration: none; font-weight: bold; }}
+</style>
+""", unsafe_allow_html=True)
 
-    # Se crea un formulario para el campo de contraseña y el botón.
-    with st.form("login"):
-        password = st.text_input("Contraseña", type="password")
-        submitted = st.form_submit_button("Ingresar")
 
-        if submitted:
-            # Se encripta la contraseña ingresada por el usuario para compararla.
-            hashed_input = hashlib.sha256(password.encode()).hexdigest()
-            # Se obtiene la contraseña correcta (ya encriptada) desde los secrets.
-            correct_hashed_password = st.secrets["credentials"]["hashed_password"]
-            
-            # Se comparan ambas contraseñas encriptadas.
-            if hashed_input == correct_hashed_password:
-                # Si es correcta, se guarda el estado de autenticación y se recarga la app.
-                st.session_state["authenticated"] = True
-                st.rerun()
-            else:
-                st.error("La contraseña es incorrecta.")
-    return False
+# ======================================================================================
+# --- LÓGICA DE CARGA DE DATOS HÍBRIDA ---
+# ======================================================================================
 
-# --- 1. CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(layout="wide", page_title="Cuadre Diario de Caja")
-
-# --- 2. CONEXIÓN SEGURA A GOOGLE SHEETS ---
-@st.cache_resource(ttl=600)
-def connect_to_gsheet():
-    """
-    Establece conexión con Google Sheets usando las credenciales de st.secrets.
-    Retorna los objetos de las hojas de trabajo necesarias.
-    """
+@st.cache_data(ttl=600)
+def cargar_datos_desde_dropbox():
+    """Carga los datos más recientes desde el archivo CSV en Dropbox."""
     try:
-        creds_json = dict(st.secrets["google_credentials"])
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, scope)
-        client = gspread.authorize(creds)
-        sheet = client.open(st.secrets["google_sheets"]["spreadsheet_name"])
-        registros_ws = sheet.worksheet(st.secrets["google_sheets"]["registros_sheet_name"])
-        config_ws = sheet.worksheet(st.secrets["google_sheets"]["config_sheet_name"])
-        consecutivos_ws = sheet.worksheet("Consecutivos")
-        
-        # CONEXIÓN A LA HOJA DE CONSECUTIVO GLOBAL
-        global_consecutivo_ws = sheet.worksheet("GlobalConsecutivo")
-        
-        return registros_ws, config_ws, consecutivos_ws, global_consecutivo_ws
+        APP_KEY = st.secrets["dropbox"]["app_key"]
+        APP_SECRET = st.secrets["dropbox"]["app_secret"]
+        REFRESH_TOKEN = st.secrets["dropbox"]["refresh_token"]
+
+        with dropbox.Dropbox(app_key=APP_KEY, app_secret=APP_SECRET, oauth2_refresh_token=REFRESH_TOKEN) as dbx:
+            path_archivo_dropbox = '/data/cartera_detalle.csv'
+            metadata, res = dbx.files_download(path=path_archivo_dropbox)
+            contenido_csv = res.content.decode('latin-1')
+
+            nombres_columnas_originales = [
+                'Serie', 'Numero', 'Fecha Documento', 'Fecha Vencimiento', 'Cod Cliente',
+                'NombreCliente', 'Nit', 'Poblacion', 'Provincia', 'Telefono1', 'Telefono2',
+                'NomVendedor', 'Entidad Autoriza', 'E-Mail', 'Importe', 'Descuento',
+                'Cupo Aprobado', 'Dias Vencido'
+            ]
+
+            df = pd.read_csv(StringIO(contenido_csv), header=None, names=nombres_columnas_originales, sep='|', engine='python')
+            return df
     except Exception as e:
-        st.error(f"Error fatal al conectar con Google Sheets: {e}")
-        st.warning("Verifique las credenciales y los nombres de las hojas (incluyendo 'GlobalConsecutivo') en los 'secrets' de Streamlit.")
-        return None, None, None, None
+        st.error(f"Error al cargar datos desde Dropbox: {e}")
+        return pd.DataFrame()
 
-# --- 3. LÓGICA DE DATOS Y PROCESAMIENTO ---
-def get_app_config(config_ws):
+@st.cache_data
+def cargar_datos_historicos():
+    """Busca y carga todos los archivos Excel históricos locales."""
+    archivos_historicos = glob.glob("Cartera_*.xlsx")
+    if not archivos_historicos:
+        return pd.DataFrame()
+
+    lista_de_dataframes = []
+    for archivo in archivos_historicos:
+        try:
+            df_hist = pd.read_excel(archivo)
+            if not df_hist.empty:
+                if "Total" in str(df_hist.iloc[-1, 0]):
+                    df_hist = df_hist.iloc[:-1]
+                lista_de_dataframes.append(df_hist)
+        except Exception as e:
+            st.warning(f"No se pudo leer el archivo histórico {archivo}: {e}")
+
+    if lista_de_dataframes:
+        return pd.concat(lista_de_dataframes, ignore_index=True)
+    return pd.DataFrame()
+
+@st.cache_data
+def cargar_y_procesar_datos():
     """
-    Carga la configuración esencial (tiendas, bancos, terceros) desde la hoja 'Configuracion'.
-    Usa .strip() para eliminar espacios en blanco y asegura ignorar filas vacías.
+    Orquesta la carga de datos, los combina, limpia duplicados y procesa.
     """
-    try:
-        config_data = config_ws.get_all_records()
-        tiendas = sorted(list(set(str(d['Detalle']).strip() for d in config_data if d.get('Tipo Movimiento') == 'TIENDA' and d.get('Detalle'))))
-        bancos = sorted(list(set(str(d['Detalle']).strip() for d in config_data if d.get('Tipo Movimiento') == 'BANCO' and d.get('Detalle'))))
-        terceros = sorted(list(set(str(d['Detalle']).strip() for d in config_data if d.get('Tipo Movimiento') == 'TERCERO' and d.get('Detalle'))))
-        return tiendas, bancos, terceros
-    except Exception as e:
-        st.error(f"Error al cargar la configuración de tiendas, bancos y terceros: {e}")
-        return [], [], []
+    df_dropbox = cargar_datos_desde_dropbox()
+    df_historico = cargar_datos_historicos()
 
-def get_account_mappings(config_ws):
-    """
-    Crea un diccionario de mapeo de cuentas a partir de la hoja 'Configuracion'.
-    """
-    try:
-        records = config_ws.get_all_records()
-        mappings = {}
-        for record in records:
-            tipo = record.get("Tipo Movimiento")
-            detalle = record.get("Detalle")
-            cuenta = record.get("Cuenta Contable")
+    df_combinado = pd.concat([df_dropbox, df_historico], ignore_index=True)
 
-            if detalle and cuenta:
-                detalle_str = str(detalle).strip()
-                cuenta_str = str(cuenta)
-                if tipo in ["BANCO", "TERCERO"]:
-                    mappings[detalle_str] = {
-                        'cuenta': cuenta_str,
-                        'nit': str(record.get("NIT", "")),
-                        'nombre': str(record.get("Nombre Tercero", ""))
-                    }
-                elif tipo in ["GASTO", "TARJETA", "EFECTIVO"]:
-                    mappings[detalle_str] = {'cuenta': cuenta_str}
-        return mappings
-    except Exception as e:
-        st.error(f"Error al leer el mapeo de cuentas. Revisa la estructura de la hoja 'Configuracion'. Error: {e}")
-        return {}
+    if df_combinado.empty:
+        st.error("No se pudieron cargar datos de ninguna fuente. La aplicación no puede continuar.")
+        st.stop()
 
-def generate_txt_file(registros_ws, config_ws, start_date, end_date, selected_store):
-    """
-    Genera el contenido del archivo TXT para el ERP, con filtros por fecha y tienda.
-    """
-    st.info("Generando archivo TXT... Esto puede tardar unos segundos.")
-    
-    all_records = registros_ws.get_all_records()
-    account_mappings = get_account_mappings(config_ws)
+    df_combinado = df_combinado.loc[:, ~df_combinado.columns.duplicated()]
+    df_renamed = df_combinado.rename(columns=lambda x: normalizar_nombre(x).lower().replace(' ', '_'))
+    df_renamed = df_renamed.loc[:, ~df_renamed.columns.duplicated()]
 
-    if not account_mappings:
-        st.error("No se pudo generar el reporte: Faltan mapeos de cuentas en 'Configuracion'.")
-        return None
+    df_renamed['serie'] = df_renamed['serie'].astype(str)
+    df_renamed['fecha_documento'] = pd.to_datetime(df_renamed['fecha_documento'], errors='coerce')
+    df_renamed['fecha_vencimiento'] = pd.to_datetime(df_renamed['fecha_vencimiento'], errors='coerce')
 
-    try:
-        date_filtered_records = [
-            r for r in all_records
-            if start_date <= datetime.strptime(r.get('Fecha', '01/01/1900'), '%d/%m/%Y').date() <= end_date
-        ]
-        if selected_store == "Todas las Tiendas":
-            filtered_records = date_filtered_records
-        else:
-            filtered_records = [r for r in date_filtered_records if str(r.get('Tienda', '')).strip() == selected_store]
+    df_filtrado = df_renamed[~df_renamed['serie'].str.contains('W|X', case=False, na=False)]
 
-    except ValueError as e:
-        st.error(f"Error de formato de fecha en 'Registros'. Asegúrese que las fechas sean DD/MM/YYYY. Error: {e}")
-        return None
+    return procesar_cartera(df_filtrado)
 
-    if not filtered_records:
-        st.warning("No se encontraron registros en el rango de fechas y tienda seleccionados.")
-        return None
 
-    filtered_records.sort(key=lambda r: (r.get('Tienda', ''), r.get('Fecha', '')))
-    txt_lines = []
-    
-    for record in filtered_records:
-        consecutivo_referencia = record.get('Consecutivo_Asignado', '0')
-        consecutivo_documento = record.get('Consecutivo_Global_Doc', '0')
-        
-        tienda = str(record.get('Tienda', ''))
-        fecha_cuadre = record['Fecha']
-        centro_costo = tienda 
-        tienda_descripcion = re.sub(r'[\(\)]', '', tienda).strip()
-        total_debito_dia = 0
+# ======================================================================================
+# --- CLASE PDF Y FUNCIONES AUXILIARES ---
+# ======================================================================================
+class PDF(FPDF):
+    def header(self):
+        try:
+            self.image("LOGO FERREINOX SAS BIC 2024.png", 10, 8, 80)
+        except RuntimeError:
+            self.set_font('Arial', 'B', 12); self.cell(80, 10, 'Logo no encontrado o invalido', 0, 0, 'L')
+        self.set_font('Arial', 'B', 18); self.cell(0, 10, 'Estado de Cuenta', 0, 1, 'R')
+        self.set_font('Arial', 'I', 9); self.cell(0, 10, f'Generado el: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}', 0, 1, 'R')
+        self.ln(5); self.set_line_width(0.5); self.set_draw_color(220, 220, 220); self.line(10, 35, 200, 35); self.ln(10)
 
-        movimientos = {
-            'TARJETA': json.loads(record.get('Tarjetas', '[]')),
-            'CONSIGNACION': json.loads(record.get('Consignaciones', '[]')),
-            'GASTO': json.loads(record.get('Gastos', '[]')),
-            'EFECTIVO': json.loads(record.get('Efectivo', '[]'))
-        }
+    def footer(self):
+        self.set_y(-40)
+        self.set_font('Arial', 'I', 9); self.set_text_color(100, 100, 100)
+        self.cell(0, 6, "Para ingresar al portal de pagos, utiliza el NIT como 'usuario' y el Codigo de Cliente como 'codigo unico interno'.", 0, 1, 'C')
+        self.set_font('Arial', 'B', 11); self.set_text_color(0, 0, 0)
+        self.cell(0, 8, 'Realiza tu pago de forma facil y segura aqui:', 0, 1, 'C')
+        self.set_font('Arial', 'BU', 12); self.set_text_color(4, 88, 167)
+        link = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
+        self.cell(0, 10, "Portal de Pagos Ferreinox SAS BIC", 0, 1, 'C', link=link)
 
-        for tipo_mov, data_list in movimientos.items():
-            for item in data_list:
-                valor = float(item.get('Valor', 0))
-                if valor == 0: continue
-                total_debito_dia += valor
+def normalizar_nombre(nombre: str) -> str:
+    if not isinstance(nombre, str): return ""
+    nombre = nombre.upper().strip().replace('.', '')
+    nombre = ''.join(c for c in unicodedata.normalize('NFD', nombre) if unicodedata.category(c) != 'Mn')
+    return ' '.join(nombre.split())
 
-                cuenta = ""
-                nit_tercero = "0"
-                nombre_tercero_final = "0" 
-                serie_documento = centro_costo
-                descripcion = f"Ventas planillas contado {tienda_descripcion}"
-                
-                if tipo_mov == 'TARJETA':
-                    cuenta = account_mappings.get('Tarjetas', {}).get('cuenta', 'ERR_TARJETA')
-                    serie_documento = f"T{centro_costo}"
-                    fecha_tarjeta = item.get('Fecha', '')
-                    descripcion = f"Ventas planillas contado Tarjeta {fecha_tarjeta} - {tienda_descripcion}"
+ZONAS_SERIE = { "PEREIRA": [155, 189, 158, 439], "MANIZALES": [157, 238], "ARMENIA": [156] }
 
-                elif tipo_mov == 'CONSIGNACION':
-                    banco = item.get('Banco')
-                    cuenta = account_mappings.get(banco, {}).get('cuenta', f'ERR_{banco}')
-                    fecha_consignacion = item.get('Fecha', '')
-                    descripcion = f"Ventas planillas contado consignacion {fecha_consignacion} - {tienda_descripcion}"
+def procesar_cartera(df: pd.DataFrame) -> pd.DataFrame:
+    df_proc = df.copy()
+    df_proc['importe'] = pd.to_numeric(df_proc['importe'], errors='coerce').fillna(0)
+    df_proc['numero'] = pd.to_numeric(df_proc['numero'], errors='coerce').fillna(0)
+    df_proc.loc[df_proc['numero'] < 0, 'importe'] *= -1
+    df_proc['dias_vencido'] = pd.to_numeric(df_proc['dias_vencido'], errors='coerce').fillna(0)
+    df_proc['nomvendedor_norm'] = df_proc['nomvendedor'].apply(normalizar_nombre)
+    ZONAS_SERIE_STR = {zona: [str(s) for s in series] for zona, series in ZONAS_SERIE.items()}
+    def asignar_zona_robusta(valor_serie):
+        if pd.isna(valor_serie): return "OTRAS ZONAS"
+        numeros_en_celda = re.findall(r'\d+', str(valor_serie))
+        if not numeros_en_celda: return "OTRAS ZONAS"
+        for zona, series_clave_str in ZONAS_SERIE_STR.items():
+            if set(numeros_en_celda) & set(series_clave_str): return zona
+        return "OTRAS ZONAS"
+    df_proc['zona'] = df_proc['serie'].apply(asignar_zona_robusta)
+    bins = [-float('inf'), 0, 15, 30, 60, float('inf')]; labels = ['Al día', '1-15 días', '16-30 días', '31-60 días', 'Más de 60 días']
+    df_proc['edad_cartera'] = pd.cut(df_proc['dias_vencido'], bins=bins, labels=labels, right=True)
+    return df_proc
 
-                elif tipo_mov == 'GASTO':
-                    gasto_tercero = item.get('Tercero')
-                    
-                    if gasto_tercero and gasto_tercero != "N/A":
-                        tercero_info = account_mappings.get(gasto_tercero)
-                        if tercero_info:
-                            cuenta = tercero_info.get('cuenta', f'ERR_TERCERO_{gasto_tercero}')
-                            nit_tercero = tercero_info.get('nit', '0')
-                            nombre_tercero_desc = tercero_info.get('nombre', gasto_tercero)
-                            descripcion = f"{item.get('Descripción', 'Gasto')} - {nombre_tercero_desc}"
-                        else:
-                            cuenta = account_mappings.get('Reintegro Caja Menor', {}).get('cuenta', 'ERR_GASTO')
-                            descripcion = f"{item.get('Descripción', 'Gasto')} (Tercero {gasto_tercero} no encontrado)"
-                    else:
-                        cuenta = account_mappings.get('Reintegro Caja Menor', {}).get('cuenta', 'ERR_GASTO')
-                        descripcion = item.get('Descripción', 'Gasto Varios')
+def generar_excel_formateado(df: pd.DataFrame):
+    output = BytesIO()
+    df_export = df[['nombrecliente', 'serie', 'numero', 'fecha_documento', 'fecha_vencimiento', 'importe', 'dias_vencido']].copy()
+    for col in ['fecha_documento', 'fecha_vencimiento']: df_export[col] = pd.to_datetime(df_export[col], errors='coerce').dt.strftime('%d/%m/%Y')
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df_export.to_excel(writer, index=False, sheet_name='Cartera', startrow=9)
+        wb, ws = writer.book, writer.sheets['Cartera']
+        try:
+            img = XLImage("LOGO FERREINOX SAS BIC 2024.png"); img.anchor = 'A1'; img.width = 390; img.height = 130
+            ws.add_image(img)
+        except FileNotFoundError: ws['A1'] = "Logo no encontrado."
+        fill_red, fill_orange, fill_yellow = PatternFill(start_color='FF0000', end_color='FF0000', fill_type='solid'), PatternFill(start_color='FFA500', end_color='FFA500', fill_type='solid'), PatternFill(start_color='FFF9C4', end_color='FFF9C4', fill_type='solid')
+        font_bold, font_green_bold = Font(bold=True), Font(bold=True, color="006400")
+        first_data_row, last_data_row = 10, ws.max_row
+        tab = Table(displayName="CarteraVendedor", ref=f"A{first_data_row-1}:G{last_data_row}")
+        tab.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showFirstColumn=False, showLastColumn=False, showRowStripes=True, showColumnStripes=False)
+        ws.add_table(tab)
+        for i, ancho in enumerate([40, 10, 12, 18, 18, 18, 15], 1): ws.column_dimensions[get_column_letter(i)].width = ancho
+        importe_col_idx, dias_col_idx, formato_moneda = 6, 7, '"$"#,##0'
+        for row_idx, row in enumerate(ws.iter_rows(min_row=first_data_row, max_row=last_data_row), start=first_data_row):
+            if row_idx == first_data_row:
+                for cell in row:
+                    cell.font = font_bold
+                    cell.alignment = Alignment(horizontal='center', vertical='center')
+                continue
+            row[importe_col_idx - 1].number_format = formato_moneda
+            dias_cell = row[dias_col_idx - 1]
+            try:
+                dias = int(dias_cell.value)
+                if dias > 60: dias_cell.fill = fill_red
+                elif dias > 30: dias_cell.fill = fill_orange
+                elif dias > 0: dias_cell.fill = fill_yellow
+            except (ValueError, TypeError):
+                pass
+            dias_cell.alignment = Alignment(horizontal='center')
 
-                elif tipo_mov == 'EFECTIVO':
-                    tipo_especifico = item.get('Tipo', 'Efectivo Entregado')
-                    destino_tercero = item.get('Destino/Tercero (Opcional)')
-                    
-                    if tipo_especifico == "Efectivo Entregado" and destino_tercero and destino_tercero != "N/A":
-                        tercero_info = account_mappings.get(destino_tercero)
-                        if tercero_info:
-                            cuenta = tercero_info.get('cuenta', f'ERR_TERCERO_{destino_tercero}')
-                            nit_tercero = tercero_info.get('nit', '0')
-                            nombre_tercero_desc = tercero_info.get('nombre', destino_tercero)
-                            descripcion = f"Ventas planillas contado Entrega efectivo a {nombre_tercero_desc} - {tienda_descripcion}"
-                        else:
-                            cuenta = account_mappings.get(tipo_especifico, {}).get('cuenta', f'ERR_{tipo_especifico}')
-                            descripcion = f"Ventas planillas contado Entrega efectivo a TERCERO_NO_ENCONTRADO({destino_tercero}) - {tienda_descripcion}"
-                    else:
-                        cuenta = account_mappings.get(tipo_especifico, {}).get('cuenta', f'ERR_{tipo_especifico}')
-
-                linea = "|".join([
-                    fecha_cuadre, str(consecutivo_documento), str(cuenta), "8",
-                    descripcion, serie_documento, str(consecutivo_referencia),
-                    str(valor), "0", centro_costo, nit_tercero, nombre_tercero_final, "0"
-                ])
-                txt_lines.append(linea)
-
-        # Línea de contrapartida (crédito)
-        if total_debito_dia > 0:
-            cuenta_venta = "11050501"
-            descripcion_credito = f"Ventas planillas contado {tienda_descripcion}"
-            
-            linea_credito = "|".join([
-                fecha_cuadre, str(consecutivo_documento), str(cuenta_venta), "8",
-                descripcion_credito, centro_costo, str(consecutivo_referencia),
-                "0", str(total_debito_dia), centro_costo, "0", "0", "0"
-            ])
-            txt_lines.append(linea_credito)
-            
-    return "\n".join(txt_lines)
-
-# --- GENERADOR DE EXCEL ---
-def generate_excel_report(registros_ws, start_date, end_date, selected_store):
-    """
-    Genera un archivo Excel profesional y detallado para la revisión del cuadre de caja.
-    """
-    st.info("Generando reporte Excel profesional... Esto puede tardar unos segundos.")
-
-    try:
-        all_records = registros_ws.get_all_records()
-        date_filtered_records = [
-            r for r in all_records
-            if start_date <= datetime.strptime(r.get('Fecha', '01/01/1900'), '%d/%m/%Y').date() <= end_date
-        ]
-        if selected_store == "Todas las Tiendas":
-            filtered_records = date_filtered_records
-        else:
-            filtered_records = [r for r in date_filtered_records if str(r.get('Tienda', '')).strip() == selected_store]
-    except Exception as e:
-        st.error(f"Error al filtrar registros para Excel: {e}")
-        return None
-
-    if not filtered_records:
-        st.warning("No se encontraron registros para generar el reporte Excel.")
-        return None
-    
-    filtered_records.sort(key=lambda r: (datetime.strptime(r.get('Fecha', '01/01/1900'), '%d/%m/%Y'), r.get('Tienda', '')))
-
-    output = io.BytesIO()
-    workbook = Workbook()
-    ws = workbook.active
-    ws.title = "Reporte Cuadre de Caja"
-
-    # Estilos
-    font_title = Font(name='Calibri', size=18, bold=True, color="FFFFFF")
-    fill_title = PatternFill(start_color="002060", end_color="002060", fill_type="solid")
-    font_header = Font(name='Calibri', size=11, bold=True, color="FFFFFF")
-    fill_header = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-    font_day_header = Font(name='Calibri', size=14, bold=True, color="FFFFFF")
-    fill_day_header = PatternFill(start_color="0070C0", end_color="0070C0", fill_type="solid")
-    font_category = Font(name='Calibri', size=11, bold=True)
-    fill_category = PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid")
-    font_total_label = Font(name='Calibri', size=12, bold=True)
-    font_total_value = Font(name='Calibri', size=12, bold=True)
-    fill_summary = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
-    font_diff_ok = Font(name='Calibri', size=12, bold=True, color="00B050")
-    font_diff_bad = Font(name='Calibri', size=12, bold=True, color="C00000")
-    align_center = Alignment(horizontal='center', vertical='center')
-    align_right = Alignment(horizontal='right', vertical='center')
-    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-    currency_format = '$ #,##0'
-
-    # Título Principal
-    ws.merge_cells('A1:F2')
-    title_cell = ws['A1']
-    title_cell.value = f"REPORTE DE CUADRE DIARIO - {selected_store.upper()}"
-    title_cell.font = font_title
-    title_cell.fill = fill_title
-    title_cell.alignment = align_center
-
-    ws.merge_cells('A3:F3')
-    ws['A3'].value = f"Período del {start_date.strftime('%d/%m/%Y')} al {end_date.strftime('%d/%m/%Y')}"
-    ws['A3'].alignment = align_center
-    ws['A3'].font = Font(name='Calibri', size=12, italic=True)
-    
-    current_row = 5
-
-    # Iterar sobre cada registro
-    for record in filtered_records:
-        fecha_str = record.get('Fecha', 'N/A')
-        tienda = record.get('Tienda', 'N/A')
-        
-        # Cabecera del Día
-        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=6)
-        day_header_cell = ws.cell(row=current_row, column=1, value=f"Resumen del Día: {fecha_str} - Tienda: {tienda}")
-        day_header_cell.font = font_day_header
-        day_header_cell.fill = fill_day_header
-        day_header_cell.alignment = align_center
-        current_row += 1
-
-        # Cabeceras de la tabla
-        headers = ["Tipo de Movimiento", "Fecha Específica", "Detalle", "Tercero / Banco", "Valor"]
-        for col_num, header_title in enumerate(headers, 2):
-            cell = ws.cell(row=current_row, column=col_num, value=header_title)
-            cell.font = font_header
-            cell.fill = fill_header
-            cell.border = thin_border
-            cell.alignment = align_center
-        current_row += 1
-        
-        # Procesar movimientos
-        total_desglose = 0
-        subtotales = {'Tarjetas': 0, 'Consignaciones': 0, 'Gastos': 0, 'Efectivo': 0}
-        
-        movimientos_map = {
-            'Tarjetas': ('Tarjetas', '[]'),
-            'Consignaciones': ('Consignaciones', '[]'),
-            'Gastos': ('Gastos', '[]'),
-            'Efectivo': ('Efectivo', '[]')
-        }
-
-        for cat_name, (json_key, default_val) in movimientos_map.items():
-            data_list = json.loads(record.get(json_key, default_val))
-            if not data_list: continue
-
-            ws.merge_cells(start_row=current_row, start_column=2, end_row=current_row, end_column=6)
-            cat_cell = ws.cell(row=current_row, column=2, value=cat_name.upper())
-            cat_cell.font = font_category
-            cat_cell.fill = fill_category
-            cat_cell.border = thin_border
-            current_row += 1
-
-            for item in data_list:
-                valor = float(item.get('Valor', 0))
-                if valor == 0: continue
-                
-                ws.cell(row=current_row, column=2, value=item.get('Tipo', cat_name.rstrip('s')))
-                ws.cell(row=current_row, column=3, value=item.get('Fecha', fecha_str))
-                ws.cell(row=current_row, column=4, value=item.get('Descripción', 'N/A'))
-                ws.cell(row=current_row, column=5, value=item.get('Tercero', item.get('Banco', item.get('Destino/Tercero (Opcional)', 'N/A'))))
-                valor_cell = ws.cell(row=current_row, column=6, value=valor)
-                valor_cell.number_format = currency_format
-                valor_cell.alignment = align_right
-
-                for col_idx in range(2, 7):
-                    ws.cell(row=current_row, column=col_idx).border = thin_border
-
-                total_desglose += valor
-                subtotales[cat_name] += valor
-                current_row += 1
-        
-        # Bloque de Resumen
-        current_row += 1
-        
-        venta_total_sistema = float(record.get('Venta_Total_Dia', 0))
-        diferencia = venta_total_sistema - total_desglose
-
-        summary_data = [
-            ("Venta Total (Sistema)", venta_total_sistema),
-            ("Total Tarjetas", subtotales['Tarjetas']),
-            ("Total Consignaciones", subtotales['Consignaciones']),
-            ("Total Gastos", subtotales['Gastos']),
-            ("Total Efectivo (Entregas/Reintegros)", subtotales['Efectivo']),
-            ("TOTAL DESGLOSADO (Suma de Movimientos)", total_desglose),
-            ("DIFERENCIA EN CUADRE", diferencia)
-        ]
-
-        for label, value in summary_data:
-            ws.merge_cells(start_row=current_row, start_column=4, end_row=current_row, end_column=5)
-            label_cell = ws.cell(row=current_row, column=4, value=label)
-            value_cell = ws.cell(row=current_row, column=6, value=value)
-            
-            label_cell.font = font_total_label
-            label_cell.alignment = align_right
-            label_cell.fill = fill_summary
-            label_cell.border = thin_border
-            ws.cell(row=current_row, column=5).border = thin_border
-            
-            value_cell.font = font_total_value
-            value_cell.number_format = currency_format
-            value_cell.alignment = align_right
-            value_cell.fill = fill_summary
-            value_cell.border = thin_border
-
-            if "DIFERENCIA" in label:
-                if diferencia == 0:
-                    value_cell.font = font_diff_ok
-                else:
-                    value_cell.font = font_diff_bad
-
-            current_row += 1
-
-        current_row += 2
-
-    # Ajustar Ancho de Columnas
-    column_widths = {'A': 5, 'B': 22, 'C': 18, 'D': 35, 'E': 25, 'F': 18}
-    for col, width in column_widths.items():
-        ws.column_dimensions[col].width = width
-
-    workbook.save(output)
-    output.seek(0)
-    
+        ws[f"E{last_data_row + 2}"] = "Tu cartera total es de:"; ws[f"E{last_data_row + 2}"].font = font_green_bold
+        ws[f"F{last_data_row + 2}"] = f"=SUBTOTAL(9,F{first_data_row}:F{last_data_row})"; ws[f"F{last_data_row + 2}"].number_format = formato_moneda; ws[f"F{last_data_row + 2}"].font = font_green_bold
+        ws[f"E{last_data_row + 3}"] = "Facturas vencidas por valor de:"; ws[f"E{last_data_row + 3}"].font = font_green_bold
+        ws[f"F{last_data_row + 3}"] = f"=SUMIF(G{first_data_row}:G{last_data_row},\">0\",F{first_data_row}:F{last_data_row})"; ws[f"F{last_data_row + 3}"].number_format = formato_moneda; ws[f"F{last_data_row + 3}"].font = font_green_bold
     return output.getvalue()
 
-# ======================================================================================
-# --- INICIO DE LA SECCIÓN DE CORREO ELECTRÓNICO (NUEVO DISEÑO CORREGIDO) ---
-# ======================================================================================
+def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame, total_vencido_cliente: float):
+    pdf = PDF()
+    pdf.set_auto_page_break(auto=True, margin=45)
+    pdf.add_page()
+    if datos_cliente.empty:
+        pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, 'No se encontraron facturas para este cliente.', 0, 1, 'C')
+        return bytes(pdf.output())
 
-def format_cop(value):
-    """
-    Formatea un número como moneda colombiana (ej: $ 1.234.500)
-    sin depender del módulo 'locale' para evitar errores en el servidor.
-    """
-    if not isinstance(value, (int, float)):
-        return "$ 0"
-    formatted_value = f"{value:,.0f}".replace(",", ".")
-    return f"$ {formatted_value}"
+    datos_cliente_ordenados = datos_cliente.sort_values(by='fecha_vencimiento', ascending=True)
+    info_cliente = datos_cliente_ordenados.iloc[0]
 
+    pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Cliente:', 0, 0); pdf.set_font('Arial', '', 11); pdf.cell(0, 10, info_cliente['nombrecliente'], 0, 1)
+    pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Codigo de Cliente:', 0, 0); pdf.set_font('Arial', '', 11)
+    cod_cliente_str = str(int(info_cliente['cod_cliente'])) if pd.notna(info_cliente['cod_cliente']) else "N/A"
+    pdf.cell(0, 10, cod_cliente_str, 0, 1); pdf.ln(5)
 
-def generate_professional_email_body(records, start_date, end_date, selected_store):
-    """
-    Genera un cuerpo de correo HTML profesional y visualmente atractivo.
-    CORREGIDO para máxima compatibilidad y diseño profesional.
-    """
-    # --- 1. CÁLCULO DE TOTALES ---
-    total_ingresos, total_ventas_tarjeta, total_gastos, total_retiros_y_consignaciones = 0, 0, 0, 0
-    for record in records:
-        total_ingresos += float(record.get('Venta_Total_Dia', 0))
-        total_ventas_tarjeta += sum(float(t.get('Valor', 0)) for t in json.loads(record.get('Tarjetas', '[]')))
-        total_gastos += sum(float(g.get('Valor', 0)) for g in json.loads(record.get('Gastos', '[]')))
-        total_retiros_y_consignaciones += sum(float(c.get('Valor', 0)) for c in json.loads(record.get('Consignaciones', '[]')))
-        total_retiros_y_consignaciones += sum(float(e.get('Valor', 0)) for e in json.loads(record.get('Efectivo', '[]')))
-        
-    # --- 2. CÁLCULOS DERIVADOS ---
-    total_egresos = total_gastos + total_retiros_y_consignaciones
-    balance_neto = total_ingresos - total_egresos
-    total_ventas_efectivo = total_ingresos - total_ventas_tarjeta
-    
-    # --- 3. FORMATEO DE TEXTOS ---
-    meses = {1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"}
-    if start_date == end_date:
-        report_date_str = f"{start_date.day} de {meses[start_date.month]} de {start_date.year}"
-        subtitle_text = f"Reporte para: {selected_store}"
-    else:
-        report_date_str = f"Del {start_date.strftime('%d/%m/%Y')} al {end_date.strftime('%d/%m/%Y')}"
-        subtitle_text = f"Reporte Consolidado para: {selected_store}"
-    report_time_str = datetime.now().strftime("%d/%m/%Y a las %H:%M")
-    
-    # --- 4. CONSTRUCCIÓN DEL HTML ---
-    # Para usar llaves {} de CSS dentro de un f-string de Python, se deben duplicar: {{ }}
-    # La indentación del string se ha eliminado para evitar errores de parsing.
-    html_body = f"""
-<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Resumen Gerencial de Caja</title>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
-body {{
-margin: 0;
-padding: 0;
-background-color: #f8f9fa;
-font-family: 'Roboto', sans-serif;
-}}
-.email-container {{
-max-width: 680px;
-margin: 20px auto;
-background-color: #ffffff;
-border-radius: 12px;
-overflow: hidden;
-border: 1px solid #dee2e6;
-}}
-.header {{
-background: linear-gradient(90deg, #023e8a, #0077b6);
-padding: 32px;
-text-align: center;
-color: white;
-}}
-.header h1 {{
-font-size: 28px;
-font-weight: 700;
-margin: 0 0 8px 0;
-}}
-.header .subtitle {{
-font-size: 16px;
-font-weight: 400;
-color: #caf0f8;
-margin: 0;
-}}
-.date-badge {{
-background-color: rgba(255, 255, 255, 0.15);
-color: #ffffff;
-padding: 8px 18px;
-border-radius: 20px;
-font-size: 14px;
-font-weight: 500;
-margin-top: 20px;
-display: inline-block;
-}}
-.content {{
-padding: 32px;
-}}
-.kpi-card {{
-background-color: #f8f9fa;
-border: 1px solid #e9ecef;
-border-radius: 10px;
-padding: 20px;
-text-align: center;
-}}
-.kpi-card h3 {{
-color: #495057;
-font-size: 14px;
-font-weight: 500;
-margin: 0 0 8px 0;
-text-transform: uppercase;
-letter-spacing: 0.8px;
-}}
-.kpi-card .amount {{
-color: #212529;
-font-size: 32px;
-font-weight: 700;
-margin: 0;
-line-height: 1.2;
-}}
-.details-section h2 {{
-color: #023e8a;
-font-size: 20px;
-font-weight: 700;
-margin: 0 0 16px 0;
-padding-bottom: 10px;
-border-bottom: 2px solid #0077b6;
-}}
-.detail-table {{
-width: 100%;
-border-collapse: collapse;
-}}
-.detail-table tr {{
-border-bottom: 1px solid #e9ecef;
-}}
-.detail-table tr:last-child {{
-border-bottom: none;
-}}
-.detail-table td {{
-padding: 16px 4px;
-font-size: 15px;
-}}
-.detail-label {{
-color: #6c757d;
-}}
-.detail-value {{
-color: #212529;
-font-weight: 500;
-text-align: right;
-}}
-.detail-value.positive {{ color: #007200; }}
-.detail-value.negative {{ color: #d00000; }}
-.final-balance-card {{
-background-color: #023e8a;
-border-radius: 12px;
-padding: 24px;
-text-align: center;
-color: #ffffff;
-}}
-.final-balance-card h3 {{
-font-size: 16px;
-font-weight: 500;
-margin: 0 0 8px 0;
-text-transform: uppercase;
-letter-spacing: 1px;
-opacity: 0.8;
-}}
-.final-balance-card .amount {{
-font-size: 40px;
-font-weight: 700;
-margin: 0 0 4px 0;
-}}
-.footer {{
-padding: 24px;
-text-align: center;
-font-size: 12px;
-color: #6c757d;
-background-color: #f1f3f5;
-}}
-</style>
-</head>
-<body>
-<div class="email-container">
-<div class="header">
-<h1>Resumen Gerencial de Caja</h1>
-<p class="subtitle">{subtitle_text}</p>
-<div class="date-badge">{report_date_str}</div>
-</div>
-<div class="content">
-<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 32px;">
-<tr>
-<td width="49%" style="padding-right: 10px;">
-<div class="kpi-card">
-<h3>📈 Ingresos Totales</h3>
-<p class="amount">{format_cop(total_ingresos)}</p>
-</div>
-</td>
-<td width="49%" style="padding-left: 10px;">
-<div class="kpi-card">
-<h3>📉 Egresos Totales</h3>
-<p class="amount">{format_cop(total_egresos)}</p>
-</div>
-</td>
-</tr>
-</table>
-<div class="details-section">
-<h2>Detalle de Movimientos</h2>
-<table class="detail-table" role="presentation" border="0" cellpadding="0" cellspacing="0">
-<tr>
-<td class="detail-label">Ventas en Efectivo</td>
-<td class="detail-value positive">{format_cop(total_ventas_efectivo)}</td>
-</tr>
-<tr>
-<td class="detail-label">Ventas con Tarjeta</td>
-<td class="detail-value positive">{format_cop(total_ventas_tarjeta)}</td>
-</tr>
-<tr>
-<td class="detail-label">Gastos Operativos</td>
-<td class="detail-value negative">-{format_cop(total_gastos)}</td>
-</tr>
-<tr>
-<td class="detail-label">Retiros y Consignaciones</td>
-<td class="detail-value negative">-{format_cop(total_retiros_y_consignaciones)}</td>
-</tr>
-</table>
-</div>
-<div class="final-balance-card" style="margin-top: 32px;">
-<h3>Balance Neto del Periodo</h3>
-<p class="amount">{format_cop(balance_neto)}</p>
-</div>
-</div>
-<div class="footer">
-<p>Este reporte fue generado automáticamente el {report_time_str}.<br>
-<strong>Sistema de Gestión Financiera</strong></p>
-</div>
-</div>
-</body>
-</html>
-"""
-    return html_body
+    pdf.set_font('Arial', '', 10)
+    mensaje = ("Apreciado cliente, a continuación encontrará el detalle de su estado de cuenta a la fecha. "
+               "Le invitamos a realizar su revisión y proceder con el pago de los valores vencidos. "
+               "Puede realizar su pago de forma fácil y segura a través de nuestro PORTAL DE PAGOS en línea, "
+               "cuyo enlace encontrará al final de este documento.")
+    pdf.set_text_color(128, 128, 128); pdf.multi_cell(0, 5, mensaje, 0, 'J'); pdf.set_text_color(0, 0, 0); pdf.ln(10)
 
+    pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(0, 56, 101); pdf.set_text_color(255, 255, 255)
+    pdf.cell(30, 10, 'Factura', 1, 0, 'C', 1); pdf.cell(40, 10, 'Fecha Factura', 1, 0, 'C', 1)
+    pdf.cell(40, 10, 'Fecha Vencimiento', 1, 0, 'C', 1); pdf.cell(40, 10, 'Importe', 1, 1, 'C', 1)
 
-def send_summary_email(registros_ws, start_date, end_date, selected_store, recipient_email):
-    """
-    Filtra los datos, genera el resumen con el nuevo diseño y lo envía por correo.
-    """
-    st.info("Preparando y enviando resumen gerencial...")
+    pdf.set_font('Arial', '', 10)
+    total_importe = 0
+    for _, row in datos_cliente_ordenados.iterrows():
+        pdf.set_text_color(0, 0, 0)
+        if row['dias_vencido'] > 0: pdf.set_fill_color(255, 235, 238)
+        else: pdf.set_fill_color(255, 255, 255)
+        total_importe += row['importe']
+        numero_factura_str = str(int(row['numero'])) if pd.notna(row['numero']) else "N/A"
+        fecha_doc_str = row['fecha_documento'].strftime('%d/%m/%Y') if pd.notna(row['fecha_documento']) else ''
+        fecha_ven_str = row['fecha_vencimiento'].strftime('%d/%m/%Y') if pd.notna(row['fecha_vencimiento']) else ''
+        pdf.cell(30, 10, numero_factura_str, 1, 0, 'C', 1)
+        pdf.cell(40, 10, fecha_doc_str, 1, 0, 'C', 1)
+        pdf.cell(40, 10, fecha_ven_str, 1, 0, 'C', 1)
+        pdf.cell(40, 10, f"${row['importe']:,.0f}", 1, 1, 'R', 1)
 
-    try:
-        sender_email = st.secrets["email_credentials"]["sender_email"]
-        sender_password = st.secrets["email_credentials"]["sender_password"]
-    except (KeyError, TypeError):
-        st.error("Credenciales de correo no encontradas o mal configuradas en los 'secrets' de Streamlit.")
-        st.warning("Asegúrese de tener una sección [email_credentials] con 'sender_email' y 'sender_password'.")
-        return
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(224, 224, 224); pdf.set_text_color(0, 0, 0)
+    pdf.cell(110, 10, 'TOTAL ADEUDADO', 1, 0, 'R', 1)
+    pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(240, 240, 240);
+    pdf.cell(40, 10, f"${total_importe:,.0f}", 1, 1, 'R', 1)
 
-    try:
-        all_records = registros_ws.get_all_records()
-        date_filtered_records = [
-            r for r in all_records
-            if start_date <= datetime.strptime(r.get('Fecha', '01/01/1900'), '%d/%m/%Y').date() <= end_date
-        ]
-        if selected_store == "Todas las Tiendas":
-            filtered_records = date_filtered_records
-        else:
-            filtered_records = [r for r in date_filtered_records if str(r.get('Tienda', '')).strip() == selected_store]
-    except Exception as e:
-        st.error(f"Error al filtrar los registros para el correo: {e}")
-        return
+    if total_vencido_cliente > 0:
+        pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(255, 204, 204); pdf.set_text_color(192, 0, 0)
+        pdf.cell(110, 10, 'VALOR TOTAL VENCIDO', 1, 0, 'R', 1)
+        pdf.cell(40, 10, f"${total_vencido_cliente:,.0f}", 1, 1, 'R', 1)
 
-    if not filtered_records:
-        st.warning("No se encontraron registros en el rango de fechas y tienda seleccionados para enviar el correo.")
-        return
+    return bytes(pdf.output())
 
-    email_body = generate_professional_email_body(filtered_records, start_date, end_date, selected_store)
-    subject = f"Resumen de Cuadre de Caja - {selected_store} - {start_date.strftime('%d/%m')} a {end_date.strftime('%d/%m')}"
-
-    try:
-        yag = yagmail.SMTP(sender_email, sender_password)
-        # --- ¡ESTA ES LA LÍNEA CORREGIDA! ---
-        # Se envía el HTML como el primer elemento de una lista para evitar el auto-formateo.
-        yag.send(
-            to=recipient_email,
-            subject=subject,
-            contents=[email_body] 
-        )
-        st.success(f"¡Resumen gerencial enviado exitosamente a {recipient_email}!")
-    except smtplib.SMTPAuthenticationError:
-        st.error("Error de autenticación con el servidor de correo. Verifique el email y la contraseña de aplicación en los 'secrets'.")
-    except Exception as e:
-        st.error(f"Ocurrió un error inesperado al enviar el correo: {e}")
+def generar_analisis_cartera(kpis: dict):
+    comentarios = []
+    if kpis['porcentaje_vencido'] > 30: comentarios.append(f"<li>🔴 **Alerta Crítica:** El <b>{kpis['porcentaje_vencido']:.1f}%</b> de la cartera está vencida. Requiere acciones inmediatas.</li>")
+    elif kpis['porcentaje_vencido'] > 15: comentarios.append(f"<li>🟡 **Advertencia:** Con un <b>{kpis['porcentaje_vencido']:.1f}%</b> de cartera vencida, es momento de intensificar gestiones.</li>")
+    else: comentarios.append(f"<li>🟢 **Saludable:** El porcentaje de cartera vencida (<b>{kpis['porcentaje_vencido']:.1f}%</b>) está en un nivel manejable.</li>")
+    if kpis['antiguedad_prom_vencida'] > 60: comentarios.append(f"<li>🔴 **Riesgo Alto:** Antigüedad promedio de <b>{kpis['antiguedad_prom_vencida']:.0f} días</b>. Priorizar recuperación.</li>")
+    elif kpis['antiguedad_prom_vencida'] > 30: comentarios.append(f"<li>🟡 **Atención Requerida:** Antigüedad promedio de <b>{kpis['antiguedad_prom_vencida']:.0f} días</b>. Evitar que envejezcan más.</li>")
+    if kpis['csi'] > 15: comentarios.append(f"<li>🔴 **Severidad Crítica (CSI: {kpis['csi']:.1f}):** Impacto muy alto que afecta el flujo de caja.</li>")
+    elif kpis['csi'] > 5: comentarios.append(f"<li>🟡 **Severidad Moderada (CSI: {kpis['csi']:.1f}):** Hay focos de deuda antigua o de alto valor que pesan.</li>")
+    else: comentarios.append(f"<li>🟢 **Severidad Baja (CSI: {kpis['csi']:.1f}):** Impacto bajo, indicando buena gestión.</li>")
+    return "<ul>" + "".join(comentarios) + "</ul>"
 
 # ======================================================================================
-# --- FIN DE LA SECCIÓN DE CORREO ELECTRÓNICO ---
+# --- BLOQUE PRINCIPAL DE LA APP ---
 # ======================================================================================
-
-
-# --- 4. GESTIÓN DEL ESTADO DE LA SESIÓN ---
-def initialize_session_state():
-    """Inicializa el estado de la sesión para almacenar datos del formulario."""
-    defaults = {
-        'page': 'Formulario', 'venta_total_dia': 0.0, 'factura_inicial': "", 'factura_final': "",
-        'tarjetas': [], 'consignaciones': [], 'gastos': [], 'efectivo': [],
-        'authenticated': False
-    }
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
-
-def clear_form_state():
-    """Limpia el formulario, conservando la tienda, fecha y estado de autenticación."""
-    tienda = st.session_state.get('tienda_seleccionada', None)
-    fecha = st.session_state.get('fecha_seleccionada', datetime.now().date())
-    auth_status = st.session_state.get('authenticated', False)
-    
-    keys_to_keep = ['page', 'tienda_seleccionada', 'fecha_seleccionada', 'authenticated']
-    for key in list(st.session_state.keys()):
-        if key not in keys_to_keep:
-            del st.session_state[key]
-            
-    initialize_session_state()
-    st.session_state.tienda_seleccionada = tienda
-    st.session_state.fecha_seleccionada = fecha
-    st.session_state.authenticated = auth_status
-
-# --- 5. COMPONENTES DE LA INTERFAZ DE USUARIO ---
-def format_currency(num):
-    """Formatea un número como moneda colombiana (ej: $1.234.567)."""
-    return f"${int(num):,}".replace(",", ".") if isinstance(num, (int, float)) else "$0"
-
-def load_cuadre_data(registros_ws):
-    """Carga los datos de un cuadre existente desde la hoja 'Registros'."""
-    if not st.session_state.get("tienda_seleccionada"):
-        st.warning("Por favor, seleccione una tienda primero.")
-        return
-
-    id_registro = f"{st.session_state.tienda_seleccionada}-{st.session_state.fecha_seleccionada.strftime('%d/%m/%Y')}"
-    try:
-        cell = registros_ws.find(id_registro, in_column=1)
-        if cell:
-            row_data = registros_ws.row_values(cell.row)
-            clear_form_state()
-
-            st.session_state.factura_inicial = row_data[4] if len(row_data) > 4 else ""
-            st.session_state.factura_final = row_data[5] if len(row_data) > 5 else ""
-            st.session_state.venta_total_dia = float(row_data[6]) if len(row_data) > 6 and row_data[6] else 0.0
-            st.session_state.tarjetas = json.loads(row_data[7]) if len(row_data) > 7 and row_data[7] else []
-            st.session_state.consignaciones = json.loads(row_data[8]) if len(row_data) > 8 and row_data[8] else []
-            st.session_state.gastos = json.loads(row_data[9]) if len(row_data) > 9 and row_data[9] else []
-            st.session_state.efectivo = json.loads(row_data[10]) if len(row_data) > 10 and row_data[10] else []
-            st.toast(f"✅ Cuadre para '{st.session_state.tienda_seleccionada}' cargado.", icon="📄")
-        else:
-            st.warning("No se encontró un cuadre para esta tienda y fecha. Puede crear uno nuevo.")
-            clear_form_state()
-    except Exception as e:
-        st.error(f"Error al cargar datos. Verifique la hoja 'Registros'. Error: {e}")
-        clear_form_state()
-
-# --- FUNCIONES PARA MANEJAR CONSECUTIVOS ---
-
-def get_next_consecutive(consecutivos_ws, tienda):
-    """Obtiene el siguiente número consecutivo para una tienda."""
-    try:
-        cell = consecutivos_ws.find(tienda, in_column=1)
-        if cell:
-            last_consecutive = int(consecutivos_ws.cell(cell.row, 2).value)
-            return last_consecutive + 1
-        else:
-            st.warning(f"No se encontró consecutivo para '{tienda}'. Se usará '1000' por defecto.")
-            return 1000
-    except Exception as e:
-        st.error(f"Error al obtener consecutivo de tienda: {e}")
-        return None
-
-def update_consecutive(consecutivos_ws, tienda, new_consecutive):
-    """Actualiza el último consecutivo usado para una tienda."""
-    try:
-        cell = consecutivos_ws.find(tienda, in_column=1)
-        if cell:
-            consecutivos_ws.update_cell(cell.row, 2, new_consecutive)
-        else:
-            consecutivos_ws.append_row([tienda, new_consecutive])
-    except Exception as e:
-        st.error(f"Error al actualizar consecutivo de tienda: {e}")
-
-def get_next_global_consecutive(global_consecutivo_ws):
-    """Obtiene el siguiente número consecutivo global."""
-    try:
-        last_consecutive = int(global_consecutivo_ws.acell('B1').value)
-        return last_consecutive + 1
-    except Exception as e:
-        st.error(f"Error al obtener consecutivo global desde la hoja 'GlobalConsecutivo': {e}")
-        st.warning("Asegúrese que la hoja exista y que la celda B1 contenga un número.")
-        return None
-
-def update_global_consecutive(global_consecutivo_ws, new_consecutive):
-    """Actualiza el último consecutivo global usado."""
-    try:
-        global_consecutivo_ws.update_acell('B1', new_consecutive)
-    except Exception as e:
-        st.error(f"Error al actualizar el consecutivo global: {e}")
-
-def display_dynamic_list_section(title, key, form_inputs, options_map=None):
-    """Función reutilizable para crear secciones del formulario."""
-    if options_map is None: options_map = {}
-
-    with st.expander(f"**{title}**", expanded=True):
-        with st.form(f"form_{key}", clear_on_submit=True):
-            cols = st.columns(len(form_inputs))
-            data = {}
-            for i, (input_key, input_type, options) in enumerate(form_inputs):
-                label = options.get('label', input_key)
-                if input_type == "selectbox":
-                    data[input_key] = cols[i].selectbox(label, options=options_map.get(input_key, []), label_visibility="collapsed", placeholder=label)
-                elif input_type == "number_input":
-                    data[input_key] = cols[i].number_input(label, min_value=0.0, step=1000.0, format="%.0f", label_visibility="collapsed", placeholder=label)
-                elif input_type == "date_input":
-                    data[input_key] = cols[i].date_input(label, value=datetime.now().date(), label_visibility="collapsed", format="DD/MM/YYYY")
-                else:
-                    data[input_key] = cols[i].text_input(label, label_visibility="collapsed", placeholder=label)
-            
-            if st.form_submit_button(f"✚ Agregar {title.split(' ')[1]}", use_container_width=True):
-                if data.get("Valor", 0) > 0:
-                    if 'Fecha' in data and hasattr(data['Fecha'], 'strftime'):
-                        data['Fecha'] = data['Fecha'].strftime("%d/%m/%Y")
-                    st.session_state[key].append(data)
-                    st.toast(f"✅ {title.split(' ')[1]} agregado.")
-                    st.rerun()
-                else:
-                    st.warning("El valor debe ser mayor a cero.")
-
-        if st.session_state[key]:
-            df = pd.DataFrame(st.session_state[key])
-            df['Eliminar'] = False
-            column_config = {
-                "Valor": st.column_config.NumberColumn("Valor", format="$ %.0f", required=True),
-                "Eliminar": st.column_config.CheckboxColumn("Eliminar", width="small")
-            }
-            for col_name, options_list in options_map.items():
-                if col_name in df.columns:
-                    column_config[col_name] = st.column_config.SelectboxColumn(col_name, options=options_list, required=True)
-
-            edited_df = st.data_editor(df, key=f'editor_{key}', hide_index=True, use_container_width=True, column_config=column_config)
-
-            if edited_df['Eliminar'].any():
-                indices_to_remove = edited_df[edited_df['Eliminar']].index
-                st.session_state[key] = [item for i, item in enumerate(st.session_state[key]) if i not in indices_to_remove]
-                st.toast("🗑️ Registro(s) eliminado(s).")
-                st.rerun()
-            else:
-                st.session_state[key] = edited_df.drop(columns=['Eliminar']).to_dict('records')
-
-        subtotal = sum(float(item.get('Valor', 0)) for item in st.session_state[key])
-        st.metric(f"Subtotal {title.split(' ')[1]}", format_currency(subtotal))
-
-def display_tarjetas_section():
-    """Muestra la sección para agregar y editar pagos con tarjeta."""
-    with st.expander("💳 **Tarjetas**", expanded=True):
-        with st.form("form_tarjetas", clear_on_submit=True):
-            c1, c2 = st.columns(2)
-            valor = c1.number_input("Valor", min_value=1.0, step=1000.0, format="%.0f", label_visibility="collapsed", placeholder="Valor Tarjeta")
-            fecha = c2.date_input("Fecha", value=datetime.now().date(), label_visibility="collapsed", format="DD/MM/YYYY")
-            
-            if st.form_submit_button("✚ Agregar Tarjeta", use_container_width=True):
-                if valor > 0:
-                    st.session_state.tarjetas.append({
-                        'Valor': valor,
-                        'Fecha': fecha.strftime("%d/%m/%Y")
-                    })
-                    st.toast(f"Agregado: {format_currency(valor)}")
-                    st.rerun()
-
-        if st.session_state.tarjetas:
-            df = pd.DataFrame(st.session_state.tarjetas)
-            df['Eliminar'] = False
-            
-            if 'Fecha' in df.columns:
-                df = df[['Fecha', 'Valor', 'Eliminar']]
-
-            edited_df = st.data_editor(
-                df, key='editor_tarjetas', hide_index=True, use_container_width=True,
-                column_config={
-                    "Valor": st.column_config.NumberColumn("Valor", format="$ %.0f", required=True),
-                    "Fecha": st.column_config.TextColumn("Fecha", required=True),
-                    "Eliminar": st.column_config.CheckboxColumn("Eliminar", width="small")
-                }
-            )
-            
-            if edited_df['Eliminar'].any():
-                st.session_state.tarjetas = [t for i, t in enumerate(st.session_state.tarjetas) if i not in edited_df[edited_df['Eliminar']].index]
-                st.toast("Tarjeta(s) eliminada(s).")
-                st.rerun()
-            else:
-                st.session_state.tarjetas = edited_df.drop(columns=['Eliminar']).to_dict('records')
-                
-        st.metric("Subtotal Tarjetas", format_currency(sum(float(t.get('Valor', 0)) for t in st.session_state.tarjetas)))
-
-def display_consignaciones_section(bancos_list):
-    display_dynamic_list_section(
-        "🏦 Consignaciones", "consignaciones",
-        [("Banco", "selectbox", {"label": "Banco"}),
-         ("Valor", "number_input", {"label": "Valor"}),
-         ("Fecha", "date_input", {"label": "Fecha"})],
-        options_map={"Banco": bancos_list}
-    )
-
-def display_gastos_section(terceros_list):
-    terceros_con_na = ["N/A"] + terceros_list
-    display_dynamic_list_section(
-        "💸 Gastos", "gastos",
-        [("Descripción", "text_input", {"label": "Descripción del Gasto"}),
-         ("Tercero", "selectbox", {"label": "Proveedor (Opcional)"}),
-         ("Valor", "number_input", {"label": "Valor"})],
-        options_map={"Tercero": terceros_con_na}
-    )
-
-def display_efectivo_section(terceros_list):
-    terceros_con_na = ["N/A"] + terceros_list
-    display_dynamic_list_section(
-        "💵 Efectivo", "efectivo",
-        [("Tipo", "selectbox", {"label": "Tipo de Movimiento"}),
-         ("Destino/Tercero (Opcional)", "selectbox", {"label": "Proveedor / Destino"}),
-         ("Valor", "number_input", {"label": "Valor"})],
-        options_map={
-            "Tipo": ["Efectivo Entregado", "Reintegro Caja Menor"],
-            "Destino/Tercero (Opcional)": terceros_con_na
-        }
-    )
-
-def display_summary_and_save(worksheets):
-    st.header("3. Verificación y Guardado", anchor=False, divider="rainbow")
-    
-    registros_ws, _, consecutivos_ws, global_consecutivo_ws = worksheets
-
-    with st.container(border=True):
-        sub_t = sum(float(t.get('Valor', 0)) for t in st.session_state.tarjetas)
-        sub_c = sum(float(c.get('Valor', 0)) for c in st.session_state.consignaciones)
-        sub_g = sum(float(g.get('Valor', 0)) for g in st.session_state.gastos)
-        sub_e = sum(float(e.get('Valor', 0)) for e in st.session_state.efectivo)
-        total_desglose = sub_t + sub_c + sub_g + sub_e
-        venta_total = float(st.session_state.get('venta_total_dia', 0.0))
-        diferencia = venta_total - total_desglose
-
-        v1, v2, v3 = st.columns(3)
-        v1.metric("💰 Venta Total (Sistema)", format_currency(venta_total))
-        v2.metric("📊 Suma del Desglose", format_currency(total_desglose))
-        delta_color = "inverse" if diferencia != 0 else "off"
-        v3.metric("Diferencia", format_currency(diferencia), delta=format_currency(diferencia), delta_color=delta_color)
-
-        if st.button("💾 Guardar o Actualizar Cuadre", type="primary", use_container_width=True):
-            tienda = st.session_state.get("tienda_seleccionada")
-            if not tienda:
-                st.warning("🛑 Por favor, seleccione una tienda antes de guardar.")
-                return
-            if venta_total <= 0:
-                st.warning("⚠️ La Venta Total del día debe ser mayor a cero.")
-                return
-
-            fecha_str = st.session_state.fecha_seleccionada.strftime("%d/%m/%Y")
-            id_registro = f"{tienda}-{fecha_str}"
-
-            try:
-                cell = registros_ws.find(id_registro, in_column=1)
-                
-                if cell:
-                    consecutivo_asignado_tienda = registros_ws.cell(cell.row, 2).value
-                    consecutivo_global_doc = registros_ws.cell(cell.row, 15).value
-                else:
-                    consecutivo_asignado_tienda = get_next_consecutive(consecutivos_ws, tienda)
-                    consecutivo_global_doc = get_next_global_consecutive(global_consecutivo_ws)
-                    
-                    if consecutivo_asignado_tienda is None or consecutivo_global_doc is None:
-                        st.error("No se pudo generar uno de los consecutivos. No se guardará el registro.")
-                        return
-                    
-                    update_consecutive(consecutivos_ws, tienda, consecutivo_asignado_tienda)
-                    update_global_consecutive(global_consecutivo_ws, consecutivo_global_doc)
-
-                fila_datos = [
-                    id_registro, consecutivo_asignado_tienda, tienda, fecha_str,
-                    st.session_state.factura_inicial, st.session_state.factura_final, venta_total,
-                    json.dumps(st.session_state.tarjetas), json.dumps(st.session_state.consignaciones),
-                    json.dumps(st.session_state.gastos), json.dumps(st.session_state.efectivo),
-                    diferencia, datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-                    "", 
-                    consecutivo_global_doc
-                ]
-
-                if cell:
-                    registros_ws.update(f'A{cell.row}', [fila_datos])
-                    st.success(f"✅ Cuadre para {tienda} el {fecha_str} fue **actualizado**!")
-                else:
-                    registros_ws.append_row(fila_datos)
-                    st.success(f"✅ Cuadre para {tienda} el {fecha_str} fue **guardado** con el consecutivo de referencia **{consecutivo_asignado_tienda}** y de documento **{consecutivo_global_doc}**!")
-            except Exception as e:
-                st.error(f"Error al guardar los datos en Google Sheets: {e}")
-
-# --- 6. RENDERIZADO DE PÁGINAS PRINCIPALES ---
-def render_form_page(worksheets, config):
-    """Renderiza la página del formulario principal."""
-    registros_ws, _, _, _ = worksheets
-    tiendas, bancos, terceros = config
-    
-    st.header("1. Selección de Registro", anchor=False, divider="rainbow")
-    c1,c2,c3,c4 = st.columns([2,2,1,1])
-    c1.selectbox("Tienda", options=tiendas, key="tienda_seleccionada", on_change=clear_form_state, placeholder="Seleccione una tienda...")
-    c2.date_input("Fecha", key="fecha_seleccionada", on_change=clear_form_state, format="DD/MM/YYYY")
-    with c3:
-        st.write(" ")
-        st.button("🔍 Cargar Cuadre", on_click=load_cuadre_data, args=[registros_ws], use_container_width=True)
-    with c4:
-        st.write(" ")
-        st.button("✨ Iniciar Nuevo", on_click=clear_form_state, use_container_width=True)
-
-    st.divider()
-    st.header("2. Formulario de Cuadre", anchor=False, divider="rainbow")
-    
-    with st.container(border=True):
-        st.subheader("📋 Información General")
-        c1,c2,c3=st.columns(3)
-        st.session_state.factura_inicial=c1.text_input("Factura Inicial", value=st.session_state.get('factura_inicial', ""))
-        st.session_state.factura_final=c2.text_input("Factura Final", value=st.session_state.get('factura_final', ""))
-        st.session_state.venta_total_dia=c3.number_input("💰 Venta Total (Sistema)",min_value=0.0,step=1000.0,value=float(st.session_state.get('venta_total_dia', 0.0)),format="%.0f")
-
-    with st.container(border=True):
-        st.subheader("🧾 Desglose de Pagos")
-        display_tarjetas_section()
-        display_consignaciones_section(bancos)
-        display_gastos_section(terceros)
-        display_efectivo_section(terceros)
-
-    display_summary_and_save(worksheets)
-
-def render_reports_page(registros_ws, config_ws, tiendas_list):
-    """Renderiza la página de generación de reportes."""
-    st.header("Generación de Archivos y Reportes", divider="rainbow")
-    st.markdown("Seleccione una tienda y un rango de fechas para generar los archivos para el sistema contable y los reportes de soporte.")
-
-    today = datetime.now().date()
-    col1, col2, col3 = st.columns(3)
-    tienda_options = ["Todas las Tiendas"] + tiendas_list
-    selected_store = col1.selectbox("Tienda", options=tienda_options)
-    start_date = col2.date_input("Fecha de Inicio", today.replace(day=1))
-    end_date = col3.date_input("Fecha de Fin", today)
-
-    if start_date > end_date:
-        st.error("Error: La fecha de inicio no puede ser posterior a la fecha de fin.")
-        return
-
-    st.divider()
-    
-    b1, b2, b3 = st.columns(3)
-
-    with b1:
-        if st.button("📄 Generar Archivo TXT", use_container_width=True, type="primary"):
-            with st.spinner('Generando TXT...'):
-                txt_content = generate_txt_file(registros_ws, config_ws, start_date, end_date, selected_store)
-                if txt_content:
-                    st.download_button(
-                        label="📥 Descargar Archivo .txt",
-                        data=txt_content.encode('utf-8'),
-                        file_name=f"contabilidad_{selected_store.replace(' ','_')}_{start_date.strftime('%Y%m%d')}_a_{end_date.strftime('%Y%m%d')}.txt",
-                        mime="text/plain",
-                        use_container_width=True
-                    )
-                    st.success("Archivo TXT generado.")
-    
-    with b2:
-        if st.button("📊 Generar Reporte Excel", use_container_width=True, type="primary"):
-            with st.spinner('Creando un Excel impecable...'):
-                excel_data = generate_excel_report(registros_ws, start_date, end_date, selected_store)
-                if excel_data:
-                    st.download_button(
-                        label="📥 Descargar Reporte .xlsx",
-                        data=excel_data,
-                        file_name=f"Reporte_Cuadre_{selected_store.replace(' ','_')}_{start_date.strftime('%Y%m%d')}_a_{end_date.strftime('%Y%m%d')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
-                    st.success("Reporte Excel generado.")
-
-    with b3:
-        with st.form("email_form"):
-            recipient_email = st.text_input("Email del Gerente", placeholder="ejemplo@dominio.com")
-            submitted = st.form_submit_button("📧 Enviar Resumen Gerencial", use_container_width=True)
-            
-            if submitted:
-                if recipient_email and "@" in recipient_email:
-                    send_summary_email(registros_ws, start_date, end_date, selected_store, recipient_email)
-                else:
-                    st.warning("Por favor, ingrese una dirección de correo válida.")
-
-
-# --- 7. FLUJO PRINCIPAL DE LA APLICACIÓN ---
 def main():
-    """Función principal que ejecuta la aplicación Streamlit."""
-    st.title("CUADRE DIARIO DE CAJA")
+    if 'authentication_status' not in st.session_state:
+        st.session_state['authentication_status'] = False
+        st.session_state['acceso_general'] = False
+        st.session_state['vendedor_autenticado'] = None
 
-    worksheets = connect_to_gsheet()
-    
-    if all(worksheets):
-        registros_ws, config_ws, _, _ = worksheets
-        with st.sidebar:
-            st.header("Navegación")
-            page_selection = st.radio(
-                "Seleccione una página",
-                ["📝 Formulario de Cuadre", "📈 Reportes"],
-                key="page_radio",
-                label_visibility="collapsed"
-            )
-            
-            if page_selection == "📝 Formulario de Cuadre":
-                st.session_state.page = "Formulario"
+    if not st.session_state['authentication_status']:
+        st.title("Acceso al Tablero de Cartera")
+        try:
+            general_password = st.secrets["general"]["password"]
+            vendedores_secrets = st.secrets["vendedores"]
+        except Exception as e:
+            st.error(f"Error al cargar las contraseñas desde los secretos: {e}")
+            st.stop()
+        password = st.text_input("Introduce la contraseña:", type="password", key="password_input")
+        if st.button("Ingresar"):
+            if password == str(general_password):
+                st.session_state['authentication_status'] = True
+                st.session_state['acceso_general'] = True
+                st.session_state['vendedor_autenticado'] = "General"
+                st.rerun()
             else:
-                st.session_state.page = "Reportes"
-        
-        config = get_app_config(config_ws)
-        tiendas, _, _ = config
-
-        if not tiendas and st.session_state.page == "Formulario":
-            st.error("🚨 No se encontraron tiendas en la hoja de 'Configuracion'.")
-            st.warning("Agregue al menos una tienda (Tipo Movimiento = TIENDA) para continuar.")
-            return
-
-        if st.session_state.page == "Formulario":
-            render_form_page(worksheets, config)
-        elif st.session_state.page == "Reportes":
-            render_reports_page(registros_ws, config_ws, tiendas)
+                for vendedor_key, pass_vendedor in vendedores_secrets.items():
+                    if password == str(pass_vendedor):
+                        st.session_state['authentication_status'] = True
+                        st.session_state['acceso_general'] = False
+                        st.session_state['vendedor_autenticado'] = vendedor_key
+                        st.rerun()
+                        break
+                if not st.session_state['authentication_status']:
+                    st.error("Contraseña incorrecta.")
     else:
-        st.info("⏳ Esperando conexión con Google Sheets...")
+        st.title("📊 Tablero de Cartera Ferreinox SAS BIC")
 
-# --- BLOQUE DE EJECUCIÓN PRINCIPAL ---
-if __name__ == "__main__":
-    initialize_session_state()
+        if st.button("🔄 Recargar Datos (Dropbox + Locales)"):
+            st.cache_data.clear()
+            st.success("Caché limpiado. Recargando todos los datos...")
+            st.rerun()
 
-    if check_password():
-        main()
+        with st.sidebar:
+            try:
+                st.image("LOGO FERREINOX SAS BIC 2024.png", use_container_width=True)
+            except FileNotFoundError:
+                st.warning("Logo no encontrado.")
+            st.success(f"Usuario: {st.session_state['vendedor_autenticado']}")
+            if st.button("Cerrar Sesión"):
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                st.rerun()
+
+        cartera_procesada = cargar_y_procesar_datos()
+
+        st.sidebar.title("Filtros")
+        if st.session_state['acceso_general']:
+            vendedores_en_excel_display = ["Todos"] + sorted(cartera_procesada['nomvendedor'].dropna().unique())
+            vendedor_sel = st.sidebar.selectbox("Filtrar por Vendedor:", vendedores_en_excel_display)
+        else:
+            vendedor_sel = st.session_state['vendedor_autenticado']
+
+        zonas_disponibles = ["Todas las Zonas"] + sorted(cartera_procesada['zona'].dropna().unique())
+        zona_sel = st.sidebar.selectbox("Filtrar por Zona:", zonas_disponibles)
+
+        poblaciones_disponibles = ["Todas"] + sorted(cartera_procesada['poblacion'].dropna().unique())
+        poblacion_sel = st.sidebar.selectbox("Filtrar por Población:", poblaciones_disponibles)
+
+        cartera_filtrada = cartera_procesada.copy()
+        if vendedor_sel != "Todos":
+            cartera_filtrada = cartera_filtrada[cartera_filtrada['nomvendedor_norm'] == normalizar_nombre(vendedor_sel)]
+        if zona_sel != "Todas las Zonas":
+            cartera_filtrada = cartera_filtrada[cartera_filtrada['zona'] == zona_sel]
+        if poblacion_sel != "Todas":
+            cartera_filtrada = cartera_filtrada[cartera_filtrada['poblacion'] == poblacion_sel]
+
+        if cartera_filtrada.empty:
+            st.warning(f"No se encontraron datos para los filtros seleccionados."); st.stop()
+
+        total_cartera = cartera_filtrada['importe'].sum()
+        cartera_vencida_df = cartera_filtrada[cartera_filtrada['dias_vencido'] > 0]
+        total_vencido = cartera_vencida_df['importe'].sum()
+        porcentaje_vencido = (total_vencido / total_cartera) * 100 if total_cartera > 0 else 0
+        csi = (cartera_vencida_df['importe'] * cartera_vencida_df['dias_vencido']).sum() / total_cartera if total_cartera > 0 else 0
+        antiguedad_prom_vencida = (cartera_vencida_df['importe'] * cartera_vencida_df['dias_vencido']).sum() / total_vencido if total_vencido > 0 else 0
+
+        st.header("Indicadores Clave de Rendimiento (KPIs)")
+        kpi_row1 = st.columns(3)
+        kpi_row2 = st.columns(2)
+
+        kpi_row1[0].metric("💰 Cartera Total", f"${total_cartera:,.0f}")
+        kpi_row1[1].metric("🔥 Cartera Vencida", f"${total_vencido:,.0f}")
+        kpi_row1[2].metric("📈 % Vencido s/ Total", f"{porcentaje_vencido:.1f}%")
+
+        kpi_row2[0].metric("⏳ Antigüedad Prom. Vencida", f"{antiguedad_prom_vencida:.0f} días")
+        kpi_row2[1].metric(label="💥 Índice de Severidad (CSI)", value=f"{csi:.1f}")
+
+        with st.expander("🤖 **Análisis y Recomendaciones del Asistente IA**", expanded=True):
+            kpis_dict = {'porcentaje_vencido': porcentaje_vencido, 'antiguedad_prom_vencida': antiguedad_prom_vencida, 'csi': csi}
+            analisis = generar_analisis_cartera(kpis_dict)
+            st.markdown(analisis, unsafe_allow_html=True)
+        st.markdown("---")
+
+        tab1, tab2, tab3 = st.tabs(["📊 Visión General de la Cartera", "👥 Análisis por Cliente", "📑 Detalle Completo"])
+        with tab1:
+            st.subheader("Distribución de Cartera por Antigüedad")
+            col_grafico, col_tabla_resumen = st.columns([2, 1])
+            with col_grafico:
+                df_edades = cartera_filtrada.groupby('edad_cartera', observed=True)['importe'].sum().reset_index()
+                color_map_edades = {'Al día': PALETA_COLORES['exito_verde'], '1-15 días': PALETA_COLORES['alerta_amarillo'], '16-30 días': PALETA_COLORES['alerta_naranja'], '31-60 días': 'darkorange', 'Más de 60 días': PALETA_COLORES['alerta_rojo']}
+                fig = px.bar(df_edades, x='edad_cartera', y='importe', text_auto='.2s', title='Monto de Cartera por Rango de Días', labels={'edad_cartera': 'Antigüedad', 'importe': 'Monto Total'}, color='edad_cartera', color_discrete_map=color_map_edades)
+                fig.update_layout(showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
+            with col_tabla_resumen:
+                st.subheader("Resumen por Antigüedad")
+                df_edades['Porcentaje'] = (df_edades['importe'] / total_cartera * 100).map('{:.1f}%'.format) if total_cartera > 0 else '0.0%'
+                df_edades['importe'] = df_edades['importe'].map('${:,.0f}'.format)
+                st.dataframe(df_edades.rename(columns={'edad_cartera': 'Rango', 'importe': 'Monto'}), use_container_width=True, hide_index=True)
+        with tab2:
+            st.subheader("Análisis de Concentración de Deuda por Cliente")
+            col_pareto, col_treemap = st.columns(2)
+            with col_treemap:
+                st.markdown("**Visualización de Cartera Vencida por Cliente (Treemap)**")
+                df_clientes_vencidos = cartera_vencida_df.groupby('nombrecliente')['importe'].sum().reset_index()
+                df_clientes_vencidos = df_clientes_vencidos[df_clientes_vencidos['importe'] > 0]
+                fig_treemap = px.treemap(df_clientes_vencidos, path=[px.Constant("Clientes con Deuda Vencida"), 'nombrecliente'], values='importe', title='Haga clic en un recuadro para explorar', color_continuous_scale='Reds', color='importe')
+                fig_treemap.update_layout(margin = dict(t=50, l=25, r=25, b=25))
+                st.plotly_chart(fig_treemap, use_container_width=True)
+            with col_pareto:
+                st.markdown("**Clientes Clave (Principio de Pareto)**")
+                client_debt = cartera_vencida_df.groupby('nombrecliente')['importe'].sum().sort_values(ascending=False)
+                if not client_debt.empty:
+                    client_debt_cumsum = client_debt.cumsum()
+                    total_debt_vencida = client_debt.sum()
+                    pareto_limit = total_debt_vencida * 0.80
+                    pareto_clients_df = client_debt.to_frame().iloc[0:len(client_debt_cumsum[client_debt_cumsum <= pareto_limit]) + 1]
+                    num_total_clientes_deuda = len(client_debt)
+                    num_clientes_pareto = len(pareto_clients_df)
+                    porcentaje_clientes_pareto = (num_clientes_pareto / num_total_clientes_deuda) * 100 if num_total_clientes_deuda > 0 else 0
+                    st.info(f"El **{porcentaje_clientes_pareto:.0f}%** de los clientes ({num_clientes_pareto} de {num_total_clientes_deuda}) representan aprox. el **80%** de la cartera vencida.")
+                    df_pareto_display = pareto_clients_df.reset_index()
+                    df_pareto_display.columns = ['Cliente', 'Monto Vencido']
+                    df_pareto_display['Monto Vencido'] = df_pareto_display['Monto Vencido'].map('${:,.0f}'.format)
+                    st.dataframe(df_pareto_display, height=250, hide_index=True, use_container_width=True)
+                else:
+                    st.info("No hay cartera vencida para analizar.")
+        with tab3:
+            st.subheader(f"Detalle Completo: {vendedor_sel} / {zona_sel} / {poblacion_sel}")
+            st.download_button(label="📥 Descargar Reporte en Excel", data=generar_excel_formateado(cartera_filtrada), file_name=f'Cartera_{normalizar_nombre(vendedor_sel)}_{zona_sel}_{poblacion_sel}.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            columnas_disponibles = cartera_filtrada.columns
+            columnas_a_ocultar_existentes = [col for col in ['provincia', 'telefono1', 'telefono2', 'entidad_autoriza', 'e_mail', 'descuento', 'cupo_aprobado', 'nomvendedor_norm', 'zona'] if col in columnas_disponibles]
+            cartera_para_mostrar = cartera_filtrada.drop(columns=columnas_a_ocultar_existentes, errors='ignore')
+            st.dataframe(cartera_para_mostrar, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+        st.header("⚙️ Herramientas de Gestión")
+        st.subheader("Generar y Enviar Estado de Cuenta por Cliente")
+        lista_clientes = sorted(cartera_filtrada['nombrecliente'].dropna().unique())
+        if not lista_clientes:
+            st.warning("No hay clientes para mostrar con los filtros actuales.")
+        else:
+            cliente_seleccionado = st.selectbox("Busca y selecciona un cliente para gestionar su cuenta:", [""] + lista_clientes, format_func=lambda x: 'Selecciona un cliente...' if x == "" else x, key="cliente_selector")
+
+            if cliente_seleccionado:
+                datos_cliente_seleccionado = cartera_filtrada[cartera_filtrada['nombrecliente'] == cliente_seleccionado].copy()
+                info_cliente_raw = datos_cliente_seleccionado.iloc[0]
+                correo_cliente = info_cliente_raw.get('e_mail', 'Correo no disponible')
+                telefono_raw = str(info_cliente_raw.get('telefono1', ''))
+                telefono_cliente = telefono_raw.split('.')[0] if '.' in telefono_raw else telefono_raw
+                nit_cliente = str(info_cliente_raw.get('nit', 'N/A'))
+                cod_cliente = str(int(info_cliente_raw['cod_cliente'])) if pd.notna(info_cliente_raw['cod_cliente']) else "N/A"
+                
+                portal_link = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
+
+                st.write(f"**Facturas para {cliente_seleccionado}:**")
+                st.dataframe(datos_cliente_seleccionado[['numero', 'fecha_documento', 'fecha_vencimiento', 'dias_vencido', 'importe']], use_container_width=True, hide_index=True)
+
+                total_cartera_cliente = datos_cliente_seleccionado['importe'].sum()
+                facturas_vencidas_cliente = datos_cliente_seleccionado[datos_cliente_seleccionado['dias_vencido'] > 0]
+                total_vencido_cliente = facturas_vencidas_cliente['importe'].sum()
+
+                summary_cols = st.columns(2)
+                summary_cols[0].metric("🔥 Cartera Vencida del Cliente", f"${total_vencido_cliente:,.0f}")
+                summary_cols[1].metric("💰 Cartera Total del Cliente", f"${total_cartera_cliente:,.0f}")
+
+                pdf_bytes = generar_pdf_estado_cuenta(datos_cliente_seleccionado, total_vencido_cliente)
+
+                st.download_button(label="📄 Descargar Estado de Cuenta (PDF)", data=pdf_bytes, file_name=f"Estado_Cuenta_{normalizar_nombre(cliente_seleccionado).replace(' ', '_')}.pdf", mime="application/pdf")
+                st.markdown("---")
+                col_email, col_whatsapp = st.columns(2)
+
+                with col_email:
+                    st.subheader("✉️ Enviar por Correo Electrónico")
+                    email_destino = st.text_input("Verificar o modificar correo:", value=correo_cliente)
+
+                    if st.button("📧 Enviar Correo con Estado de Cuenta"):
+                        if not email_destino or email_destino == 'Correo no disponible' or '@' not in email_destino:
+                            st.error("Dirección de correo no válida o no disponible.")
+                        else:
+                            try:
+                                sender_email = st.secrets["email_credentials"]["sender_email"]
+                                sender_password = st.secrets["email_credentials"]["sender_password"]
+
+                                if total_vencido_cliente > 0:
+                                    dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
+                                    asunto = f"Recordatorio de Saldo Pendiente – {cliente_seleccionado}"
+                                    # --- [INICIO] NUEVA PLANTILLA HTML - CLIENTES CON DEUDA ---
+                                    cuerpo_html = f"""
+                                    <!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><head><title>Recordatorio Amistoso de Saldo Vencido - Ferreinox</title><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style type="text/css">#outlook a {{ padding:0; }}
+                                          body {{ margin:0;padding:0;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%; }}
+                                          table, td {{ border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt; }}
+                                          img {{ border:0;height:auto;line-height:100%; outline:none;text-decoration:none;-ms-interpolation-mode:bicubic; }}
+                                          p {{ display:block;margin:13px 0; }}</style><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" type="text/css"><style type="text/css">@import url(https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap);</style><style type="text/css">@media only screen and (min-width:480px) {{
+                                            .mj-column-per-100 {{ width:100% !important; max-width: 100%; }}
+                                            .mj-column-per-50 {{ width:50% !important; max-width: 50%; }}
+                                          }}</style><style media="screen and (min-width:480px)">.moz-text-html .mj-column-per-100 {{ width:100% !important; max-width: 100%; }}
+                                        .moz-text-html .mj-column-per-50 {{ width:50% !important; max-width: 50%; }}</style><style type="text/css"></style><style type="text/css">.greeting-strong {{
+                                            color: #1e40af;
+                                            font-weight: 600;
+                                          }}
+                                          .whatsapp-button table {{
+                                            width: 100% !important;
+                                          }}</style></head><body style="word-spacing:normal;background-color:#f3f4f6;"><div style="background-color:#f3f4f6;"><div class="email-container" style="background:#FFFFFF;background-color:#FFFFFF;margin:0px auto;border-radius:24px;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#FFFFFF;background-color:#FFFFFF;width:100%;border-radius:24px;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:0;text-align:center;"><div style="background:#1e3a8a;background-color:#1e3a8a;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#1e3a8a;background-color:#1e3a8a;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:30px 30px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="vertical-align:top;" width="100%"><tbody><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:28px;font-weight:700;line-height:1.6;text-align:center;color:#ffffff;">Recordatorio de Saldo Pendiente</div></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#ffffff;background-color:#ffffff;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;background-color:#ffffff;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:40px 40px 20px 40px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="vertical-align:top;" width="100%"><tbody><tr><td align="left" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:18px;font-weight:500;line-height:1.6;text-align:left;color:#374151;">Hola, <span class="greeting-strong">{cliente_seleccionado}</span> 👋</div></td></tr><tr><td align="left" style="font-size:0px;padding:10px 25px;padding-bottom:20px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;line-height:1.6;text-align:left;color:#6b7280;">Te contactamos de parte de <strong>Ferreinox SAS BIC</strong> para recordarte amablemente sobre tu estado de cuenta. Hemos identificado un saldo vencido y te invitamos a revisarlo.</div></td></tr><tr><td align="center" style="font-size:0px;padding:10px 0;word-break:break-word;"><p style="border-top:solid 2px #3b82f6;font-size:1px;margin:0px auto;width:100%;"></p></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#ffffff;background-color:#ffffff;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;background-color:#ffffff;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:10px 40px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="background-color:#fee2e2;border-radius:20px;vertical-align:top;" width="100%"><tbody><tr><td align="center" style="font-size:0px;padding:25px 0 10px 0;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:48px;line-height:1.6;text-align:center;color:#374151;">⚠️</div></td></tr><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:24px;font-weight:700;line-height:1.6;text-align:center;color:#991b1b;">Valor Total Vencido</div></td></tr><tr><td align="center" style="font-size:0px;padding:5px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:40px;font-weight:700;line-height:1.6;text-align:center;color:#991b1b;">${total_vencido_cliente:,.0f}</div></td></tr><tr><td align="center" style="font-size:0px;padding:5px 25px 30px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;line-height:1.6;text-align:center;color:#b91c1c;">Tu factura más antigua tiene <strong>{dias_max_vencido} días</strong> de vencimiento.</div></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#ffffff;background-color:#ffffff;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;background-color:#ffffff;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:20px 40px;text-align:center;"><div class="mj-column-per-50 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:middle;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="background-color:#f8fafc;border-radius:16px;vertical-align:middle;" width="100%"><tbody><tr><td align="left" style="font-size:0px;padding:20px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;font-weight:700;line-height:1.2;text-align:left;color:#334155;">NIT/CC</div><div style="font-family:Inter, -apple-system, sans-serif;font-size:20px;font-weight:700;line-height:1.2;text-align:left;color:#1e293b;">{nit_cliente}</div></td></tr><tr><td align="left" style="font-size:0px;padding:20px;padding-top:0;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;font-weight:700;line-height:1.2;text-align:left;color:#334155;">CÓDIGO INTERNO</div><div style="font-family:Inter, -apple-system, sans-serif;font-size:20px;font-weight:700;line-height:1.2;text-align:left;color:#1e293b;">{cod_cliente}</div></td></tr></tbody></table></div><div class="mj-column-per-50 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:middle;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="vertical-align:middle;" width="100%"><tbody><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;font-weight:500;line-height:1.6;text-align:center;color:#475569;">Usa estos datos en nuestro portal de pagos.</div></td></tr><tr><td align="center" vertical-align="middle" style="font-size:0px;padding:10px 25px;word-break:break-word;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:separate;line-height:100%;"><tr><td align="center" bgcolor="#16a34a" role="presentation" style="border:none;border-radius:12px;cursor:auto;mso-padding-alt:16px 25px;background:#16a34a;" valign="middle"><a href="{portal_link}" style="display:inline-block;background:#16a34a;color:#ffffff;font-family:Inter, -apple-system, sans-serif;font-size:16px;font-weight:600;line-height:120%;margin:0;text-decoration:none;text-transform:none;padding:16px 25px;mso-padding-alt:0px;border-radius:12px;" target="_blank">🚀 Realizar Pago</a></td></tr></table></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#ffffff;background-color:#ffffff;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;background-color:#ffffff;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:20px 40px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%"><tbody><tr><td style="background-color:#f8fafc;border-left:5px solid #3b82f6;border-radius:16px;vertical-align:top;padding:20px;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%"><tbody><tr><td align="left" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;font-weight:500;line-height:1.6;text-align:left;color:#475569;">💡 <strong>Nota:</strong> Si ya realizaste el pago, por favor omite este mensaje. Para tu control, hemos adjuntado tu estado de cuenta en PDF.</div></td></tr></tbody></table></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#1f2937;background-color:#1f2937;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#1f2937;background-color:#1f2937;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:30px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="vertical-align:top;" width="100%"><tbody><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:18px;font-weight:600;line-height:1.6;text-align:center;color:#ffffff;">Área de Cartera y Recaudos</div></td></tr><tr><td align="center" style="font-size:0px;padding:10px 25px;padding-bottom:20px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;line-height:1.6;text-align:center;color:#e5e7eb;"><strong>Líneas de Atención WhatsApp</strong></div></td></tr><tr><td align="center" vertical-align="middle" class="whatsapp-button" style="font-size:0px;padding:10px 25px;word-break:break-word;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:separate;line-height:100%;"><tr><td align="center" bgcolor="#25d366" role="presentation" style="border:none;border-radius:12px;cursor:auto;mso-padding-alt:10px 25px;background:#25d366;" valign="middle"><a href="https://wa.me/573165219904" style="display:inline-block;background:#25d366;color:#ffffff;font-family:Inter, -apple-system, sans-serif;font-size:13px;font-weight:500;line-height:120%;margin:0;text-decoration:none;text-transform:none;padding:10px 25px;mso-padding-alt:0px;border-radius:12px;" target="_blank">📱 Armenia: 316 5219904</a></td></tr></table></td></tr><tr><td align="center" vertical-align="middle" class="whatsapp-button" style="font-size:0px;padding:10px 25px;padding-top:12px;word-break:break-word;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:separate;line-height:100%;"><tr><td align="center" bgcolor="#25d366" role="presentation" style="border:none;border-radius:12px;cursor:auto;mso-padding-alt:10px 25px;background:#25d366;" valign="middle"><a href="https://wa.me/573108501359" style="display:inline-block;background:#25d366;color:#ffffff;font-family:Inter, -apple-system, sans-serif;font-size:13px;font-weight:500;line-height:120%;margin:0;text-decoration:none;text-transform:none;padding:10px 25px;mso-padding-alt:0px;border-radius:12px;" target="_blank">📱 Manizales: 310 8501359</a></td></tr></table></td></tr><tr><td align="center" vertical-align="middle" class="whatsapp-button" style="font-size:0px;padding:10px 25px;padding-top:12px;word-break:break-word;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:separate;line-height:100%;"><tr><td align="center" bgcolor="#25d366" role="presentation" style="border:none;border-radius:12px;cursor:auto;mso-padding-alt:10px 25px;background:#25d366;" valign="middle"><a href="https://wa.me/573142087169" style="display:inline-block;background:#25d366;color:#ffffff;font-family:Inter, -apple-system, sans-serif;font-size:13px;font-weight:500;line-height:120%;margin:0;text-decoration:none;text-transform:none;padding:10px 25px;mso-padding-alt:0px;border-radius:12px;" target="_blank">📱 Pereira: 314 2087169</a></td></tr></table></td></tr><tr><td align="center" style="font-size:0px;padding:30px 0 20px 0;word-break:break-word;"><p style="border-top:solid 1px #4b5563;font-size:1px;margin:0px auto;width:100%;"></p></td></tr><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:14px;line-height:1.6;text-align:center;color:#9ca3af;">© 2025 Ferreinox SAS BIC - Todos los derechos reservados</div></td></tr></tbody></table></div></td></tr></tbody></table></div></td></tr></tbody></table></div></div></body></html>
+                                    """
+                                    # --- [FIN] NUEVA PLANTILLA HTML - CLIENTES CON DEUDA ---
+                                else:
+                                    asunto = f"Tu Estado de Cuenta Actualizado - {cliente_seleccionado}"
+                                    # --- [INICIO] NUEVA PLANTILLA HTML - CLIENTES AL DÍA ---
+                                    cuerpo_html = f"""
+                                    <!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><head><title>Tu Estado de Cuenta Actualizado - Ferreinox</title><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style type="text/css">#outlook a {{ padding:0; }}
+                                          body {{ margin:0;padding:0;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%; }}
+                                          table, td {{ border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt; }}
+                                          img {{ border:0;height:auto;line-height:100%; outline:none;text-decoration:none;-ms-interpolation-mode:bicubic; }}
+                                          p {{ display:block;margin:13px 0; }}</style><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" type="text/css"><style type="text/css">@import url(https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap);</style><style type="text/css">@media only screen and (min-width:480px) {{
+                                            .mj-column-per-100 {{ width:100% !important; max-width: 100%; }}
+                                          }}</style><style media="screen and (min-width:480px)">.moz-text-html .mj-column-per-100 {{ width:100% !important; max-width: 100%; }}</style><style type="text/css"></style><style type="text/css">.greeting-strong {{
+                                            color: #1e40af;
+                                            font-weight: 600;
+                                          }}
+                                          .whatsapp-button table {{
+                                            /* Hacemos que los botones de WhatsApp ocupen todo el ancho */
+                                            width: 100% !important;
+                                          }}</style></head><body style="word-spacing:normal;background-color:#f3f4f6;"><div style="background-color:#f3f4f6;"><div class="email-container" style="background:#FFFFFF;background-color:#FFFFFF;margin:0px auto;border-radius:24px;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#FFFFFF;background-color:#FFFFFF;width:100%;border-radius:24px;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:0;text-align:center;"><div style="background:#1e3a8a;background-color:#1e3a8a;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#1e3a8a;background-color:#1e3a8a;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:30px 30px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="vertical-align:top;" width="100%"><tbody><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:28px;font-weight:700;line-height:1.6;text-align:center;color:#ffffff;">Estado de Cuenta Actualizado</div></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#ffffff;background-color:#ffffff;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;background-color:#ffffff;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:40px 40px 20px 40px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="vertical-align:top;" width="100%"><tbody><tr><td align="left" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:18px;font-weight:500;line-height:1.6;text-align:left;color:#374151;">Hola, <span class="greeting-strong">{cliente_seleccionado}</span> ✨</div></td></tr><tr><td align="left" style="font-size:0px;padding:10px 25px;padding-bottom:20px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;line-height:1.6;text-align:left;color:#6b7280;">Recibe un cordial saludo del equipo de <strong>Ferreinox SAS BIC</strong>.</div></td></tr><tr><td align="center" style="font-size:0px;padding:10px 0;word-break:break-word;"><p style="border-top:solid 2px #3b82f6;font-size:1px;margin:0px auto;width:100%;"></p></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#ffffff;background-color:#ffffff;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;background-color:#ffffff;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:10px 40px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="background-color:#10b981;border-radius:20px;vertical-align:top;" width="100%"><tbody><tr><td align="center" style="font-size:0px;padding:25px 0 10px 0;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:48px;line-height:1.6;text-align:center;color:#374151;">🎉</div></td></tr><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:24px;font-weight:700;line-height:1.6;text-align:center;color:#ffffff;">¡Felicitaciones!</div></td></tr><tr><td align="center" style="font-size:0px;padding:5px 25px 30px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;line-height:1.6;text-align:center;color:#ffffff;">Tu cuenta no presenta saldos vencidos.<br>Agradecemos enormemente tu puntualidad y excelente gestión de pagos.</div></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#ffffff;background-color:#ffffff;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;background-color:#ffffff;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:20px 40px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%"><tbody><tr><td style="background-color:#f8fafc;border-left:5px solid #3b82f6;border-radius:16px;vertical-align:top;padding:20px;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%"><tbody><tr><td align="left" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;font-weight:500;line-height:1.6;text-align:left;color:#475569;">📄 Para tu control y referencia, hemos adjuntado tu estado de cuenta completo en formato PDF a este correo electrónico.</div></td></tr></tbody></table></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#1f2937;background-color:#1f2937;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#1f2937;background-color:#1f2937;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:30px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="vertical-align:top;" width="100%"><tbody><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:18px;font-weight:600;line-height:1.6;text-align:center;color:#ffffff;">Área de Cartera y Recaudos</div></td></tr><tr><td align="center" style="font-size:0px;padding:10px 25px;padding-bottom:20px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;line-height:1.6;text-align:center;color:#e5e7eb;"><strong>Líneas de Atención WhatsApp</strong></div></td></tr><tr><td align="center" vertical-align="middle" class="whatsapp-button" style="font-size:0px;padding:10px 25px;word-break:break-word;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:separate;line-height:100%;"><tr><td align="center" bgcolor="#25d366" role="presentation" style="border:none;border-radius:12px;cursor:auto;mso-padding-alt:10px 25px;background:#25d366;" valign="middle"><a href="https://wa.me/573165219904" style="display:inline-block;background:#25d366;color:#ffffff;font-family:Inter, -apple-system, sans-serif;font-size:13px;font-weight:500;line-height:120%;margin:0;text-decoration:none;text-transform:none;padding:10px 25px;mso-padding-alt:0px;border-radius:12px;" target="_blank">📱 Armenia: 316 5219904</a></td></tr></table></td></tr><tr><td align="center" vertical-align="middle" class="whatsapp-button" style="font-size:0px;padding:10px 25px;padding-top:12px;word-break:break-word;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:separate;line-height:100%;"><tr><td align="center" bgcolor="#25d366" role="presentation" style="border:none;border-radius:12px;cursor:auto;mso-padding-alt:10px 25px;background:#25d366;" valign="middle"><a href="https://wa.me/573108501359" style="display:inline-block;background:#25d366;color:#ffffff;font-family:Inter, -apple-system, sans-serif;font-size:13px;font-weight:500;line-height:120%;margin:0;text-decoration:none;text-transform:none;padding:10px 25px;mso-padding-alt:0px;border-radius:12px;" target="_blank">📱 Manizales: 310 8501359</a></td></tr></table></td></tr><tr><td align="center" vertical-align="middle" class="whatsapp-button" style="font-size:0px;padding:10px 25px;padding-top:12px;word-break:break-word;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:separate;line-height:100%;"><tr><td align="center" bgcolor="#25d366" role="presentation" style="border:none;border-radius:12px;cursor:auto;mso-padding-alt:10px 25px;background:#25d366;" valign="middle"><a href="https://wa.me/573142087169" style="display:inline-block;background:#25d366;color:#ffffff;font-family:Inter, -apple-system, sans-serif;font-size:13px;font-weight:500;line-height:120%;margin:0;text-decoration:none;text-transform:none;padding:10px 25px;mso-padding-alt:0px;border-radius:12px;" target="_blank">📱 Pereira: 314 2087169</a></td></tr></table></td></tr><tr><td align="center" style="font-size:0px;padding:30px 0 20px 0;word-break:break-word;"><p style="border-top:solid 1px #4b5563;font-size:1px;margin:0px auto;width:100%;"></p></td></tr><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:14px;line-height:1.6;text-align:center;color:#9ca3af;">© 2025 Ferreinox SAS BIC - Todos los derechos reservados</div></td></tr></tbody></table></div></td></tr></tbody></table></div></td></tr></tbody></table></div></div></body></html>
+                                    """
+                                    # --- [FIN] NUEVA PLANTILLA HTML - CLIENTES AL DÍA ---
+                                
+                                with st.spinner(f"Enviando correo a {email_destino}..."):
+                                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                                        tmp.write(pdf_bytes)
+                                        tmp_path = tmp.name
+
+                                    try:
+                                        yag = yagmail.SMTP(sender_email, sender_password)
+                                        
+                                        contenidos_correo = [cuerpo_html, tmp_path]
+                                        
+                                        yag.send(
+                                            to=email_destino,
+                                            subject=asunto,
+                                            contents=contenidos_correo
+                                        )
+                                        st.success(f"¡Correo enviado exitosamente a {email_destino}!")
+                                    
+                                    finally:
+                                        if os.path.exists(tmp_path):
+                                            os.remove(tmp_path)
+                                
+                            except Exception as e:
+                                st.error(f"Error al enviar el correo: {e}")
+
+                with col_whatsapp:
+                    st.subheader("📲 Enviar por WhatsApp")
+                    numero_completo_para_mostrar = f"+57{telefono_cliente}" if telefono_cliente else "+57"
+                    numero_destino_wa = st.text_input("Verificar o modificar número de WhatsApp:", value=numero_completo_para_mostrar, key="whatsapp_input")
+
+                    if not facturas_vencidas_cliente.empty:
+                        total_vencido_cliente_wa = facturas_vencidas_cliente['importe'].sum()
+                        dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
+                        mensaje_whatsapp = (
+                            f"👋 ¡Hola {cliente_seleccionado}! Te saludamos desde Ferreinox SAS BIC.\n\n"
+                            f"Te recordamos que tienes un saldo vencido de *${total_vencido_cliente_wa:,.0f}*. La factura más antigua tiene *{dias_max_vencido} días* de vencida.\n\n"
+                            f"Para ponerte al día, puedes usar nuestro Portal de Pagos:\n"
+                            f"🔗 {portal_link}\n\n"
+                            f"Tus datos de acceso son:\n"
+                            f"👤 *Usuario (NIT):* {nit_cliente}\n"
+                            f"🔑 *Código Único:* {cod_cliente}\n\n"
+                            f"Hemos enviado el estado de cuenta detallado a tu correo. ¡Agradecemos tu pronta gestión!"
+                        )
+                    else:
+                        total_cartera_cliente_wa = datos_cliente_seleccionado['importe'].sum()
+                        mensaje_whatsapp = (
+                            f"👋 ¡Hola {cliente_seleccionado}! Te saludamos desde Ferreinox SAS BIC.\n\n"
+                            f"¡Felicitaciones! Tu cuenta está al día. Tu saldo total es de *${total_cartera_cliente_wa:,.0f}*.\n\n"
+                            f"Hemos enviado tu estado de cuenta al correo para tu referencia.\n\n"
+                            f"¡Gracias por tu confianza!"
+                        )
+
+                    mensaje_codificado = quote(mensaje_whatsapp)
+                    numero_limpio = re.sub(r'\D', '', numero_destino_wa)
+                    if numero_limpio:
+                        url_whatsapp = f"https://wa.me/{numero_limpio}?text={mensaje_codificado}"
+                        st.markdown(f'<a href="{url_whatsapp}" target="_blank" class="button">📱 Enviar a WhatsApp ({numero_destino_wa})</a>', unsafe_allow_html=True)
+                    else:
+                        st.warning("Ingresa un número de teléfono válido para habilitar el botón de WhatsApp.")
+
+if __name__ == '__main__':
+    main()
