@@ -1,6 +1,6 @@
 # ======================================================================================
 # ARCHIVO: Cuadre_Diario_Caja_Final.py
-# VERSIÓN: Con Reporte Gerencial por Correo (Diseño Profesional Corregido)
+# VERSIÓN: Con Reporte Gerencial por Correo (Diseño Profesional Corregido y Funcional)
 # ======================================================================================
 import streamlit as st
 import gspread
@@ -446,10 +446,7 @@ def format_cop(value):
     """
     if not isinstance(value, (int, float)):
         return "$ 0"
-    # Formatea el número con comas como separadores de miles y sin decimales.
-    formatted_value = f"{value:,.0f}"
-    # Reemplaza las comas por puntos, como es común en Colombia.
-    formatted_value = formatted_value.replace(",", ".")
+    formatted_value = f"{value:,.0f}".replace(",", ".")
     return f"$ {formatted_value}"
 
 
@@ -458,12 +455,8 @@ def generate_professional_email_body(records, start_date, end_date, selected_sto
     Genera un cuerpo de correo HTML profesional y visualmente atractivo.
     CORREGIDO para máxima compatibilidad y diseño profesional.
     """
-    # --- 1. CÁLCULO DE TOTALES CONSOLIDADOS DEL PERIODO ---
-    total_ingresos = 0
-    total_ventas_tarjeta = 0
-    total_gastos = 0
-    total_retiros_y_consignaciones = 0
-
+    # --- 1. CÁLCULO DE TOTALES ---
+    total_ingresos, total_ventas_tarjeta, total_gastos, total_retiros_y_consignaciones = 0, 0, 0, 0
     for record in records:
         total_ingresos += float(record.get('Venta_Total_Dia', 0))
         total_ventas_tarjeta += sum(float(t.get('Valor', 0)) for t in json.loads(record.get('Tarjetas', '[]')))
@@ -476,24 +469,19 @@ def generate_professional_email_body(records, start_date, end_date, selected_sto
     balance_neto = total_ingresos - total_egresos
     total_ventas_efectivo = total_ingresos - total_ventas_tarjeta
     
-    # --- 3. FORMATEO DE FECHAS Y TEXTOS ---
-    meses = {
-        1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
-        7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
-    }
-
+    # --- 3. FORMATEO DE TEXTOS ---
+    meses = {1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"}
     if start_date == end_date:
         report_date_str = f"{start_date.day} de {meses[start_date.month]} de {start_date.year}"
         subtitle_text = f"Reporte para: {selected_store}"
     else:
         report_date_str = f"Del {start_date.strftime('%d/%m/%Y')} al {end_date.strftime('%d/%m/%Y')}"
         subtitle_text = f"Reporte Consolidado para: {selected_store}"
-    
     report_time_str = datetime.now().strftime("%d/%m/%Y a las %H:%M")
     
     # --- 4. CONSTRUCCIÓN DEL HTML ---
-    # NOTA: Este HTML está diseñado para ser robusto en clientes de correo. Usa tablas para el layout.
     # Para usar llaves {} de CSS dentro de un f-string de Python, se deben duplicar: {{ }}
+    # La indentación del string se ha eliminado para evitar errores de parsing.
     html_body = f"""
 <!DOCTYPE html>
 <html lang="es">
@@ -502,190 +490,188 @@ def generate_professional_email_body(records, start_date, end_date, selected_sto
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Resumen Gerencial de Caja</title>
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
-    body {{
-        margin: 0;
-        padding: 0;
-        background-color: #f8f9fa;
-        font-family: 'Roboto', sans-serif;
-    }}
-    .email-container {{
-        max-width: 680px;
-        margin: 20px auto;
-        background-color: #ffffff;
-        border-radius: 12px;
-        overflow: hidden;
-        border: 1px solid #dee2e6;
-    }}
-    .header {{
-        background: linear-gradient(90deg, #023e8a, #0077b6);
-        padding: 32px;
-        text-align: center;
-        color: white;
-    }}
-    .header h1 {{
-        font-size: 28px;
-        font-weight: 700;
-        margin: 0 0 8px 0;
-    }}
-    .header .subtitle {{
-        font-size: 16px;
-        font-weight: 400;
-        color: #caf0f8;
-        margin: 0;
-    }}
-    .date-badge {{
-        background-color: rgba(255, 255, 255, 0.15);
-        color: #ffffff;
-        padding: 8px 18px;
-        border-radius: 20px;
-        font-size: 14px;
-        font-weight: 500;
-        margin-top: 20px;
-        display: inline-block;
-    }}
-    .content {{
-        padding: 32px;
-    }}
-    .kpi-card {{
-        background-color: #f8f9fa;
-        border: 1px solid #e9ecef;
-        border-radius: 10px;
-        padding: 20px;
-        text-align: center;
-    }}
-    .kpi-card h3 {{
-        color: #495057;
-        font-size: 14px;
-        font-weight: 500;
-        margin: 0 0 8px 0;
-        text-transform: uppercase;
-        letter-spacing: 0.8px;
-    }}
-    .kpi-card .amount {{
-        color: #212529;
-        font-size: 32px;
-        font-weight: 700;
-        margin: 0;
-        line-height: 1.2;
-    }}
-    .details-section h2 {{
-        color: #023e8a;
-        font-size: 20px;
-        font-weight: 700;
-        margin: 0 0 16px 0;
-        padding-bottom: 10px;
-        border-bottom: 2px solid #0077b6;
-    }}
-    .detail-table {{
-        width: 100%;
-        border-collapse: collapse;
-    }}
-    .detail-table tr {{
-        border-bottom: 1px solid #e9ecef;
-    }}
-    .detail-table tr:last-child {{
-        border-bottom: none;
-    }}
-    .detail-table td {{
-        padding: 16px 4px;
-        font-size: 15px;
-    }}
-    .detail-label {{
-        color: #6c757d;
-    }}
-    .detail-value {{
-        color: #212529;
-        font-weight: 500;
-        text-align: right;
-    }}
-    .detail-value.positive {{ color: #007200; }}
-    .detail-value.negative {{ color: #d00000; }}
-    .final-balance-card {{
-        background-color: #023e8a;
-        border-radius: 12px;
-        padding: 24px;
-        text-align: center;
-        color: #ffffff;
-    }}
-    .final-balance-card h3 {{
-        font-size: 16px;
-        font-weight: 500;
-        margin: 0 0 8px 0;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        opacity: 0.8;
-    }}
-    .final-balance-card .amount {{
-        font-size: 40px;
-        font-weight: 700;
-        margin: 0 0 4px 0;
-    }}
-    .footer {{
-        padding: 24px;
-        text-align: center;
-        font-size: 12px;
-        color: #6c757d;
-        background-color: #f1f3f5;
-    }}
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
+body {{
+margin: 0;
+padding: 0;
+background-color: #f8f9fa;
+font-family: 'Roboto', sans-serif;
+}}
+.email-container {{
+max-width: 680px;
+margin: 20px auto;
+background-color: #ffffff;
+border-radius: 12px;
+overflow: hidden;
+border: 1px solid #dee2e6;
+}}
+.header {{
+background: linear-gradient(90deg, #023e8a, #0077b6);
+padding: 32px;
+text-align: center;
+color: white;
+}}
+.header h1 {{
+font-size: 28px;
+font-weight: 700;
+margin: 0 0 8px 0;
+}}
+.header .subtitle {{
+font-size: 16px;
+font-weight: 400;
+color: #caf0f8;
+margin: 0;
+}}
+.date-badge {{
+background-color: rgba(255, 255, 255, 0.15);
+color: #ffffff;
+padding: 8px 18px;
+border-radius: 20px;
+font-size: 14px;
+font-weight: 500;
+margin-top: 20px;
+display: inline-block;
+}}
+.content {{
+padding: 32px;
+}}
+.kpi-card {{
+background-color: #f8f9fa;
+border: 1px solid #e9ecef;
+border-radius: 10px;
+padding: 20px;
+text-align: center;
+}}
+.kpi-card h3 {{
+color: #495057;
+font-size: 14px;
+font-weight: 500;
+margin: 0 0 8px 0;
+text-transform: uppercase;
+letter-spacing: 0.8px;
+}}
+.kpi-card .amount {{
+color: #212529;
+font-size: 32px;
+font-weight: 700;
+margin: 0;
+line-height: 1.2;
+}}
+.details-section h2 {{
+color: #023e8a;
+font-size: 20px;
+font-weight: 700;
+margin: 0 0 16px 0;
+padding-bottom: 10px;
+border-bottom: 2px solid #0077b6;
+}}
+.detail-table {{
+width: 100%;
+border-collapse: collapse;
+}}
+.detail-table tr {{
+border-bottom: 1px solid #e9ecef;
+}}
+.detail-table tr:last-child {{
+border-bottom: none;
+}}
+.detail-table td {{
+padding: 16px 4px;
+font-size: 15px;
+}}
+.detail-label {{
+color: #6c757d;
+}}
+.detail-value {{
+color: #212529;
+font-weight: 500;
+text-align: right;
+}}
+.detail-value.positive {{ color: #007200; }}
+.detail-value.negative {{ color: #d00000; }}
+.final-balance-card {{
+background-color: #023e8a;
+border-radius: 12px;
+padding: 24px;
+text-align: center;
+color: #ffffff;
+}}
+.final-balance-card h3 {{
+font-size: 16px;
+font-weight: 500;
+margin: 0 0 8px 0;
+text-transform: uppercase;
+letter-spacing: 1px;
+opacity: 0.8;
+}}
+.final-balance-card .amount {{
+font-size: 40px;
+font-weight: 700;
+margin: 0 0 4px 0;
+}}
+.footer {{
+padding: 24px;
+text-align: center;
+font-size: 12px;
+color: #6c757d;
+background-color: #f1f3f5;
+}}
 </style>
 </head>
 <body>
 <div class="email-container">
-    <div class="header">
-        <h1>Resumen Gerencial de Caja</h1>
-        <p class="subtitle">{subtitle_text}</p>
-        <div class="date-badge">{report_date_str}</div>
-    </div>
-    <div class="content">
-        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 32px;">
-            <tr>
-                <td width="49%" style="padding-right: 10px;">
-                    <div class="kpi-card">
-                        <h3>📈 Ingresos Totales</h3>
-                        <p class="amount">{format_cop(total_ingresos)}</p>
-                    </div>
-                </td>
-                <td width="49%" style="padding-left: 10px;">
-                    <div class="kpi-card">
-                        <h3>📉 Egresos Totales</h3>
-                        <p class="amount">{format_cop(total_egresos)}</p>
-                    </div>
-                </td>
-            </tr>
-        </table>
-
-        <div class="details-section">
-            <h2>Detalle de Movimientos</h2>
-            <table class="detail-table" role="presentation" border="0" cellpadding="0" cellspacing="0">
-                <tr>
-                    <td class="detail-label">Ventas en Efectivo</td>
-                    <td class="detail-value positive">{format_cop(total_ventas_efectivo)}</td>
-                </tr>
-                <tr>
-                    <td class="detail-label">Ventas con Tarjeta</td>
-                    <td class="detail-value positive">{format_cop(total_ventas_tarjeta)}</td>
-                </tr>
-                <tr>
-                    <td class="detail-label">Gastos Operativos</td>
-                    <td class="detail-value negative">-{format_cop(total_gastos)}</td>
-                </tr>
-                <tr>
-                    <td class="detail-label">Retiros y Consignaciones</td>
-                    <td class="detail-value negative">-{format_cop(total_retiros_y_consignaciones)}</td>
-                </tr>
-            </table>
-        </div>
-
-        <div class="final-balance-card" style="margin-top: 32px;">
-            <h3>Balance Neto del Periodo</h3>
-            <p class="amount">{format_cop(balance_neto)}</p>
-        </div>
-    </div>
-    <div class="footer">
-        <p>Este reporte fue generado automáticamente el {report_time_str}.<br>
-        <strong>Sistema de Gestión Financiera</strong></p>
-    </div>
+<div class="header">
+<h1>Resumen Gerencial de Caja</h1>
+<p class="subtitle">{subtitle_text}</p>
+<div class="date-badge">{report_date_str}</div>
+</div>
+<div class="content">
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 32px;">
+<tr>
+<td width="49%" style="padding-right: 10px;">
+<div class="kpi-card">
+<h3>📈 Ingresos Totales</h3>
+<p class="amount">{format_cop(total_ingresos)}</p>
+</div>
+</td>
+<td width="49%" style="padding-left: 10px;">
+<div class="kpi-card">
+<h3>📉 Egresos Totales</h3>
+<p class="amount">{format_cop(total_egresos)}</p>
+</div>
+</td>
+</tr>
+</table>
+<div class="details-section">
+<h2>Detalle de Movimientos</h2>
+<table class="detail-table" role="presentation" border="0" cellpadding="0" cellspacing="0">
+<tr>
+<td class="detail-label">Ventas en Efectivo</td>
+<td class="detail-value positive">{format_cop(total_ventas_efectivo)}</td>
+</tr>
+<tr>
+<td class="detail-label">Ventas con Tarjeta</td>
+<td class="detail-value positive">{format_cop(total_ventas_tarjeta)}</td>
+</tr>
+<tr>
+<td class="detail-label">Gastos Operativos</td>
+<td class="detail-value negative">-{format_cop(total_gastos)}</td>
+</tr>
+<tr>
+<td class="detail-label">Retiros y Consignaciones</td>
+<td class="detail-value negative">-{format_cop(total_retiros_y_consignaciones)}</td>
+</tr>
+</table>
+</div>
+<div class="final-balance-card" style="margin-top: 32px;">
+<h3>Balance Neto del Periodo</h3>
+<p class="amount">{format_cop(balance_neto)}</p>
+</div>
+</div>
+<div class="footer">
+<p>Este reporte fue generado automáticamente el {report_time_str}.<br>
+<strong>Sistema de Gestión Financiera</strong></p>
+</div>
 </div>
 </body>
 </html>
@@ -725,16 +711,17 @@ def send_summary_email(registros_ws, start_date, end_date, selected_store, recip
         st.warning("No se encontraron registros en el rango de fechas y tienda seleccionados para enviar el correo.")
         return
 
-    # Llamada a la NUEVA función para generar el cuerpo del correo
     email_body = generate_professional_email_body(filtered_records, start_date, end_date, selected_store)
     subject = f"Resumen de Cuadre de Caja - {selected_store} - {start_date.strftime('%d/%m')} a {end_date.strftime('%d/%m')}"
 
     try:
         yag = yagmail.SMTP(sender_email, sender_password)
+        # --- ¡ESTA ES LA LÍNEA CORREGIDA! ---
+        # Se envía el HTML como el primer elemento de una lista para evitar el auto-formateo.
         yag.send(
             to=recipient_email,
             subject=subject,
-            contents=email_body
+            contents=[email_body] 
         )
         st.success(f"¡Resumen gerencial enviado exitosamente a {recipient_email}!")
     except smtplib.SMTPAuthenticationError:
