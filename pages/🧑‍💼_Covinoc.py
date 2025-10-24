@@ -1,5 +1,5 @@
 # ======================================================================================
-# ARCHIVO: Pagina_Covinoc.py (v6 - Corrección de KeyError en Merge)
+# ARCHIVO: Pagina_Covinoc.py (v5 - Lógica de Estados y Pestañas Múltiples)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -145,16 +145,10 @@ def cargar_reporte_transacciones_dropbox():
             
             df = pd.read_excel(
                 BytesIO(res.content),
-                dtype={'DOCUMENTO': str, 'TITULO_VALOR': str, 'ESTADO': str}
+                dtype={'DOCUMENTO': str, 'TITULO_VALOR': str, 'ESTADO': str} # Forzamos columnas clave a string
             )
             
             df.columns = [normalizar_nombre(c).lower().replace(' ', '_') for c in df.columns]
-            
-            # Asegurarse que la columna 'saldo' exista y sea numérica
-            if 'saldo' not in df.columns:
-                df['saldo'] = 0
-            df['saldo'] = pd.to_numeric(df['saldo'], errors='coerce').fillna(0)
-
 
             return df
     except Exception as e:
@@ -247,20 +241,27 @@ def cargar_y_comparar_datos():
     df_reclamadas = df_covinoc[df_covinoc['estado_norm'] == 'RECLAMADA'].copy()
     
     # --- Tab 1: Facturas a Subir ---
+    # 1. Obtener lista de clientes protegidos (todos los NITs que coincidieron en Covinoc)
     nits_protegidos = df_covinoc['nit_norm_cartera'].dropna().unique()
+    # 2. Filtrar cartera a solo esos clientes
     df_cartera_protegida = df_cartera[df_cartera['nit_norm_cartera'].isin(nits_protegidos)].copy()
+    # 3. Obtener *todas* las claves únicas que ya existen en Covinoc
     set_claves_covinoc_total = set(df_covinoc['clave_unica'].dropna().unique())
+    # 4. Las facturas a subir son las de clientes protegidos que NO están en Covinoc
     df_a_subir = df_cartera_protegida[
         ~df_cartera_protegida['clave_unica'].isin(set_claves_covinoc_total)
     ].copy()
 
     # --- Tab 2: Exoneraciones ---
+    # 1. Filtrar Covinoc a solo facturas "comparables" (excluir cerradas)
     estados_cerrados = ['EFECTIVA', 'NEGADA']
     df_covinoc_comparable = df_covinoc[~df_covinoc['estado_norm'].isin(estados_cerrados)].copy()
+    # 2. Obtener *todas* las claves únicas que existen en Cartera
     set_claves_cartera_total = set(df_cartera['clave_unica'].dropna().unique())
+    # 3. Las facturas a exonerar son las "comparables" de Covinoc que NO están en Cartera
     df_a_exonerar = df_covinoc_comparable[
         (~df_covinoc_comparable['clave_unica'].isin(set_claves_cartera_total)) &
-        (df_covinoc_comparable['nit_norm_cartera'].notna())
+        (df_covinoc_comparable['nit_norm_cartera'].notna()) # Solo las que tienen un NIT coincidente
     ].copy()
 
     # --- Intersección para Tabs 3 y 5 ---
@@ -271,33 +272,64 @@ def cargar_y_comparar_datos():
         how='inner', 
         suffixes=('_cartera', '_covinoc') 
     )
+    
+    # ===================== INICIO DE LA CORRECCIÓN =====================
+    # El bloque 'rename' original (líneas 276-281) ha sido reemplazado.
+    
+    # --- CORRECCIÓN: Renombrar columnas no colisionantes ---
+    # pd.merge(suffixes=...) solo añade sufijos a columnas que están en *ambos* DFs
+    # (p.ej. 'factura_norm' se vuelve 'factura_norm_cartera' y 'factura_norm_covinoc').
+    # Las columnas únicas (p.ej. 'importe' de cartera, 'saldo' de covinoc) no reciben sufijo.
+    # El código más adelante espera que algunas de estas SÍ tengan sufijo,
+    # mientras que otras (como 'dias_vencido') las espera sin sufijo.
+    # Renombramos manualmente solo las columnas que el código espera con sufijo.
+
+    columnas_a_renombrar = {
+        # De df_cartera
+        'importe': 'importe_cartera',         # Usado en Tab 5
+        'nombrecliente': 'nombrecliente_cartera', # Usado en Tab 3 y 5
+        'nit': 'nit_cartera',                 # Usado en Tab 3 y 5
+        'nomvendedor': 'nomvendedor_cartera', # Usado en Tab 3
+
+        # De df_covinoc
+        'saldo': 'saldo_covinoc',             # Usado en Tab 3 y 5
+        'estado': 'estado_covinoc',           # Usado en Tab 3 y 5
+        'estado_norm': 'estado_norm_covinoc'  # Usado en Tab 5
+    }
+
+    # Renombramos solo las que existen en el DF fusionado
+    cols_existentes = df_interseccion.columns
+    renombres_aplicables = {k: v for k, v in columnas_a_renombrar.items() if k in cols_existentes}
+    df_interseccion.rename(columns=renombres_aplicables, inplace=True)
+    
+    # Las columnas 'dias_vencido' y 'fecha_vencimiento' (de cartera)
+    # se usan sin sufijo más adelante (Tab 3), lo cual ahora es correcto.
+    
+    # ====================== FIN DE LA CORRECCIÓN =======================
+
 
     # --- Tab 3: Aviso de No Pago ---
+    # Facturas en intersección CON VENCIMIENTO ENTRE 55 y 58 DÍAS
     df_aviso_no_pago = df_interseccion[
         df_interseccion['dias_vencido'].between(55, 58)
     ].copy()
 
     # --- Tab 5: Ajustes por Abonos ---
-    
-    # ***** INICIO DE LA CORRECCIÓN *****
-    # Las columnas se llaman 'importe' y 'saldo', no 'importe_cartera' y 'saldo_covinoc'
-    
-    # 1. Convertir 'importe' y 'saldo' a numérico para comparación
-    # (saldo ya se convirtió al cargar df_covinoc, pero lo aseguramos para df_interseccion)
-    # (importe ya se convirtió al procesar df_cartera, pero lo aseguramos para df_interseccion)
-    df_interseccion['importe'] = pd.to_numeric(df_interseccion['importe'], errors='coerce').fillna(0)
-    df_interseccion['saldo'] = pd.to_numeric(df_interseccion['saldo'], errors='coerce').fillna(0)
+    # 1. Convertir 'importe_cartera' y 'saldo_covinoc' a numérico para comparación
+    # (Esta línea ahora funciona gracias a la corrección anterior)
+    df_interseccion['importe_cartera'] = pd.to_numeric(df_interseccion['importe_cartera'], errors='coerce').fillna(0)
+    df_interseccion['saldo_covinoc'] = pd.to_numeric(df_interseccion['saldo_covinoc'], errors='coerce').fillna(0)
     
     # 2. Facturas en intersección, 'Exonerada Parcial' Y saldos diferentes
+    # (Esta línea ahora funciona gracias a la corrección anterior)
     df_ajustes = df_interseccion[
         (df_interseccion['estado_norm_covinoc'] == 'EXONERADA PARCIAL') & 
-        (df_interseccion['importe'] != df_interseccion['saldo'])
+        (df_interseccion['importe_cartera'] != df_interseccion['saldo_covinoc'])
     ].copy()
     
     # 3. Calcular la diferencia
-    df_ajustes['diferencia'] = df_ajustes['importe'] - df_ajustes['saldo']
-    
-    # ***** FIN DE LA CORRECCIÓN *****
+    # (Esta línea ahora funciona gracias a la corrección anterior)
+    df_ajustes['diferencia'] = df_ajustes['importe_cartera'] - df_ajustes['saldo_covinoc']
 
     return df_a_subir, df_a_exonerar, df_aviso_no_pago, df_reclamadas, df_ajustes
 
@@ -421,24 +453,14 @@ def main():
             st.subheader("Facturas para Aviso de No Pago")
             st.markdown("Facturas que están **en ambos reportes** Y tienen un vencimiento **entre 55 y 58 días**.")
             
-            # ***** CORRECCIÓN EN VISUALIZACIÓN TAB 3 *****
-            # Usamos los nombres de columna correctos (sin sufijos innecesarios)
             columnas_mostrar_aviso = [
-                'nombrecliente', 'nit', 'factura_norm_cartera', 'fecha_vencimiento', 'dias_vencido', 
-                'importe', 'nomvendedor', 'saldo', 'estado', 'clave_unica'
+                'nombrecliente_cartera', 'nit_cartera', 'factura_norm_cartera', 'fecha_vencimiento', 'dias_vencido', 
+                'importe_cartera', 'nomvendedor_cartera', 'saldo_covinoc', 'estado_covinoc', 'clave_unica'
             ]
+            # Usamos df_interseccion como base para las columnas, ya que df_aviso_no_pago es un subconjunto
+            columnas_existentes_aviso = [col for col in columnas_mostrar_aviso if col in df_interseccion.columns] 
             
-            # Creamos una 'vista' de df_aviso_no_pago para mostrar, renombrando solo las columnas que SÍ tienen sufijo
-            df_aviso_display = df_aviso_no_pago.rename(columns={
-                'nombrecliente_cartera': 'nombrecliente',
-                'nit_cartera': 'nit',
-                'nomvendedor_cartera': 'nomvendedor',
-                'estado_covinoc': 'estado'
-            })
-            
-            columnas_existentes_aviso = [col for col in columnas_mostrar_aviso if col in df_aviso_display.columns]
-            
-            st.dataframe(df_aviso_display[columnas_existentes_aviso], use_container_width=True, hide_index=True)
+            st.dataframe(df_aviso_no_pago[columnas_existentes_aviso], use_container_width=True, hide_index=True)
             st.download_button(
                 label="📥 Descargar Excel para Aviso de No Pago (Próximamente)", data="", file_name="aviso_no_pago_covinoc.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", disabled=True
@@ -457,29 +479,18 @@ def main():
             st.subheader("Ajustes por Abonos Parciales")
             st.markdown("Facturas en **ambos reportes** con estado **'Exonerada Parcial'** y **saldos diferentes**.")
             
-            # ***** CORRECCIÓN EN VISUALIZACIÓN TAB 5 *****
-            # Usamos los nombres de columna correctos (sin sufijos innecesarios)
             columnas_mostrar_ajustes = [
-                'nombrecliente', 'nit', 'factura_norm_cartera', 'importe', 
-                'saldo', 'diferencia', 'dias_vencido', 'estado', 'clave_unica'
+                'nombrecliente_cartera', 'nit_cartera', 'factura_norm_cartera', 'importe_cartera', 
+                'saldo_covinoc', 'diferencia', 'dias_vencido', 'estado_covinoc', 'clave_unica'
             ]
-
-            # Creamos una 'vista' de df_ajustes para mostrar, renombrando solo las columnas que SÍ tienen sufijo
-            df_ajustes_display = df_ajustes.rename(columns={
-                'nombrecliente_cartera': 'nombrecliente',
-                'nit_cartera': 'nit',
-                'estado_covinoc': 'estado'
-            })
-
-            columnas_existentes_ajustes = [col for col in columnas_mostrar_ajustes if col in df_ajustes_display.columns]
-            
-            # Copiamos para evitar el warning de 'SettingWithCopyWarning'
-            df_ajustes_display_formatted = df_ajustes_display[columnas_existentes_ajustes].copy()
+            columnas_existentes_ajustes = [col for col in columnas_mostrar_ajustes if col in df_ajustes.columns]
             
             # Formatear la columna 'diferencia' para mejor visualización
-            df_ajustes_display_formatted['diferencia'] = df_ajustes_display_formatted['diferencia'].map('${:,.0f}'.format)
+            df_ajustes_display = df_ajustes[columnas_existentes_ajustes].copy()
+            if 'diferencia' in df_ajustes_display.columns:
+                df_ajustes_display['diferencia'] = df_ajustes_display['diferencia'].map('${:,.0f}'.format)
             
-            st.dataframe(df_ajustes_display_formatted, use_container_width=True, hide_index=True)
+            st.dataframe(df_ajustes_display, use_container_width=True, hide_index=True)
 
 
 if __name__ == '__main__':
