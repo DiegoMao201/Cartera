@@ -1,5 +1,5 @@
 # ======================================================================================
-# ARCHIVO: Pagina_Covinoc.py (v3 - Lógica de Cruce Avanzada)
+# ARCHIVO: Pagina_Covinoc.py (v4 - Lógica Maestra Covinoc y Cruce Inteligente de NIT)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -63,17 +63,15 @@ ZONAS_SERIE = { "PEREIRA": [155, 189, 158, 439], "MANIZALES": [157, 238], "ARMEN
 def procesar_cartera(df: pd.DataFrame) -> pd.DataFrame:
     """Procesa el dataframe de cartera principal (copiado de Tablero_Principal.py)."""
     df_proc = df.copy()
-    # Aseguramos que las columnas clave existan antes de procesar
     if 'importe' not in df_proc.columns: df_proc['importe'] = 0
-    if 'numero' not in df_proc.columns: df_proc['numero'] = 0
+    if 'numero' not in df_proc.columns: df_proc['numero'] = '0'
     if 'dias_vencido' not in df_proc.columns: df_proc['dias_vencido'] = 0
     if 'nomvendedor' not in df_proc.columns: df_proc['nomvendedor'] = None
-    if 'serie' not in df_proc.columns: df_proc['serie'] = None
+    if 'serie' not in df_proc.columns: df_proc['serie'] = ''
 
     df_proc['importe'] = pd.to_numeric(df_proc['importe'], errors='coerce').fillna(0)
-    # Convertimos 'numero' a string para la concatenación, ya no es numérico
     df_proc['numero'] = df_proc['numero'].astype(str) 
-    
+    df_proc['serie'] = df_proc['serie'].astype(str) 
     df_proc['dias_vencido'] = pd.to_numeric(df_proc['dias_vencido'], errors='coerce').fillna(0)
     df_proc['nomvendedor_norm'] = df_proc['nomvendedor'].apply(normalizar_nombre)
     ZONAS_SERIE_STR = {zona: [str(s) for s in series] for zona, series in ZONAS_SERIE.items()}
@@ -106,7 +104,6 @@ def cargar_datos_cartera_dropbox():
             metadata, res = dbx.files_download(path=path_archivo_dropbox)
             contenido_csv = res.content.decode('latin-1')
 
-            # Columnas originales de 'cartera_detalle.csv'
             nombres_columnas_originales = [
                 'Serie', 'Numero', 'Fecha Documento', 'Fecha Vencimiento', 'Cod Cliente',
                 'NombreCliente', 'Nit', 'Poblacion', 'Provincia', 'Telefono1', 'Telefono2',
@@ -120,15 +117,11 @@ def cargar_datos_cartera_dropbox():
                 names=nombres_columnas_originales, 
                 sep='|', 
                 engine='python',
-                # ¡MUY IMPORTANTE! Forzamos las columnas clave de cruce a ser texto
-                dtype={'Serie': str, 'Numero': str, 'Nit': str}
+                dtype={'Serie': str, 'Numero': str, 'Nit': str} # Forzamos columnas clave a string
             )
             
-            # Renombrar columnas a un formato estándar (minúsculas, guion bajo)
             df_renamed = df.rename(columns=lambda x: normalizar_nombre(x).lower().replace(' ', '_'))
             df_renamed = df_renamed.loc[:, ~df_renamed.columns.duplicated()]
-            
-            # Procesamiento básico de fechas
             df_renamed['fecha_documento'] = pd.to_datetime(df_renamed['fecha_documento'], errors='coerce')
             df_renamed['fecha_vencimiento'] = pd.to_datetime(df_renamed['fecha_vencimiento'], errors='coerce')
             
@@ -150,16 +143,11 @@ def cargar_reporte_transacciones_dropbox():
             
             metadata, res = dbx.files_download(path=path_archivo_dropbox)
             
-            # Leemos el Excel, forzando las columnas clave de cruce a ser texto (string)
             df = pd.read_excel(
                 BytesIO(res.content),
-                dtype={
-                    'DOCUMENTO': str,
-                    'TITULO_VALOR': str
-                }
+                dtype={'DOCUMENTO': str, 'TITULO_VALOR': str} # Forzamos columnas clave a string
             )
             
-            # Normalizamos los nombres de las columnas leídas del Excel
             df.columns = [normalizar_nombre(c).lower().replace(' ', '_') for c in df.columns]
 
             return df
@@ -168,23 +156,47 @@ def cargar_reporte_transacciones_dropbox():
         st.warning("Asegúrate de que el archivo 'reporteTransacciones.xlsx' exista en la carpeta '/data/' de Dropbox.")
         return pd.DataFrame()
 
+# --- Funciones de Normalización de Claves ---
+
+def normalizar_nit_simple(nit_str: str) -> str:
+    """Limpia un NIT, quitando todo lo que no sea un número."""
+    if not isinstance(nit_str, str):
+        return ""
+    return re.sub(r'\D', '', nit_str)
+
+def normalizar_factura_simple(fact_str: str) -> str:
+    """Limpia un número de factura (para Covinoc) quitando espacios, puntos, guiones."""
+    if not isinstance(fact_str, str):
+        return ""
+    # Quita .0, espacios, guiones y pasa a mayúsculas
+    return fact_str.split('.')[0].strip().upper().replace(' ', '').replace('-', '')
+
+def normalizar_factura_cartera(row):
+    """Concatena Serie y Numero para Cartera, limpiándolos."""
+    serie = str(row['serie']).strip().upper()
+    numero = str(row['numero']).split('.')[0].strip()
+    # Concatena y limpia espacios/guiones
+    return (serie + numero).replace(' ', '').replace('-', '')
+
+
 # --- Función Principal de Procesamiento y Cruce ---
 
 @st.cache_data
 def cargar_y_comparar_datos():
     """
-    Orquesta la carga de ambos archivos, los procesa y realiza los cruces lógicos
-    con la lógica avanzada de NIT vs DOCUMENTO y (Serie+Numero) vs TITULO_VALOR.
+    Orquesta la carga y cruce con la lógica v4:
+    1. Covinoc['DOCUMENTO'] se busca en Cartera['Nit'] (con y sin último dígito).
+    2. Covinoc['TITULO_VALOR'] se busca en Cartera['Serie' + 'Numero'].
     """
     
-    # 1. Cargar y procesar Cartera Ferreinox
+    # 1. Cargar Cartera Ferreinox
     df_cartera_raw = cargar_datos_cartera_dropbox()
     if df_cartera_raw.empty:
         st.error("No se pudo cargar 'cartera_detalle.csv'. El cruce no puede continuar.")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-        
     df_cartera = procesar_cartera(df_cartera_raw)
     
+    # Filtrar series W y X
     if 'serie' in df_cartera.columns:
         df_cartera = df_cartera[~df_cartera['serie'].astype(str).str.contains('W|X', case=False, na=False)]
 
@@ -198,98 +210,95 @@ def cargar_y_comparar_datos():
 
     # --- LÓGICA DE NIT vs DOCUMENTO ---
     
-    # 3.1. Normalizar NIT de Cartera (La "Verdad Base")
-    # Quitamos todos los caracteres no numéricos.
-    df_cartera['nit_norm'] = df_cartera['nit'].apply(lambda x: re.sub(r'\D', '', str(x)))
-    
-    # Creamos un Set (lista única) de nuestros NITs para una búsqueda rápida
-    set_nits_cartera = set(df_cartera['nit_norm'].unique())
+    # 3.1. Normalizar NIT de Cartera y crear un Set para búsqueda rápida
+    df_cartera['nit_norm_cartera'] = df_cartera['nit'].apply(normalizar_nit_simple)
+    set_nits_cartera = set(df_cartera['nit_norm_cartera'].unique())
 
     # 3.2. Función de Normalización Inteligente para Covinoc
-    def normalizar_documento_covinoc_local(doc_str):
+    def encontrar_nit_en_cartera(doc_str_covinoc):
         """
-        Compara el DOCUMENTO de Covinoc con la lista de NITs de Cartera.
-        Primero busca una coincidencia exacta, luego una sin el último dígito (DV).
+        Toma el DOCUMENTO de Covinoc y lo busca en el Set de NITs de Cartera.
+        Primero busca la coincidencia exacta, luego sin el último dígito.
+        Devuelve el NIT de CARTERA que coincidió.
         """
-        if not isinstance(doc_str, str): 
+        if not isinstance(doc_str_covinoc, str): 
             return None
         
-        # Limpiamos el DOCUMENTO de Covinoc
-        doc_norm = re.sub(r'\D', '', doc_str)
+        doc_norm = normalizar_nit_simple(doc_str_covinoc)
 
-        # Caso 1: Coincidencia exacta (ej. 800224617 == 800224617)
+        # Caso 1: Coincidencia exacta (ej. Covinoc '800224617' == Cartera '800224617')
         if doc_norm in set_nits_cartera:
             return doc_norm
         
-        # Caso 2: Coincidencia sin DV (ej. 8002246178 -> 800224617)
+        # Caso 2: Coincidencia sin DV (ej. Covinoc '8002246178' -> '800224617' == Cartera '800224617')
         doc_norm_base = doc_norm[:-1] # Quitamos el último dígito
         if doc_norm_base in set_nits_cartera:
-            return doc_norm_base # ¡Coincidencia! Devolvemos el NIT base
+            return doc_norm_base # ¡Coincidencia! Devolvemos el NIT base de Cartera
             
-        # No hay coincidencia, devolvemos el documento normalizado original
-        return doc_norm 
+        # No hay coincidencia
+        return None 
 
-    # 3.3. Aplicar la normalización inteligente a Covinoc
-    df_covinoc['nit_norm'] = df_covinoc['documento'].apply(normalizar_documento_covinoc_local)
+    # 3.3. Aplicar la normalización inteligente a Covinoc para encontrar el NIT de cartera
+    # Esta columna contendrá el NIT de Cartera correspondiente, o None si no se encontró
+    df_covinoc['nit_norm_cartera'] = df_covinoc['documento'].apply(encontrar_nit_en_cartera)
 
     # --- LÓGICA DE (SERIE+NUMERO) vs TITULO_VALOR ---
 
     # 3.4. Normalizar Factura de Cartera (Serie + Numero)
-    # Limpiamos y concatenamos
-    df_cartera['serie_norm'] = df_cartera['serie'].astype(str).str.strip().str.upper()
-    df_cartera['numero_norm'] = df_cartera['numero'].astype(str).str.split('.').str[0].str.strip()
-    df_cartera['factura_norm'] = df_cartera['serie_norm'] + df_cartera['numero_norm']
-    # Limpiamos cualquier espacio que pudiera quedar en la clave final
-    df_cartera['factura_norm'] = df_cartera['factura_norm'].str.replace(' ', '')
+    df_cartera['factura_norm'] = df_cartera.apply(normalizar_factura_cartera, axis=1)
 
     # 3.5. Normalizar TITULO_VALOR de Covinoc
-    # Limpiamos de la misma forma (quitamos decimales, espacios y pasamos a mayúsculas)
-    df_covinoc['factura_norm'] = df_covinoc['titulo_valor'].astype(str).str.split('.').str[0].str.strip().str.upper()
-    df_covinoc['factura_norm'] = df_covinoc['factura_norm'].str.replace(' ', '')
-
+    df_covinoc['factura_norm'] = df_covinoc['titulo_valor'].apply(normalizar_factura_simple)
 
     # --- CREACIÓN DE CLAVE ÚNICA ---
     
-    # 3.6. Crear Clave Única (NIT Base + Factura Concatenada)
-    df_cartera['clave_unica'] = df_cartera['nit_norm'] + '_' + df_cartera['factura_norm']
-    df_covinoc['clave_unica'] = df_covinoc['nit_norm'] + '_' + df_covinoc['factura_norm']
-
-    # 4. Lógica de Cruces (Esta parte no cambia, ahora usa la 'clave_unica' correcta)
+    # 3.6. Crear Clave Única (NIT de Cartera + Factura Normalizada)
+    df_cartera['clave_unica'] = df_cartera['nit_norm_cartera'] + '_' + df_cartera['factura_norm']
+    df_covinoc['clave_unica'] = df_covinoc['nit_norm_cartera'] + '_' + df_covinoc['factura_norm']
+    
+    # 4. Lógica de Cruces (Usando la 'clave_unica' generada)
     
     # ---- Lógica 1: Facturas a Subir ----
-    nits_en_covinoc_matched = df_covinoc['nit_norm'].unique()
-    df_cartera_clientes_protegidos = df_cartera[df_cartera['nit_norm'].isin(nits_en_covinoc_matched)].copy()
+    # "solo las facturas de los clientes que estan en el archivo reporte"
     
-    df_merge_subir = pd.merge(
-        df_cartera_clientes_protegidos,
-        df_covinoc[['clave_unica']], 
-        on='clave_unica',
-        how='left',
-        indicator=True
-    )
-    df_a_subir = df_merge_subir[df_merge_subir['_merge'] == 'left_only'].copy()
-    df_a_subir = df_a_subir.drop(columns=['_merge'])
+    # 1. Obtener la lista de NITs que SÍ tienen coincidencia en Covinoc
+    nits_protegidos = df_covinoc['nit_norm_cartera'].dropna().unique()
+    
+    # 2. Filtrar la cartera de Ferreinox a solo esos clientes
+    df_cartera_clientes_protegidos = df_cartera[df_cartera['nit_norm_cartera'].isin(nits_protegidos)].copy()
+    
+    # 3. De esos clientes, encontrar las facturas (clave_unica) que NO están en Covinoc
+    # Creamos un set de claves de Covinoc para una búsqueda rápida
+    set_claves_covinoc = set(df_covinoc['clave_unica'].dropna().unique())
+    
+    # Filtramos cartera_clientes_protegidos: nos quedamos con las que NO están en set_claves_covinoc
+    df_a_subir = df_cartera_clientes_protegidos[
+        ~df_cartera_clientes_protegidos['clave_unica'].isin(set_claves_covinoc)
+    ].copy()
+
 
     # ---- Lógica 2: Exoneraciones (Están en Covinoc, NO en Cartera) ----
-    df_merge_exonerar = pd.merge(
-        df_covinoc,
-        df_cartera[['clave_unica']], 
-        on='clave_unica',
-        how='left',
-        indicator=True
-    )
-    df_a_exonerar = df_merge_exonerar[df_merge_exonerar['_merge'] == 'left_only'].copy()
-    df_a_exonerar = df_a_exonerar.drop(columns=['_merge'])
+    # Creamos un set de claves de Cartera para una búsqueda rápida
+    set_claves_cartera = set(df_cartera['clave_unica'].dropna().unique())
+    
+    # Filtramos Covinoc: nos quedamos con las que NO están en set_claves_cartera
+    # También nos aseguramos de que SÍ tengan un NIT que haya coincidido
+    df_a_exonerar = df_covinoc[
+        (~df_covinoc['clave_unica'].isin(set_claves_cartera)) &
+        (df_covinoc['nit_norm_cartera'].notna())
+    ].copy()
+
 
     # ---- Lógica 3: Avisos de No Pago (Intersección + Vencidas < 58 días) ----
     df_interseccion = pd.merge(
         df_cartera,
         df_covinoc, 
         on='clave_unica',
-        how='inner', 
+        how='inner', # 'inner' = solo las que están en ambos
         suffixes=('_cartera', '_covinoc') 
     )
     
+    # De la intersección, filtramos por las condiciones de días (1 a 57 días)
     df_aviso_no_pago = df_interseccion[
         (df_interseccion['dias_vencido'] > 0) & 
         (df_interseccion['dias_vencido'] < 58)
@@ -366,9 +375,7 @@ def main():
             df_a_subir, df_a_exonerar, df_aviso_no_pago = cargar_y_comparar_datos()
 
         if df_a_subir.empty and df_a_exonerar.empty and df_aviso_no_pago.empty:
-            # Esta comprobación es para ver si el error fue al cargar o si simplemente no hay diferencias
             try:
-                # Intenta recargar sin caché para ver si los archivos existen
                 with dropbox.Dropbox(app_key=st.secrets["dropbox"]["app_key"], app_secret=st.secrets["dropbox"]["app_secret"], oauth2_refresh_token=st.secrets["dropbox"]["refresh_token"]) as dbx:
                     dbx.files_get_metadata('/data/cartera_detalle.csv')
                     dbx.files_get_metadata('/data/reporteTransacciones.xlsx')
@@ -409,7 +416,6 @@ def main():
             st.subheader("Facturas a Exonerar de Covinoc")
             st.markdown("Facturas que están en **Covinoc** pero **NO** en la Cartera Ferreinox (ej. ya fueron pagadas).")
             
-            # Mostramos las columnas originales de Covinoc
             columnas_mostrar_exonerar = ['cliente', 'documento', 'titulo_valor', 'factura_norm', 'saldo', 'fecha', 'vencimiento', 'estado', 'clave_unica']
             columnas_existentes_exonerar = [col for col in columnas_mostrar_exonerar if col in df_a_exonerar.columns]
             
@@ -428,7 +434,6 @@ def main():
             st.subheader("Facturas para Aviso de No Pago")
             st.markdown("Facturas que están **en ambos reportes** Y tienen un vencimiento **entre 1 y 57 días**.")
             
-            # Mostramos una combinación de columnas de Cartera (la fuente principal) y Covinoc
             columnas_mostrar_aviso = [
                 'nombrecliente', 'nit_cartera', 'serie_cartera', 'numero_cartera', 'factura_norm_cartera', 'fecha_vencimiento', 'dias_vencido', 
                 'importe', 'nomvendedor', 'saldo_covinoc', 'estado_covinoc', 'clave_unica'
