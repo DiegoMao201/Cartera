@@ -337,34 +337,73 @@ def cargar_y_comparar_datos():
 # --- FUNCIONES AUXILIARES PARA EXCEL ---
 # ======================================================================================
 
+# ================== INICIO DE LA MODIFICACIÓN (Lógica Tipo Documento) ==================
 def get_tipo_doc_from_nit_col(nit_str_raw: str) -> str:
     """
-    Intenta adivinar el Tipo de Documento (N, C, T) basándose en el
-    string original de la columna 'nit' o 'documento'.
-    Basado en la instrucción: P, E, N, C, T.
+    Intenta adivinar el Tipo de Documento (N, C, T, E, P) basándose en el
+    string original de la columna 'nit' o 'documento', según las reglas
+    del instructivo (imagen) y reglas de negocio de Colombia.
     """
-    if not isinstance(nit_str_raw, str):
+    if not isinstance(nit_str_raw, str) or pd.isna(nit_str_raw):
         return 'C' # Default a Cédula de Ciudadanía si es nulo o no string
     
-    nit_norm = re.sub(r'\D', '', nit_str_raw)
-    length = len(nit_norm)
+    nit_str_raw_clean = nit_str_raw.strip().upper()
     
-    # Asumimos que si contiene guión, es NIT
-    if '-' in nit_str_raw:
+    # --- Regla 1: Prioridad NIT (N) ---
+    # Si contiene guión, es NIT
+    if '-' in nit_str_raw_clean:
         return 'N'
     
-    # Lógica basada en longitudes (común en Colombia)
-    if length == 9:
-        return 'N' # NIT (sin dígito de verificación, a veces)
+    # Limpiamos para análisis numérico
+    nit_norm = re.sub(r'\D', '', nit_str_raw_clean)
+    length = len(nit_norm)
+    
+    if length == 0:
+        return 'C' # Default si está vacío después de limpiar
+        
+    # Si empieza con 8xx, 9xx (prefijos comunes de NIT)
+    if (nit_norm.startswith('8') or nit_norm.startswith('9')):
+        return 'N'
+        
+    # --- Regla 2: Cédula (C) ---
+    # Cédulas de Ciudadanía (C) - 8 o 10 dígitos son las más comunes
     if length == 10:
-        return 'C' # Cédula de Ciudadanía
+        # 10 dígitos (Cédula nueva o T.I. nueva). 'C' es más probable.
+        return 'C'
     if length == 8:
-        return 'C' # Cédula de Ciudadanía (antiguas)
+        return 'C' # Cédula antigua.
+    
+    # --- Regla 3: Tarjeta de Identidad (T) ---
     if length == 7:
         return 'T' # Tarjeta de Identidad (antiguas)
+    if length == 11:
+        return 'T' # Tarjeta de Identidad (nuevas)
+
+    # --- Regla 4: Casos ambiguos (9 dígitos) ---
+    if length == 9:
+        # Ya filtramos los que empiezan con 8 o 9 (NITs).
+        # Es más probable C.C.
+        return 'C'
+
+    # --- Regla 5: Pasaporte (P) o Extranjería (E) ---
+    # Si tiene letras (y no es un guión de NIT que ya filtramos)
+    if re.search(r'[A-Z]', nit_str_raw_clean):
+        if nit_str_raw_clean.startswith('PA'):
+            return 'P'
+        if nit_str_raw_clean.startswith('CE'):
+            return 'E'
+        # Si tiene letras pero no es un patrón claro, P es un default
+        return 'P'
     
-    # Si no coincide, 'C' es el default más seguro para personas
+    # --- Regla 6: Cédula Extranjería (E) ---
+    # Si es otra longitud (ej. 6 dígitos), 'E' (Extranjería) es una suposición
+    if length == 6:
+        return 'E'
+    
+    # --- Default ---
+    # Si no coincide nada, 'C' es el default más seguro
     return 'C'
+# =================== FIN DE LA MODIFICACIÓN (Lógica Tipo Documento) ===================
 
 def format_date(date_obj) -> str:
     """Formatea un objeto de fecha a 'dd/mm/YYYY' o devuelve None."""
@@ -446,10 +485,18 @@ def main():
             
             st.markdown("---")
             st.info("Esta página compara la cartera de Ferreinox con el reporte de transacciones de Covinoc.")
-            st.image(
-                "image_5019c6.png", 
-                caption="Instructivo Carga Masiva (Referencia)"
-            )
+            
+            # ================== INICIO DE LA CORRECCIÓN DEL ERROR ==================
+            # La siguiente línea causaba el error 'MediaFileStorageError' porque
+            # el archivo 'image_5019c6.png' no se encontraba.
+            # Lo he comentado. Si tienes el archivo en la misma carpeta que este
+            # script, puedes quitar el '#' para mostrar la imagen.
+            
+            # st.image(
+            #     "image_5019c6.png", 
+            #     caption="Instructivo Carga Masiva (Referencia)"
+            # )
+            # =================== FIN DE LA CORRECCIÓN DEL ERROR ===================
 
         # --- Carga y Procesamiento de Datos ---
         with st.spinner("Cargando y comparando archivos de Dropbox..."):
