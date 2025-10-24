@@ -8,3 +8,4 @@ fpdf2
 Plotly
 yagmail
 dropbox
+xlsxwriter
