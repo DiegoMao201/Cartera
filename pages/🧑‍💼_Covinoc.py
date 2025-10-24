@@ -1,5 +1,5 @@
 # ======================================================================================
-# ARCHIVO: Pagina_Covinoc.py (v5 - Lógica de Estados y Pestañas Múltiples)
+# ARCHIVO: Pagina_Covinoc.py (v6 - Lógica de Estados, Filtros 'U' y Descargas Excel)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -182,10 +182,11 @@ def normalizar_factura_cartera(row):
 @st.cache_data
 def cargar_y_comparar_datos():
     """
-    Orquesta la carga y cruce con la lógica v5:
+    Orquesta la carga y cruce con la lógica v6:
     1. Cruce inteligente de NIT/Documento y Factura/Titulo_Valor.
-    2. Filtra por Estados ('Efectiva', 'Negada', 'Reclamada').
-    3. Separa la lógica en 5 pestañas, incluyendo Ajustes Parciales.
+    2. Filtra series 'W', 'X' y las terminadas en 'U'.
+    3. Lógica de Aviso No Pago >= 25 días.
+    4. Lógica de Ajustes Parciales (Covinoc > Cartera).
     """
     
     # 1. Cargar Cartera Ferreinox
@@ -195,8 +196,12 @@ def cargar_y_comparar_datos():
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     df_cartera = procesar_cartera(df_cartera_raw)
     
+    # ===================== INICIO DE LA MODIFICACIÓN (Filtro Series) =====================
+    # Filtrar series W, X (en cualquier parte) y series que terminan en U (Anticipos, etc.)
     if 'serie' in df_cartera.columns:
         df_cartera = df_cartera[~df_cartera['serie'].astype(str).str.contains('W|X', case=False, na=False)]
+        df_cartera = df_cartera[~df_cartera['serie'].astype(str).str.upper().str.endswith('U', na=False)]
+    # ====================== FIN DE LA MODIFICACIÓN (Filtro Series) =======================
 
     # 2. Cargar Reporte Transacciones (Covinoc)
     df_covinoc = cargar_reporte_transacciones_dropbox()
@@ -283,11 +288,14 @@ def cargar_y_comparar_datos():
         'nombrecliente': 'nombrecliente_cartera',
         'nit': 'nit_cartera',
         'nomvendedor': 'nomvendedor_cartera',
+        'fecha_vencimiento': 'fecha_vencimiento_cartera',
+        'dias_vencido': 'dias_vencido_cartera',
 
         # De df_covinoc
         'saldo': 'saldo_covinoc',
         'estado': 'estado_covinoc',
-        'estado_norm': 'estado_norm_covinoc'
+        'estado_norm': 'estado_norm_covinoc',
+        'vencimiento': 'vencimiento_covinoc'
     }
 
     # Renombramos solo las que existen en el DF fusionado
@@ -299,26 +307,81 @@ def cargar_y_comparar_datos():
 
 
     # --- Tab 3: Aviso de No Pago ---
-    # Facturas en intersección CON VENCIMIENTO ENTRE 55 y 58 DÍAS
+    # ===================== INICIO DE LA MODIFICACIÓN (Lógica Aviso No Pago) =====================
+    # Facturas en intersección CON VENCIMIENTO MAYOR O IGUAL A 25 DÍAS
     df_aviso_no_pago = df_interseccion[
-        df_interseccion['dias_vencido'].between(55, 58)
+        df_interseccion['dias_vencido_cartera'] >= 25
     ].copy()
+    # ====================== FIN DE LA MODIFICACIÓN (Lógica Aviso No Pago) =======================
 
     # --- Tab 5: Ajustes por Abonos ---
     # 1. Convertir 'importe_cartera' y 'saldo_covinoc' a numérico para comparación
     df_interseccion['importe_cartera'] = pd.to_numeric(df_interseccion['importe_cartera'], errors='coerce').fillna(0)
     df_interseccion['saldo_covinoc'] = pd.to_numeric(df_interseccion['saldo_covinoc'], errors='coerce').fillna(0)
     
-    # 2. Facturas en intersección, 'Exonerada Parcial' Y saldos diferentes
+    # ===================== INICIO DE LA MODIFICACIÓN (Lógica Ajustes) =====================
+    # 2. Facturas en intersección donde el Saldo en Covinoc es MAYOR al Importe en Cartera
+    #    (Significa que Ferreinox recibió un abono que Covinoc no tiene)
     df_ajustes = df_interseccion[
-        (df_interseccion['estado_norm_covinoc'] == 'EXONERADA PARCIAL') & 
-        (df_interseccion['importe_cartera'] != df_interseccion['saldo_covinoc'])
+        (df_interseccion['saldo_covinoc'] > df_interseccion['importe_cartera'])
     ].copy()
     
-    # 3. Calcular la diferencia
-    df_ajustes['diferencia'] = df_ajustes['importe_cartera'] - df_ajustes['saldo_covinoc']
+    # 3. Calcular la diferencia (El monto a "exonerar" parcialmente en Covinoc)
+    df_ajustes['diferencia'] = df_ajustes['saldo_covinoc'] - df_ajustes['importe_cartera']
+    # ====================== FIN DE LA MODIFICACIÓN (Lógica Ajustes) =======================
 
     return df_a_subir, df_a_exonerar, df_aviso_no_pago, df_reclamadas, df_ajustes
+
+
+# ======================================================================================
+# --- FUNCIONES AUXILIARES PARA EXCEL ---
+# ======================================================================================
+
+def get_tipo_doc_from_nit_col(nit_str_raw: str) -> str:
+    """
+    Intenta adivinar el Tipo de Documento (N, C, T) basándose en el
+    string original de la columna 'nit' o 'documento'.
+    Basado en la instrucción: P, E, N, C, T.
+    """
+    if not isinstance(nit_str_raw, str):
+        return 'C' # Default a Cédula de Ciudadanía si es nulo o no string
+    
+    nit_norm = re.sub(r'\D', '', nit_str_raw)
+    length = len(nit_norm)
+    
+    # Asumimos que si contiene guión, es NIT
+    if '-' in nit_str_raw:
+        return 'N'
+    
+    # Lógica basada en longitudes (común en Colombia)
+    if length == 9:
+        return 'N' # NIT (sin dígito de verificación, a veces)
+    if length == 10:
+        return 'C' # Cédula de Ciudadanía
+    if length == 8:
+        return 'C' # Cédula de Ciudadanía (antiguas)
+    if length == 7:
+        return 'T' # Tarjeta de Identidad (antiguas)
+    
+    # Si no coincide, 'C' es el default más seguro para personas
+    return 'C'
+
+def format_date(date_obj) -> str:
+    """Formatea un objeto de fecha a 'dd/mm/YYYY' o devuelve None."""
+    if pd.isna(date_obj):
+        return None
+    try:
+        return pd.to_datetime(date_obj).strftime('%d/%m/%Y')
+    except Exception:
+        return None
+
+def to_excel(df: pd.DataFrame) -> bytes:
+    """Convierte un DataFrame a un archivo Excel en memoria (bytes)."""
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Facturas')
+    processed_data = output.getvalue()
+    return processed_data
 
 
 # ======================================================================================
@@ -383,6 +446,10 @@ def main():
             
             st.markdown("---")
             st.info("Esta página compara la cartera de Ferreinox con el reporte de transacciones de Covinoc.")
+            st.image(
+                "image_5019c6.png", 
+                caption="Instructivo Carga Masiva (Referencia)"
+            )
 
         # --- Carga y Procesamiento de Datos ---
         with st.spinner("Cargando y comparando archivos de Dropbox..."):
@@ -412,15 +479,32 @@ def main():
 
         with tab1:
             st.subheader("Facturas a Subir a Covinoc")
-            st.markdown("Facturas de **clientes protegidos** que están en **Cartera Ferreinox** pero **NO** en Covinoc.")
+            st.markdown("Facturas de **clientes protegidos** que están en **Cartera Ferreinox** pero **NO** en Covinoc. (Excluye series W, X y terminadas en U).")
             
             columnas_mostrar_subir = ['nombrecliente', 'nit', 'serie', 'numero', 'factura_norm', 'fecha_vencimiento', 'dias_vencido', 'importe', 'nomvendedor', 'clave_unica']
             columnas_existentes_subir = [col for col in columnas_mostrar_subir if col in df_a_subir.columns]
             
             st.dataframe(df_a_subir[columnas_existentes_subir], use_container_width=True, hide_index=True)
+            
+            # --- Lógica de Descarga Excel (Tab 1) ---
+            if not df_a_subir.empty:
+                df_subir_excel = pd.DataFrame()
+                df_subir_excel['TIPO_DOCUMENTO'] = df_a_subir['nit'].apply(get_tipo_doc_from_nit_col)
+                df_subir_excel['DOCUMENTO'] = df_a_subir['nit_norm_cartera']
+                df_subir_excel['TITULO_VALOR'] = df_a_subir['factura_norm']
+                df_subir_excel['VALOR'] = pd.to_numeric(df_a_subir['importe'], errors='coerce').fillna(0).astype(int)
+                df_subir_excel['FECHA'] = pd.to_datetime(df_a_subir['fecha_vencimiento'], errors='coerce').apply(format_date)
+                df_subir_excel['CODIGO_CONSULTA'] = 986638
+                excel_data_subir = to_excel(df_subir_excel)
+            else:
+                excel_data_subir = b""
+
             st.download_button(
-                label="📥 Descargar Excel para Subida (Próximamente)", data="", file_name="subir_covinoc.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", disabled=True 
+                label="📥 Descargar Excel para Subida (Formato Covinoc)", 
+                data=excel_data_subir, 
+                file_name="1_facturas_a_subir.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                disabled=df_a_subir.empty 
             )
 
         with tab2:
@@ -431,30 +515,58 @@ def main():
             columnas_existentes_exonerar = [col for col in columnas_mostrar_exonerar if col in df_a_exonerar.columns]
             
             st.dataframe(df_a_exonerar[columnas_existentes_exonerar], use_container_width=True, hide_index=True)
+
+            # --- Lógica de Descarga Excel (Tab 2) ---
+            if not df_a_exonerar.empty:
+                df_exonerar_excel = pd.DataFrame()
+                df_exonerar_excel['TIPO_DOCUMENTO'] = df_a_exonerar['documento'].apply(get_tipo_doc_from_nit_col)
+                df_exonerar_excel['DOCUMENTO'] = df_a_exonerar['nit_norm_cartera']
+                df_exonerar_excel['TITULO_VALOR'] = df_a_exonerar['factura_norm']
+                df_exonerar_excel['VALOR'] = pd.to_numeric(df_a_exonerar['saldo'], errors='coerce').fillna(0).astype(int)
+                df_exonerar_excel['FECHA'] = pd.to_datetime(df_a_exonerar['vencimiento'], errors='coerce').apply(format_date)
+                excel_data_exonerar = to_excel(df_exonerar_excel)
+            else:
+                excel_data_exonerar = b""
+
             st.download_button(
-                label="📥 Descargar Excel para Exoneración (Próximamente)", data="", file_name="exonerar_covinoc.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", disabled=True 
+                label="📥 Descargar Excel para Exoneración (Formato Covinoc)", 
+                data=excel_data_exonerar, 
+                file_name="2_exoneraciones_totales.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                disabled=df_a_exonerar.empty 
             )
 
         with tab3:
             st.subheader("Facturas para Aviso de No Pago")
-            st.markdown("Facturas que están **en ambos reportes** Y tienen un vencimiento **entre 55 y 58 días**.")
+            st.markdown("Facturas que están **en ambos reportes** Y tienen un vencimiento **>= 25 días**.")
             
             columnas_mostrar_aviso = [
-                'nombrecliente_cartera', 'nit_cartera', 'factura_norm_cartera', 'fecha_vencimiento', 'dias_vencido', 
+                'nombrecliente_cartera', 'nit_cartera', 'factura_norm_cartera', 'fecha_vencimiento_cartera', 'dias_vencido_cartera', 
                 'importe_cartera', 'nomvendedor_cartera', 'saldo_covinoc', 'estado_covinoc', 'clave_unica'
             ]
             
-            # ===================== INICIO DE LA CORRECCIÓN (NameError) =====================
-            # 'df_interseccion' no existe en main(). Usamos 'df_aviso_no_pago' 
-            # (que está en scope) ya que tiene las mismas columnas.
             columnas_existentes_aviso = [col for col in columnas_mostrar_aviso if col in df_aviso_no_pago.columns]
-            # ====================== FIN DE LA CORRECCIÓN (NameError) =======================
             
             st.dataframe(df_aviso_no_pago[columnas_existentes_aviso], use_container_width=True, hide_index=True)
+
+            # --- Lógica de Descarga Excel (Tab 3) ---
+            if not df_aviso_no_pago.empty:
+                df_aviso_excel = pd.DataFrame()
+                df_aviso_excel['TIPO_DOCUMENTO'] = df_aviso_no_pago['nit_cartera'].apply(get_tipo_doc_from_nit_col)
+                df_aviso_excel['DOCUMENTO'] = df_aviso_no_pago['nit_norm_cartera_cartera']
+                df_aviso_excel['TITULO_VALOR'] = df_aviso_no_pago['factura_norm_cartera']
+                df_aviso_excel['VALOR'] = pd.to_numeric(df_aviso_no_pago['importe_cartera'], errors='coerce').fillna(0).astype(int)
+                df_aviso_excel['FECHA'] = pd.to_datetime(df_aviso_no_pago['fecha_vencimiento_cartera'], errors='coerce').apply(format_date)
+                excel_data_aviso = to_excel(df_aviso_excel)
+            else:
+                excel_data_aviso = b""
+
             st.download_button(
-                label="📥 Descargar Excel para Aviso de No Pago (Próximamente)", data="", file_name="aviso_no_pago_covinoc.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", disabled=True
+                label="📥 Descargar Excel para Aviso de No Pago (Formato Covinoc)", 
+                data=excel_data_aviso, 
+                file_name="3_aviso_no_pago.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                disabled=df_aviso_no_pago.empty
             )
 
         with tab4:
@@ -468,20 +580,42 @@ def main():
 
         with tab5:
             st.subheader("Ajustes por Abonos Parciales")
-            st.markdown("Facturas en **ambos reportes** con estado **'Exonerada Parcial'** y **saldos diferentes**.")
+            st.markdown("Facturas en **ambos reportes** donde el **Saldo Covinoc es MAYOR** al **Importe Cartera** (implica un abono no reportado).")
             
             columnas_mostrar_ajustes = [
                 'nombrecliente_cartera', 'nit_cartera', 'factura_norm_cartera', 'importe_cartera', 
-                'saldo_covinoc', 'diferencia', 'dias_vencido', 'estado_covinoc', 'clave_unica'
+                'saldo_covinoc', 'diferencia', 'dias_vencido_cartera', 'estado_covinoc', 'clave_unica'
             ]
             columnas_existentes_ajustes = [col for col in columnas_mostrar_ajustes if col in df_ajustes.columns]
             
-            # Formatear la columna 'diferencia' para mejor visualización
+            # Formatear columnas para mejor visualización
             df_ajustes_display = df_ajustes[columnas_existentes_ajustes].copy()
-            if 'diferencia' in df_ajustes_display.columns:
-                df_ajustes_display['diferencia'] = df_ajustes_display['diferencia'].map('${:,.0f}'.format)
+            for col_moneda in ['importe_cartera', 'saldo_covinoc', 'diferencia']:
+                if col_moneda in df_ajustes_display.columns:
+                    df_ajustes_display[col_moneda] = df_ajustes_display[col_moneda].map('${:,.0f}'.format)
             
             st.dataframe(df_ajustes_display, use_container_width=True, hide_index=True)
+            
+            # --- Lógica de Descarga Excel (Tab 5) ---
+            if not df_ajustes.empty:
+                df_ajustes_excel = pd.DataFrame()
+                df_ajustes_excel['TIPO_DOCUMENTO'] = df_ajustes['nit_cartera'].apply(get_tipo_doc_from_nit_col)
+                df_ajustes_excel['DOCUMENTO'] = df_ajustes['nit_norm_cartera_cartera']
+                df_ajustes_excel['TITULO_VALOR'] = df_ajustes['factura_norm_cartera']
+                # El VALOR a exonerar es la DIFERENCIA
+                df_ajustes_excel['VALOR'] = pd.to_numeric(df_ajustes['diferencia'], errors='coerce').fillna(0).astype(int)
+                df_ajustes_excel['FECHA'] = pd.to_datetime(df_ajustes['fecha_vencimiento_cartera'], errors='coerce').apply(format_date)
+                excel_data_ajustes = to_excel(df_ajustes_excel)
+            else:
+                excel_data_ajustes = b""
+
+            st.download_button(
+                label="📥 Descargar Excel de Ajuste (Exoneración Parcial)", 
+                data=excel_data_ajustes, 
+                file_name="5_ajustes_exoneracion_parcial.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                disabled=df_ajustes.empty
+            )
 
 
 if __name__ == '__main__':
