@@ -273,28 +273,21 @@ def cargar_y_comparar_datos():
         suffixes=('_cartera', '_covinoc') 
     )
     
-    # ===================== INICIO DE LA CORRECCIÓN =====================
-    # El bloque 'rename' original (líneas 276-281) ha sido reemplazado.
+    # ===================== INICIO DE LA CORRECCIÓN (KeyError) =====================
+    # Renombramos manualmente las columnas que no colisionaron pero que el 
+    # código posterior espera que tengan sufijos.
     
-    # --- CORRECCIÓN: Renombrar columnas no colisionantes ---
-    # pd.merge(suffixes=...) solo añade sufijos a columnas que están en *ambos* DFs
-    # (p.ej. 'factura_norm' se vuelve 'factura_norm_cartera' y 'factura_norm_covinoc').
-    # Las columnas únicas (p.ej. 'importe' de cartera, 'saldo' de covinoc) no reciben sufijo.
-    # El código más adelante espera que algunas de estas SÍ tengan sufijo,
-    # mientras que otras (como 'dias_vencido') las espera sin sufijo.
-    # Renombramos manualmente solo las columnas que el código espera con sufijo.
-
     columnas_a_renombrar = {
         # De df_cartera
-        'importe': 'importe_cartera',         # Usado en Tab 5
-        'nombrecliente': 'nombrecliente_cartera', # Usado en Tab 3 y 5
-        'nit': 'nit_cartera',                 # Usado en Tab 3 y 5
-        'nomvendedor': 'nomvendedor_cartera', # Usado en Tab 3
+        'importe': 'importe_cartera',
+        'nombrecliente': 'nombrecliente_cartera',
+        'nit': 'nit_cartera',
+        'nomvendedor': 'nomvendedor_cartera',
 
         # De df_covinoc
-        'saldo': 'saldo_covinoc',             # Usado en Tab 3 y 5
-        'estado': 'estado_covinoc',           # Usado en Tab 3 y 5
-        'estado_norm': 'estado_norm_covinoc'  # Usado en Tab 5
+        'saldo': 'saldo_covinoc',
+        'estado': 'estado_covinoc',
+        'estado_norm': 'estado_norm_covinoc'
     }
 
     # Renombramos solo las que existen en el DF fusionado
@@ -302,10 +295,7 @@ def cargar_y_comparar_datos():
     renombres_aplicables = {k: v for k, v in columnas_a_renombrar.items() if k in cols_existentes}
     df_interseccion.rename(columns=renombres_aplicables, inplace=True)
     
-    # Las columnas 'dias_vencido' y 'fecha_vencimiento' (de cartera)
-    # se usan sin sufijo más adelante (Tab 3), lo cual ahora es correcto.
-    
-    # ====================== FIN DE LA CORRECCIÓN =======================
+    # ====================== FIN DE LA CORRECCIÓN (KeyError) =======================
 
 
     # --- Tab 3: Aviso de No Pago ---
@@ -316,19 +306,16 @@ def cargar_y_comparar_datos():
 
     # --- Tab 5: Ajustes por Abonos ---
     # 1. Convertir 'importe_cartera' y 'saldo_covinoc' a numérico para comparación
-    # (Esta línea ahora funciona gracias a la corrección anterior)
     df_interseccion['importe_cartera'] = pd.to_numeric(df_interseccion['importe_cartera'], errors='coerce').fillna(0)
     df_interseccion['saldo_covinoc'] = pd.to_numeric(df_interseccion['saldo_covinoc'], errors='coerce').fillna(0)
     
     # 2. Facturas en intersección, 'Exonerada Parcial' Y saldos diferentes
-    # (Esta línea ahora funciona gracias a la corrección anterior)
     df_ajustes = df_interseccion[
         (df_interseccion['estado_norm_covinoc'] == 'EXONERADA PARCIAL') & 
         (df_interseccion['importe_cartera'] != df_interseccion['saldo_covinoc'])
     ].copy()
     
     # 3. Calcular la diferencia
-    # (Esta línea ahora funciona gracias a la corrección anterior)
     df_ajustes['diferencia'] = df_ajustes['importe_cartera'] - df_ajustes['saldo_covinoc']
 
     return df_a_subir, df_a_exonerar, df_aviso_no_pago, df_reclamadas, df_ajustes
@@ -457,8 +444,12 @@ def main():
                 'nombrecliente_cartera', 'nit_cartera', 'factura_norm_cartera', 'fecha_vencimiento', 'dias_vencido', 
                 'importe_cartera', 'nomvendedor_cartera', 'saldo_covinoc', 'estado_covinoc', 'clave_unica'
             ]
-            # Usamos df_interseccion como base para las columnas, ya que df_aviso_no_pago es un subconjunto
-            columnas_existentes_aviso = [col for col in columnas_mostrar_aviso if col in df_interseccion.columns] 
+            
+            # ===================== INICIO DE LA CORRECCIÓN (NameError) =====================
+            # 'df_interseccion' no existe en main(). Usamos 'df_aviso_no_pago' 
+            # (que está en scope) ya que tiene las mismas columnas.
+            columnas_existentes_aviso = [col for col in columnas_mostrar_aviso if col in df_aviso_no_pago.columns]
+            # ====================== FIN DE LA CORRECCIÓN (NameError) =======================
             
             st.dataframe(df_aviso_no_pago[columnas_existentes_aviso], use_container_width=True, hide_index=True)
             st.download_button(
