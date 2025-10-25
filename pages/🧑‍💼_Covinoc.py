@@ -345,9 +345,9 @@ def cargar_y_comparar_datos():
 # ================== INICIO DE LA MODIFICACIÓN (Lógica Tipo Documento) ==================
 def get_tipo_doc_from_nit_col(nit_str_raw: str) -> str:
     """
-    Intenta adivinar el Tipo de Documento (N, C, T, E, P) basándose en el
-    string original de la columna 'nit' o 'documento', según las reglas
-    del instructivo (imagen) y reglas de negocio de Colombia.
+    Determina si un documento es NIT ('N') o Cédula ('C') [MODIFICADO].
+    - Es 'N' si contiene guión ('-') o si los números empiezan por 8 o 9.
+    - En CUALQUIER otro caso, se asume 'C'.
     """
     if not isinstance(nit_str_raw, str) or pd.isna(nit_str_raw):
         return 'C' # Default a Cédula de Ciudadanía si es nulo o no string
@@ -370,43 +370,10 @@ def get_tipo_doc_from_nit_col(nit_str_raw: str) -> str:
     if (nit_norm.startswith('8') or nit_norm.startswith('9')):
         return 'N'
         
-    # --- Regla 2: Cédula (C) ---
-    # Cédulas de Ciudadanía (C) - 8 o 10 dígitos son las más comunes
-    if length == 10:
-        # 10 dígitos (Cédula nueva o T.I. nueva). 'C' es más probable.
-        return 'C'
-    if length == 8:
-        return 'C' # Cédula antigua.
-    
-    # --- Regla 3: Tarjeta de Identidad (T) ---
-    if length == 7:
-        return 'T' # Tarjeta de Identidad (antiguas)
-    if length == 11:
-        return 'T' # Tarjeta de Identidad (nuevas)
-
-    # --- Regla 4: Casos ambiguos (9 dígitos) ---
-    if length == 9:
-        # Ya filtramos los que empiezan con 8 o 9 (NITs).
-        # Es más probable C.C.
-        return 'C'
-
-    # --- Regla 5: Pasaporte (P) o Extranjería (E) ---
-    # Si tiene letras (y no es un guión de NIT que ya filtramos)
-    if re.search(r'[A-Z]', nit_str_raw_clean):
-        if nit_str_raw_clean.startswith('PA'):
-            return 'P'
-        if nit_str_raw_clean.startswith('CE'):
-            return 'E'
-        # Si tiene letras pero no es un patrón claro, P es un default
-        return 'P'
-    
-    # --- Regla 6: Cédula Extranjería (E) ---
-    # Si es otra longitud (ej. 6 dígitos), 'E' (Extranjería) es una suposición
-    if length == 6:
-        return 'E'
-    
-    # --- Default ---
-    # Si no coincide nada, 'C' es el default más seguro
+    # --- Regla 2: Todo lo demás es Cédula (C) ---
+    # Ya que no fue 'N' por guión ni por prefijo 8/9,
+    # cualquier otra cosa (longitud 7, 8, 10, 11, con letras, etc.)
+    # se forzará a 'C' según la solicitud.
     return 'C'
 # =================== FIN DE LA MODIFICACIÓN (Lógica Tipo Documento) ===================
 
@@ -501,8 +468,8 @@ def main():
             # script, puedes quitar el '#' para mostrar la imagen.
             
             # st.image(
-            #      "image_5019c6.png", 
-            #      caption="Instructivo Carga Masiva (Referencia)"
+            #     "image_5019c6.png", 
+            #     caption="Instructivo Carga Masiva (Referencia)"
             # )
             # =================== FIN DE LA CORRECCIÓN DEL ERROR ===================
 
@@ -667,7 +634,7 @@ def main():
                 # Se usa el 'documento' original de Covinoc para TIPO y DOCUMENTO
                 df_ajustes_excel['TIPO_DOCUMENTO'] = df_ajustes['documento'].apply(get_tipo_doc_from_nit_col)
                 df_ajustes_excel['DOCUMENTO'] = df_ajustes['documento']
-                # =================== FIN DE LA MODIFICACIÓN SOLICITADA ===================
+                # =================== FIN DE LA MODIFICACIÓN SOLICITLADA ===================
                 df_ajustes_excel['TITULO_VALOR'] = df_ajustes['factura_norm_cartera']
                 # El VALOR a exonerar es la DIFERENCIA
                 df_ajustes_excel['VALOR'] = pd.to_numeric(df_ajustes['diferencia'], errors='coerce').fillna(0).astype(int)
