@@ -410,14 +410,17 @@ def get_tipo_doc_from_nit_col(nit_str_raw: str) -> str:
     return 'C'
 # =================== FIN DE LA MODIFICACIÓN (Lógica Tipo Documento) ===================
 
+# ================== INICIO DE LA MODIFICACIÓN (Formato Fecha YYYY/MM/DD) ==================
 def format_date(date_obj) -> str:
-    """Formatea un objeto de fecha a 'dd/mm/YYYY' o devuelve None."""
+    """Formatea un objeto de fecha a 'YYYY/mm/dd' o devuelve None."""
     if pd.isna(date_obj):
         return None
     try:
-        return pd.to_datetime(date_obj).strftime('%d/%m/%Y')
+        # Cambiado de '%d/%m/%Y' a '%Y/%m/%d'
+        return pd.to_datetime(date_obj).strftime('%Y/%m/%d')
     except Exception:
         return None
+# =================== FIN DE LA MODIFICACIÓN (Formato Fecha YYYY/MM/DD) ===================
 
 def to_excel(df: pd.DataFrame) -> bytes:
     """Convierte un DataFrame a un archivo Excel en memoria (bytes)."""
@@ -498,8 +501,8 @@ def main():
             # script, puedes quitar el '#' para mostrar la imagen.
             
             # st.image(
-            #      "image_5019c6.png", 
-            #      caption="Instructivo Carga Masiva (Referencia)"
+            #     "image_5019c6.png", 
+            #     caption="Instructivo Carga Masiva (Referencia)"
             # )
             # =================== FIN DE LA CORRECCIÓN DEL ERROR ===================
 
