@@ -1,5 +1,6 @@
 # ======================================================================================
 # ARCHIVO: Pagina_Covinoc.py (v6 - Lógica de Estados, Filtros 'U' y Descargas Excel)
+# MODIFICADO: Se añade sección de gestión por WhatsApp en Tab 3.
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -13,6 +14,7 @@ import re
 from datetime import datetime
 import dropbox
 import glob
+import urllib.parse # <-- IMPORTADO PARA WHATSAPP
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
@@ -34,6 +36,24 @@ PALETA_COLORES = {
     "alerta_amarillo": "#FBC02D",
     "exito_verde": "#388E3C"
 }
+
+# ================== INICIO DE LA MODIFICACIÓN (Datos Vendedores) ==================
+# Diccionario de Vendedores y Teléfonos (normalizados)
+# Las claves DEBEN coincidir con la salida de normalizar_nombre()
+VENDEDORES_WHATSAPP = {
+    "HUGO NELSON ZAPATA RAYO": "+573117658075",
+    "TANIA RESTREPO BENJUMEA": "+573207425966",
+    "DIEGO MAURICIO GARCIA RENGIFO": "+573205046277",
+    "ALEJANDRO CARBALLO MARQUEZ": "+573103820636",
+    "GUSTAVO ADOLFO PEREZ SANTA": "+573103663945",
+    "ELISABETH CAROLINA IBARRA MANSO": "+573156224689",
+    "CARLOS ALBERTO CASTRILLON LOPEZ": "+573147577658",
+    "LEIVYN GRABIEL GARCIA MUNOZ": "+573127574279",
+    "LEDUYN MELGAREJO ARIAS": "+573006620143",
+    "JERSON ATEHORTUA OLARTE": "+573104952606"
+}
+# =================== FIN DE LA MODIFICACIÓN (Datos Vendedores) ===================
+
 st.markdown(f"""
 <style>
     .stApp {{ background-color: {PALETA_COLORES['fondo_claro']}; }}
@@ -468,8 +488,8 @@ def main():
             # script, puedes quitar el '#' para mostrar la imagen.
             
             # st.image(
-            #     "image_5019c6.png", 
-            #     caption="Instructivo Carga Masiva (Referencia)"
+            #      "image_5019c6.png", 
+            #      caption="Instructivo Carga Masiva (Referencia)"
             # )
             # =================== FIN DE LA CORRECCIÓN DEL ERROR ===================
 
@@ -575,6 +595,7 @@ def main():
             
             columnas_existentes_aviso = [col for col in columnas_mostrar_aviso if col in df_aviso_no_pago.columns]
             
+            # Dataframe original
             st.dataframe(df_aviso_no_pago[columnas_existentes_aviso], use_container_width=True, hide_index=True)
 
             # --- Lógica de Descarga Excel (Tab 3) ---
@@ -592,6 +613,7 @@ def main():
             else:
                 excel_data_aviso = b""
 
+            # Botón de descarga original
             st.download_button(
                 label="📥 Descargar Excel para Aviso de No Pago (Formato Covinoc)", 
                 data=excel_data_aviso, 
@@ -599,6 +621,100 @@ def main():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
                 disabled=df_aviso_no_pago.empty
             )
+            
+            # ================== INICIO DE LA MODIFICACIÓN (Gestión WhatsApp) ==================
+            st.markdown("---")
+            st.subheader("🚀 Gestión de Avisos por Vendedor (WhatsApp)")
+            
+            if df_aviso_no_pago.empty:
+                st.info("No hay facturas en 'Aviso de No Pago' para gestionar.")
+            else:
+                st.info("Seleccione los vendedores para preparar los mensajes de gestión.")
+                
+                vendedores_unicos = sorted(df_aviso_no_pago['nomvendedor_cartera'].dropna().unique())
+                vendedores_seleccionados = st.multiselect(
+                    "Vendedores a gestionar:", 
+                    options=vendedores_unicos, 
+                    default=[]
+                )
+
+                if not vendedores_seleccionados:
+                    st.write("Seleccione uno o más vendedores para continuar.")
+                else:
+                    df_aviso_filtrado = df_aviso_no_pago[
+                        df_aviso_no_pago['nomvendedor_cartera'].isin(vendedores_seleccionados)
+                    ].copy()
+                    
+                    grouped = df_aviso_filtrado.groupby('nomvendedor_cartera')
+                    
+                    for vendor_name, group_df in grouped:
+                        st.markdown(f"---")
+                        st.markdown(f"#### Vendedor: **{vendor_name}** ({len(group_df)} facturas)")
+                        
+                        # Buscar teléfono
+                        vendor_name_norm = normalizar_nombre(vendor_name)
+                        phone_encontrado = VENDEDORES_WHATSAPP.get(vendor_name_norm, "")
+                        
+                        col1, col2 = st.columns([0.4, 0.6])
+                        
+                        with col1:
+                            phone_manual = st.text_input(
+                                "Teléfono (Ej: +57311...):", 
+                                value=phone_encontrado, 
+                                key=f"phone_{vendor_name_norm}"
+                            )
+                        
+                        # Construir el mensaje
+                        # Usamos el primer nombre para un saludo más cercano
+                        try:
+                            nombre_corto = vendor_name.split(' ')[0].capitalize()
+                        except Exception:
+                            nombre_corto = vendor_name
+
+                        mensaje_header = f"¡Hola {nombre_corto}! 👋\n\nPor favor, te pido gestionar la siguiente cartera que está próxima a aviso de no pago (>= 25 días vencidos):\n"
+                        mensaje_facturas = []
+                        
+                        for _, row in group_df.iterrows():
+                            cliente = str(row['nombrecliente_cartera']).strip()
+                            factura = str(row['factura_norm_cartera']).strip()
+                            try:
+                                valor = float(row['importe_cartera'])
+                                valor_str = f"${valor:,.0f}"
+                            except (ValueError, TypeError):
+                                valor_str = str(row['importe_cartera']) # Usar el valor tal cual si no es numérico
+                            dias = row['dias_vencido_cartera']
+                            
+                            mensaje_facturas.append(f"• *Cliente:* {cliente}\n  *Factura:* {factura}\n  *Valor:* {valor_str}\n  *Días Vencidos:* {dias}\n")
+                        
+                        mensaje_completo = mensaje_header + "\n".join(mensaje_facturas) + "\nQuedo atento a cualquier novedad. ¡Gracias!"
+                        
+                        # Limpiar teléfono y codificar mensaje
+                        phone_limpio = phone_manual.replace(' ', '').replace('+', '').strip()
+                        if not phone_limpio.startswith("57"):
+                             phone_limpio = f"57{phone_limpio}" # Asegurar código de país
+
+                        mensaje_url_encoded = urllib.parse.quote_plus(mensaje_completo)
+                        url_whatsapp = f"https://web.whatsapp.com/send?phone={phone_limpio}&text={mensaje_url_encoded}"
+                        
+                        with col2:
+                            st.write(" ") # Spacer para alinear el botón verticalmente
+                            st.link_button(
+                                "📲 Enviar a WhatsApp Web", 
+                                url_whatsapp, 
+                                use_container_width=True, 
+                                disabled=(not phone_manual)
+                            )
+                        
+                        with st.expander("Ver detalle de facturas y mensaje completo"):
+                            st.dataframe(group_df[columnas_existentes_aviso], use_container_width=True, hide_index=True)
+                            st.text_area(
+                                "Mensaje a Enviar:", 
+                                value=mensaje_completo, 
+                                height=250, 
+                                key=f"msg_{vendor_name_norm}",
+                                disabled=True
+                            )
+            # =================== FIN DE LA MODIFICACIÓN (Gestión WhatsApp) ===================
 
         with tab4:
             st.subheader("Facturas en Reclamación (Informativo)")
