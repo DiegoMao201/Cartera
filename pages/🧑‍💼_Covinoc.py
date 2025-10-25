@@ -501,8 +501,8 @@ def main():
             # script, puedes quitar el '#' para mostrar la imagen.
             
             # st.image(
-            #     "image_5019c6.png", 
-            #     caption="Instructivo Carga Masiva (Referencia)"
+            #      "image_5019c6.png", 
+            #      caption="Instructivo Carga Masiva (Referencia)"
             # )
             # =================== FIN DE LA CORRECCIÓN DEL ERROR ===================
 
@@ -545,7 +545,10 @@ def main():
             if not df_a_subir.empty:
                 df_subir_excel = pd.DataFrame()
                 df_subir_excel['TIPO_DOCUMENTO'] = df_a_subir['nit'].apply(get_tipo_doc_from_nit_col)
-                df_subir_excel['DOCUMENTO'] = df_a_subir['nit_norm_cartera']
+                # ================== INICIO DE LA MODIFICACIÓN SOLICITADA ==================
+                # Se usa el 'nit' original de cartera, ya que este registro no existe en Covinoc
+                df_subir_excel['DOCUMENTO'] = df_a_subir['nit']
+                # =================== FIN DE LA MODIFICACIÓN SOLICITADA ===================
                 df_subir_excel['TITULO_VALOR'] = df_a_subir['factura_norm']
                 df_subir_excel['VALOR'] = pd.to_numeric(df_a_subir['importe'], errors='coerce').fillna(0).astype(int)
                 df_subir_excel['FECHA'] = pd.to_datetime(df_a_subir['fecha_vencimiento'], errors='coerce').apply(format_date)
@@ -575,7 +578,10 @@ def main():
             if not df_a_exonerar.empty:
                 df_exonerar_excel = pd.DataFrame()
                 df_exonerar_excel['TIPO_DOCUMENTO'] = df_a_exonerar['documento'].apply(get_tipo_doc_from_nit_col)
-                df_exonerar_excel['DOCUMENTO'] = df_a_exonerar['nit_norm_cartera']
+                # ================== INICIO DE LA MODIFICACIÓN SOLICITADA ==================
+                # Se usa el 'documento' original de Covinoc
+                df_exonerar_excel['DOCUMENTO'] = df_a_exonerar['documento']
+                # =================== FIN DE LA MODIFICACIÓN SOLICITADA ===================
                 df_exonerar_excel['TITULO_VALOR'] = df_a_exonerar['factura_norm']
                 df_exonerar_excel['VALOR'] = pd.to_numeric(df_a_exonerar['saldo'], errors='coerce').fillna(0).astype(int)
                 df_exonerar_excel['FECHA'] = pd.to_datetime(df_a_exonerar['vencimiento'], errors='coerce').apply(format_date)
@@ -607,8 +613,11 @@ def main():
             # --- Lógica de Descarga Excel (Tab 3) ---
             if not df_aviso_no_pago.empty:
                 df_aviso_excel = pd.DataFrame()
-                df_aviso_excel['TIPO_DOCUMENTO'] = df_aviso_no_pago['nit_cartera'].apply(get_tipo_doc_from_nit_col)
-                df_aviso_excel['DOCUMENTO'] = df_aviso_no_pago['nit_norm_cartera_cartera']
+                # ================== INICIO DE LA MODIFICACIÓN SOLICITADA ==================
+                # Se usa el 'documento' original de Covinoc para TIPO y DOCUMENTO
+                df_aviso_excel['TIPO_DOCUMENTO'] = df_aviso_no_pago['documento'].apply(get_tipo_doc_from_nit_col)
+                df_aviso_excel['DOCUMENTO'] = df_aviso_no_pago['documento']
+                # =================== FIN DE LA MODIFICACIÓN SOLICITADA ===================
                 df_aviso_excel['TITULO_VALOR'] = df_aviso_no_pago['factura_norm_cartera']
                 df_aviso_excel['VALOR'] = pd.to_numeric(df_aviso_no_pago['importe_cartera'], errors='coerce').fillna(0).astype(int)
                 df_aviso_excel['FECHA'] = pd.to_datetime(df_aviso_no_pago['fecha_vencimiento_cartera'], errors='coerce').apply(format_date)
@@ -654,8 +663,11 @@ def main():
             # --- Lógica de Descarga Excel (Tab 5) ---
             if not df_ajustes.empty:
                 df_ajustes_excel = pd.DataFrame()
-                df_ajustes_excel['TIPO_DOCUMENTO'] = df_ajustes['nit_cartera'].apply(get_tipo_doc_from_nit_col)
-                df_ajustes_excel['DOCUMENTO'] = df_ajustes['nit_norm_cartera_cartera']
+                # ================== INICIO DE LA MODIFICACIÓN SOLICITADA ==================
+                # Se usa el 'documento' original de Covinoc para TIPO y DOCUMENTO
+                df_ajustes_excel['TIPO_DOCUMENTO'] = df_ajustes['documento'].apply(get_tipo_doc_from_nit_col)
+                df_ajustes_excel['DOCUMENTO'] = df_ajustes['documento']
+                # =================== FIN DE LA MODIFICACIÓN SOLICITADA ===================
                 df_ajustes_excel['TITULO_VALOR'] = df_ajustes['factura_norm_cartera']
                 # El VALOR a exonerar es la DIFERENCIA
                 df_ajustes_excel['VALOR'] = pd.to_numeric(df_ajustes['diferencia'], errors='coerce').fillna(0).astype(int)
