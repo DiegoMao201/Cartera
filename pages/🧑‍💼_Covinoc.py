@@ -451,7 +451,7 @@ def main():
         try:
             general_password = st.secrets["general"]["password"]
             vendedores_secrets = st.secrets["vendedores"]
-  M       except Exception as e:
+        except Exception as e:
             st.error(f"Error al cargar las contraseñas desde los secretos: {e}")
             st.stop()
         
@@ -669,7 +669,7 @@ def main():
                     },
                     # Deshabilitamos la edición de las columnas de datos
                     disabled=columnas_deshabilitadas, 
-                    # Usamos la clave dinámica de session_state
+            _       # Usamos la clave dinámica de session_state
                     key=st.session_state.data_editor_key_tab1 
                 )
                 
@@ -808,7 +808,8 @@ def main():
                 # ================== INICIO DE LA MODIFICACIÓN SOLICITADA ==================
                 # Se usa el 'documento' original de Covinoc para TIPO y DOCUMENTO
                 df_aviso_excel['TIPO_DOCUMENTO'] = df_aviso_no_pago['documento'].apply(get_tipo_doc_from_nit_col)
-AN             df_aviso_excel['DOCUMENTO'] = df_aviso_no_pago['documento']
+                # *** LÍNEA CORREGIDA *** (Se eliminó "AN" al inicio)
+                df_aviso_excel['DOCUMENTO'] = df_aviso_no_pago['documento']
                 # =================== FIN DE LA MODIFICACIÓN SOLICITADA ===================
                 df_aviso_excel['TITULO_VALOR'] = df_aviso_no_pago['factura_norm_cartera']
                 df_aviso_excel['VALOR'] = pd.to_numeric(df_aviso_no_pago['importe_cartera'], errors='coerce').fillna(0).astype(int)
@@ -910,7 +911,7 @@ AN             df_aviso_excel['DOCUMENTO'] = df_aviso_no_pago['documento']
                         mensaje_url_encoded = urllib.parse.quote_plus(mensaje_completo)
                         
                         # URL actualizada para usar wa.me (permite app de escritorio)
-AN                     url_whatsapp = f"https://wa.me/{phone_limpio}?text={mensaje_url_encoded}"
+                        url_whatsapp = f"https://wa.me/{phone_limpio}?text={mensaje_url_encoded}"
                         
                         with col2:
                             st.write(" ") # Spacer para alinear el botón verticalmente
@@ -924,7 +925,8 @@ AN                     url_whatsapp = f"https://wa.me/{phone_limpio}?t
                         with st.expander("Ver detalle de facturas y mensaje completo"):
                             st.dataframe(group_df[columnas_existentes_aviso], use_container_width=True, hide_index=True)
                             st.text_area(
-                                "Mensaje a Enviar:",AN                           value=mensaje_completo, 
+                                "Mensaje a Enviar:", 
+                                value=mensaje_completo, 
                                 height=300, # Altura aumentada
                                 key=f"msg_{vendor_name_norm}",
                                 disabled=True
@@ -950,7 +952,8 @@ AN                     url_whatsapp = f"https://wa.me/{phone_limpio}?t
             kpi_col1.metric(
                 label="Nº Facturas Reclamadas",
                 value=f"{len(df_reclamadas)}"
-AN         )
+            # *** LÍNEA CORREGIDA *** (Se eliminó "AN )" aquí)
+            )
             kpi_col2.metric(
                 label="Monto Total Reclamado",
                 value=f"${monto_total_reclamadas:,.0f}"
@@ -997,7 +1000,8 @@ AN         )
                 value=f"{clientes_unicos_ajuste}"
             )
             st.markdown("---")
-AN         # =================== FIN MODIFICACIÓN: Indicadores (Goal 1) ===================
+            # *** LÍNEA CORREGIDA *** (Se eliminó "AN" al inicio)
+            # =================== FIN MODIFICACIÓN: Indicadores (Goal 1) ===================
 
             columnas_mostrar_ajustes = [
                 'nombrecliente_cartera', 'nit_cartera', 'factura_norm_cartera', 'importe_cartera', 
@@ -1010,7 +1014,8 @@ AN         # =================== FIN MODIFICACIÓN: Indicadores (Goal 1) ===
             for col_moneda in ['importe_cartera', 'saldo_covinoc', 'diferencia']:
                 if col_moneda in df_ajustes_display.columns:
                     df_ajustes_display[col_moneda] = df_ajustes_display[col_moneda].map('${:,.0f}'.format)
-AN             
+            # *** LÍNEA CORREGIDA *** (Se eliminó "AN" aquí)
+            
             st.dataframe(df_ajustes_display, use_container_width=True, hide_index=True)
             
             # --- Lógica de Descarga Excel (Tab 5) ---
@@ -1021,9 +1026,12 @@ AN             
                 df_ajustes_excel['TIPO_DOCUMENTO'] = df_ajustes['documento'].apply(get_tipo_doc_from_nit_col)
                 df_ajustes_excel['DOCUMENTO'] = df_ajustes['documento']
                 # =================== FIN DE LA MODIFICACIÓN SOLICITLADA ===================
-an             df_ajustes_excel['TITULO_VALOR'] = df_ajustes['factura_norm_cartera']
+                # *** LÍNEA CORREGIDA *** (Se eliminó "an" al inicio)
+                df_ajustes_excel['TITULO_VALOR'] = df_ajustes['factura_norm_cartera']
+Click to copy
                 # El VALOR a exonerar es la DIFERENCIA
-    dias_range         df_ajustes_excel['VALOR'] = pd.to_numeric(df_ajustes['diferencia'], errors='coerce').fillna(0).astype(int)
+                # *** LÍNEA CORREGIDA *** (Se eliminó "dias_range" al inicio)
+                df_ajustes_excel['VALOR'] = pd.to_numeric(df_ajustes['diferencia'], errors='coerce').fillna(0).astype(int)
                 df_ajustes_excel['FECHA'] = pd.to_datetime(df_ajustes['fecha_vencimiento_cartera'], errors='coerce').apply(format_date)
                 excel_data_ajustes = to_excel(df_ajustes_excel)
             else:
@@ -1032,8 +1040,9 @@ an             df_ajustes_excel['TITULO_VALOR'] = df_ajustes['factura_norm
             st.download_button(
                 label="📥 Descargar Excel de Ajuste (Exoneración Parcial)", 
                 data=excel_data_ajustes, 
-                file_name="5_ajustes_exoneracion_parcial.xlsx",
-AN               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+M               file_name="5_ajustes_exoneracion_parcial.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                # *** LÍNEA CORREGIDA *** (Se eliminó "AN" al inicio)
                 disabled=df_ajustes.empty
             )
 
