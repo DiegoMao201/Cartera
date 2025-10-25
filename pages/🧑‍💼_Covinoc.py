@@ -1,6 +1,7 @@
 # ======================================================================================
-# ARCHIVO: Pagina_Covinoc.py (v6 - Lógica de Estados, Filtros 'U' y Descargas Excel)
-# MODIFICADO: Se añade sección de gestión por WhatsApp en Tab 3.
+# ARCHIVO: Pagina_Covinoc.py (v7 - Agrupación Clientes WApp y Link wa.me)
+# MODIFICADO: Se optimiza Tab 3 para agrupar facturas por cliente en el mensaje
+#             y se usa link 'wa.me' para abrir app de escritorio.
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -488,8 +489,8 @@ def main():
             # script, puedes quitar el '#' para mostrar la imagen.
             
             # st.image(
-            #      "image_5019c6.png", 
-            #      caption="Instructivo Carga Masiva (Referencia)"
+            #     "image_5019c6.png", 
+            #     caption="Instructivo Carga Masiva (Referencia)"
             # )
             # =================== FIN DE LA CORRECCIÓN DEL ERROR ===================
 
@@ -622,7 +623,7 @@ def main():
                 disabled=df_aviso_no_pago.empty
             )
             
-            # ================== INICIO DE LA MODIFICACIÓN (Gestión WhatsApp) ==================
+            # ================== INICIO DE LA MODIFICACIÓN (Gestión WhatsApp v2 - Agrupada) ==================
             st.markdown("---")
             st.subheader("🚀 Gestión de Avisos por Vendedor (WhatsApp)")
             
@@ -658,6 +659,7 @@ def main():
                         col1, col2 = st.columns([0.4, 0.6])
                         
                         with col1:
+                            # El teléfono se carga aquí y es editable por el usuario
                             phone_manual = st.text_input(
                                 "Teléfono (Ej: +57311...):", 
                                 value=phone_encontrado, 
@@ -665,41 +667,52 @@ def main():
                             )
                         
                         # Construir el mensaje
-                        # Usamos el primer nombre para un saludo más cercano
                         try:
                             nombre_corto = vendor_name.split(' ')[0].capitalize()
                         except Exception:
                             nombre_corto = vendor_name
 
-                        mensaje_header = f"¡Hola {nombre_corto}! 👋\n\nPor favor, te pido gestionar la siguiente cartera que está próxima a aviso de no pago (>= 25 días vencidos):\n"
-                        mensaje_facturas = []
+                        # Mensaje de encabezado actualizado
+                        mensaje_header = f"¡Hola {nombre_corto}! 👋\n\nPor favor, te pido gestionar la siguiente cartera que está próxima a **Aviso de No Pago en Covinoc** (>= 25 días vencidos):\n"
                         
-                        for _, row in group_df.iterrows():
-                            cliente = str(row['nombrecliente_cartera']).strip()
-                            factura = str(row['factura_norm_cartera']).strip()
-                            try:
-                                valor = float(row['importe_cartera'])
-                                valor_str = f"${valor:,.0f}"
-                            except (ValueError, TypeError):
-                                valor_str = str(row['importe_cartera']) # Usar el valor tal cual si no es numérico
-                            dias = row['dias_vencido_cartera']
+                        # Agrupar facturas por cliente
+                        mensaje_clientes_facturas = []
+                        grouped_by_client = group_df.groupby('nombrecliente_cartera')
+                        
+                        for client_name, client_df in grouped_by_client:
+                            cliente_str = str(client_name).strip()
+                            mensaje_clientes_facturas.append(f"\n• *Cliente:* {cliente_str}")
                             
-                            mensaje_facturas.append(f"• *Cliente:* {cliente}\n  *Factura:* {factura}\n  *Valor:* {valor_str}\n  *Días Vencidos:* {dias}\n")
-                        
-                        mensaje_completo = mensaje_header + "\n".join(mensaje_facturas) + "\nQuedo atento a cualquier novedad. ¡Gracias!"
+                            # Iterar sobre las facturas de ESE cliente
+                            for _, row in client_df.iterrows():
+                                factura = str(row['factura_norm_cartera']).strip()
+                                try:
+                                    valor = float(row['importe_cartera'])
+                                    valor_str = f"${valor:,.0f}"
+                                except (ValueError, TypeError):
+                                    valor_str = str(row['importe_cartera'])
+                                dias = row['dias_vencido_cartera']
+                                
+                                # Añadir detalles de la factura
+                                mensaje_clientes_facturas.append(f"   - *Factura:* {factura} | *Valor:* {valor_str} | *Días Vencidos:* {dias}")
+
+                        # Unir todo el mensaje
+                        mensaje_completo = mensaje_header + "\n".join(mensaje_clientes_facturas) + "\n\nQuedo atento a cualquier novedad. ¡Gracias!"
                         
                         # Limpiar teléfono y codificar mensaje
                         phone_limpio = phone_manual.replace(' ', '').replace('+', '').strip()
-                        if not phone_limpio.startswith("57"):
-                             phone_limpio = f"57{phone_limpio}" # Asegurar código de país
+                        if phone_limpio and not phone_limpio.startswith("57"):
+                                phone_limpio = f"57{phone_limpio}" # Asegurar código de país
 
                         mensaje_url_encoded = urllib.parse.quote_plus(mensaje_completo)
-                        url_whatsapp = f"https://web.whatsapp.com/send?phone={phone_limpio}&text={mensaje_url_encoded}"
+                        
+                        # URL actualizada para usar wa.me (permite app de escritorio)
+                        url_whatsapp = f"https://wa.me/{phone_limpio}?text={mensaje_url_encoded}"
                         
                         with col2:
                             st.write(" ") # Spacer para alinear el botón verticalmente
                             st.link_button(
-                                "📲 Enviar a WhatsApp Web", 
+                                "📲 Enviar a WhatsApp (Web/App)", # Texto de botón actualizado
                                 url_whatsapp, 
                                 use_container_width=True, 
                                 disabled=(not phone_manual)
@@ -710,11 +723,11 @@ def main():
                             st.text_area(
                                 "Mensaje a Enviar:", 
                                 value=mensaje_completo, 
-                                height=250, 
+                                height=300, # Altura aumentada
                                 key=f"msg_{vendor_name_norm}",
                                 disabled=True
                             )
-            # =================== FIN DE LA MODIFICACIÓN (Gestión WhatsApp) ===================
+            # =================== FIN DE LA MODIFICACIÓN (Gestión WhatsApp v2 - Agrupada) ===================
 
         with tab4:
             st.subheader("Facturas en Reclamación (Informativo)")
