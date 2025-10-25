@@ -1,7 +1,10 @@
 # ======================================================================================
-# ARCHIVO: Pagina_Covinoc.py (v7 - Agrupación Clientes WApp y Link wa.me)
-# MODIFICADO: Se optimiza Tab 3 para agrupar facturas por cliente en el mensaje
-#             y se usa link 'wa.me' para abrir app de escritorio.
+# ARCHIVO: Pagina_Covinoc.py (v8 - Indicadores, Filtros y Selección)
+# MODIFICADO: Se añaden KPIs a todas las pestañas.
+#             Se añade filtro de exclusión de clientes en Tab 1.
+#             Se añade selección por checkbox (data_editor) en Tab 1.
+#             Se optimiza Tab 3 para agrupar facturas por cliente en el mensaje
+#             y se usa link 'wa.me' para abrir app de escritorio.
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -58,11 +61,20 @@ VENDEDORES_WHATSAPP = {
 st.markdown(f"""
 <style>
     .stApp {{ background-color: {PALETA_COLORES['fondo_claro']}; }}
-    .stMetric {{ background-color: #FFFFFF; border-radius: 10px; padding: 15px; border: 1px solid #CCCCCC; }}
+    /* Modificación para métricas: añadir sombra y padding */
+    .stMetric {{ 
+        background-color: #FFFFFF; 
+        border-radius: 10px; 
+        padding: 20px; 
+        border: 1px solid #CCCCCC;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.05);
+    }}
     .stTabs [data-baseweb="tab-list"] {{ gap: 24px; }}
     .stTabs [data-baseweb="tab"] {{ height: 50px; white-space: pre-wrap; background-color: transparent; border-radius: 4px 4px 0px 0px; border-bottom: 2px solid #C0C0C0; }}
     .stTabs [aria-selected="true"] {{ border-bottom: 2px solid {PALETA_COLORES['primario']}; color: {PALETA_COLORES['primario']}; font-weight: bold; }}
     div[data-baseweb="input"], div[data-baseweb="select"], div[data-baseweb="text-area"] {{ background-color: #FFFFFF; border: 1.5px solid {PALETA_COLORES['secundario']}; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); padding-left: 5px; }}
+    /* CSS para el st.data_editor */
+    .stDataFrame {{ padding-top: 10px; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -489,8 +501,8 @@ def main():
             # script, puedes quitar el '#' para mostrar la imagen.
             
             # st.image(
-            #     "image_5019c6.png", 
-            #     caption="Instructivo Carga Masiva (Referencia)"
+            #      "image_5019c6.png", 
+            #      caption="Instructivo Carga Masiva (Referencia)"
             # )
             # =================== FIN DE LA CORRECCIÓN DEL ERROR ===================
 
@@ -524,39 +536,146 @@ def main():
             st.subheader("Facturas a Subir a Covinoc")
             st.markdown("Facturas de **clientes protegidos** que están en **Cartera Ferreinox** pero **NO** en Covinoc. (Excluye series W, X y terminadas en U).")
             
-            columnas_mostrar_subir = ['nombrecliente', 'nit', 'serie', 'numero', 'factura_norm', 'fecha_vencimiento', 'dias_vencido', 'importe', 'nomvendedor', 'clave_unica']
-            columnas_existentes_subir = [col for col in columnas_mostrar_subir if col in df_a_subir.columns]
-            
-            st.dataframe(df_a_subir[columnas_existentes_subir], use_container_width=True, hide_index=True)
-            
-            # --- Lógica de Descarga Excel (Tab 1) ---
-            if not df_a_subir.empty:
-                df_subir_excel = pd.DataFrame()
-                df_subir_excel['TIPO_DOCUMENTO'] = df_a_subir['nit'].apply(get_tipo_doc_from_nit_col)
-                # ================== INICIO DE LA MODIFICACIÓN SOLICITADA ==================
-                # Se usa el 'nit' original de cartera, ya que este registro no existe en Covinoc
-                df_subir_excel['DOCUMENTO'] = df_a_subir['nit']
-                # =================== FIN DE LA MODIFICACIÓN SOLICITADA ===================
-                df_subir_excel['TITULO_VALOR'] = df_a_subir['factura_norm']
-                df_subir_excel['VALOR'] = pd.to_numeric(df_a_subir['importe'], errors='coerce').fillna(0).astype(int)
-                df_subir_excel['FECHA'] = pd.to_datetime(df_a_subir['fecha_vencimiento'], errors='coerce').apply(format_date)
-                df_subir_excel['CODIGO_CONSULTA'] = 986638
-                excel_data_subir = to_excel(df_subir_excel)
+            if df_a_subir.empty:
+                st.info("No hay facturas pendientes por subir.")
             else:
-                excel_data_subir = b""
+                # ================== INICIO MODIFICACIÓN: Filtro de Clientes (Goal 3) ==================
+                st.markdown("---")
+                st.subheader("Filtros Adicionales")
+                clientes_unicos = sorted(df_a_subir['nombrecliente'].dropna().unique())
+                clientes_excluidos = st.multiselect(
+                    "Excluir Clientes del Listado:",
+                    options=clientes_unicos,
+                    default=[],
+                    help="Seleccione uno o más clientes para ocultar sus facturas de la lista de selección."
+                )
+                
+                # Aplicar filtro de exclusión
+                df_a_subir_filtrado = df_a_subir[~df_a_subir['nombrecliente'].isin(clientes_excluidos)].copy()
+                # =================== FIN MODIFICACIÓN: Filtro de Clientes (Goal 3) ====================
 
-            st.download_button(
-                label="📥 Descargar Excel para Subida (Formato Covinoc)", 
-                data=excel_data_subir, 
-                file_name="1_facturas_a_subir.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
-                disabled=df_a_subir.empty 
-            )
+                # ================== INICIO MODIFICACIÓN: Indicadores (Goal 1) ==================
+                st.markdown("---")
+                st.subheader("Indicadores de Gestión (Facturas Filtradas)")
+                
+                kpi_col1, kpi_col2, kpi_col3 = st.columns(3)
+                try:
+                    monto_total_filtrado = pd.to_numeric(df_a_subir_filtrado['importe'], errors='coerce').sum()
+                    clientes_unicos_filtrados = df_a_subir_filtrado['nombrecliente'].nunique()
+                except Exception:
+                    monto_total_filtrado = 0
+                    clientes_unicos_filtrados = 0
+
+                kpi_col1.metric(
+                    label="Nº Facturas (Filtradas)",
+                    value=f"{len(df_a_subir_filtrado)}"
+                )
+                kpi_col2.metric(
+                    label="Monto Total (Filtrado)",
+                    value=f"${monto_total_filtrado:,.0f}"
+                )
+                kpi_col3.metric(
+                    label="Nº Clientes (Filtrados)",
+                    value=f"{clientes_unicos_filtrados}"
+                )
+                st.markdown("---")
+                # =================== FIN MODIFICACIÓN: Indicadores (Goal 1) ===================
+            
+                # ================== INICIO MODIFICACIÓN: Selección de Facturas (Goal 2) ==================
+                st.subheader("Selección de Facturas para Descarga")
+                st.info("Utilice las casillas de la columna 'Seleccionar' para elegir qué facturas desea incluir en el archivo Excel.")
+
+                columnas_mostrar_subir = ['nombrecliente', 'nit', 'serie', 'numero', 'factura_norm', 'fecha_vencimiento', 'dias_vencido', 'importe', 'nomvendedor', 'clave_unica']
+                columnas_existentes_subir = [col for col in columnas_mostrar_subir if col in df_a_subir_filtrado.columns]
+                
+                # Preparamos el DF para el editor, añadiendo la columna 'Seleccionar'
+                df_para_seleccionar = df_a_subir_filtrado[columnas_existentes_subir].copy()
+                df_para_seleccionar.insert(0, "Seleccionar", False) # Columna de Checkbox
+                
+                # Columnas que no deben ser editables (todas excepto 'Seleccionar')
+                columnas_deshabilitadas = [col for col in df_para_seleccionar.columns if col != 'Seleccionar']
+
+                # Usamos st.data_editor para la selección
+                df_editado = st.data_editor(
+                    df_para_seleccionar,
+                    use_container_width=True,
+                    hide_index=True,
+                    # Configuración de la columna de selección
+                    column_config={
+                        "Seleccionar": st.column_config.CheckboxColumn(
+                            "Seleccionar",
+                            default=False,
+                        ),
+                        "importe": st.column_config.NumberColumn(
+                            "Importe",
+                            format="$ %d"
+                        )
+                    },
+                    # Deshabilitamos la edición de las columnas de datos
+                    disabled=columnas_deshabilitadas, 
+                    key="data_editor_subir"
+                )
+                
+                # Filtramos las filas que fueron seleccionadas
+                df_seleccionado = df_editado[df_editado["Seleccionar"] == True].copy()
+                
+                st.markdown(f"**Facturas seleccionadas para descarga: {len(df_seleccionado)}**")
+                # =================== FIN MODIFICACIÓN: Selección de Facturas (Goal 2) ===================
+
+                # --- Lógica de Descarga Excel (Tab 1) - MODIFICADA ---
+                # Ahora usa df_seleccionado en lugar de df_a_subir
+                if not df_seleccionado.empty:
+                    df_subir_excel = pd.DataFrame()
+                    df_subir_excel['TIPO_DOCUMENTO'] = df_seleccionado['nit'].apply(get_tipo_doc_from_nit_col)
+                    df_subir_excel['DOCUMENTO'] = df_seleccionado['nit']
+                    df_subir_excel['TITULO_VALOR'] = df_seleccionado['factura_norm']
+                    df_subir_excel['VALOR'] = pd.to_numeric(df_seleccionado['importe'], errors='coerce').fillna(0).astype(int)
+                    df_subir_excel['FECHA'] = pd.to_datetime(df_seleccionado['fecha_vencimiento'], errors='coerce').apply(format_date)
+                    df_subir_excel['CODIGO_CONSULTA'] = 986638
+                    excel_data_subir = to_excel(df_subir_excel)
+                else:
+                    excel_data_subir = b""
+
+                st.download_button(
+                    label="📥 Descargar Excel para Subida (SÓLO SELECCIONADAS)", 
+                    data=excel_data_subir, 
+                    file_name="1_facturas_a_subir_SELECCIONADAS.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                    # Se deshabilita si no hay nada seleccionado
+                    disabled=df_seleccionado.empty 
+                )
 
         with tab2:
             st.subheader("Facturas a Exonerar de Covinoc")
             st.markdown("Facturas en **Covinoc** (que no están 'Efectiva', 'Negada' o 'Exonerada') pero **NO** en la Cartera Ferreinox.")
             
+            # ================== INICIO MODIFICACIÓN: Indicadores (Goal 1) ==================
+            st.markdown("---")
+            st.subheader("Indicadores de Gestión")
+            
+            kpi_col1, kpi_col2, kpi_col3 = st.columns(3)
+            try:
+                monto_total_exonerar = pd.to_numeric(df_a_exonerar['saldo'], errors='coerce').sum()
+                clientes_unicos_exonerar = df_a_exonerar['cliente'].nunique()
+            except Exception:
+                monto_total_exonerar = 0
+                clientes_unicos_exonerar = 0
+
+            kpi_col1.metric(
+                label="Nº Facturas a Exonerar",
+                value=f"{len(df_a_exonerar)}"
+            )
+            kpi_col2.metric(
+                label="Monto Total a Exonerar",
+                value=f"${monto_total_exonerar:,.0f}"
+            )
+            kpi_col3.metric(
+                label="Nº Clientes Afectados",
+                value=f"{clientes_unicos_exonerar}"
+            )
+            st.markdown("---")
+            # =================== FIN MODIFICACIÓN: Indicadores (Goal 1) ===================
+
             columnas_mostrar_exonerar = ['cliente', 'documento', 'titulo_valor', 'factura_norm', 'saldo', 'fecha', 'vencimiento', 'estado', 'clave_unica']
             columnas_existentes_exonerar = [col for col in columnas_mostrar_exonerar if col in df_a_exonerar.columns]
             
@@ -589,6 +708,33 @@ def main():
             st.subheader("Facturas para Aviso de No Pago")
             st.markdown("Facturas que están **en ambos reportes** Y tienen un vencimiento **>= 25 días**.")
             
+            # ================== INICIO MODIFICACIÓN: Indicadores (Goal 1) ==================
+            st.markdown("---")
+            st.subheader("Indicadores de Gestión")
+            
+            kpi_col1, kpi_col2, kpi_col3 = st.columns(3)
+            try:
+                monto_total_aviso = pd.to_numeric(df_aviso_no_pago['importe_cartera'], errors='coerce').sum()
+                clientes_unicos_aviso = df_aviso_no_pago['nombrecliente_cartera'].nunique()
+            except Exception:
+                monto_total_aviso = 0
+                clientes_unicos_aviso = 0
+
+            kpi_col1.metric(
+                label="Nº Facturas en Aviso",
+                value=f"{len(df_aviso_no_pago)}"
+            )
+            kpi_col2.metric(
+                label="Monto Total en Aviso",
+                value=f"${monto_total_aviso:,.0f}"
+            )
+            kpi_col3.metric(
+                label="Nº Clientes en Aviso",
+                value=f"{clientes_unicos_aviso}"
+            )
+            st.markdown("---")
+            # =================== FIN MODIFICACIÓN: Indicadores (Goal 1) ===================
+
             columnas_mostrar_aviso = [
                 'nombrecliente_cartera', 'nit_cartera', 'factura_norm_cartera', 'fecha_vencimiento_cartera', 'dias_vencido_cartera', 
                 'importe_cartera', 'nomvendedor_cartera', 'saldo_covinoc', 'estado_covinoc', 'clave_unica'
@@ -694,7 +840,7 @@ def main():
                                 dias = row['dias_vencido_cartera']
                                 
                                 # Añadir detalles de la factura
-                                mensaje_clientes_facturas.append(f"   - *Factura:* {factura} | *Valor:* {valor_str} | *Días Vencidos:* {dias}")
+                                mensaje_clientes_facturas.append(f"    - *Factura:* {factura} | *Valor:* {valor_str} | *Días Vencidos:* {dias}")
 
                         # Unir todo el mensaje
                         mensaje_completo = mensaje_header + "\n".join(mensaje_clientes_facturas) + "\n\nQuedo atento a cualquier novedad. ¡Gracias!"
@@ -732,6 +878,33 @@ def main():
         with tab4:
             st.subheader("Facturas en Reclamación (Informativo)")
             st.markdown("Facturas que figuran en Covinoc con estado **'Reclamada'**.")
+
+            # ================== INICIO MODIFICACIÓN: Indicadores (Goal 1) ==================
+            st.markdown("---")
+            st.subheader("Indicadores de Gestión")
+            
+            kpi_col1, kpi_col2, kpi_col3 = st.columns(3)
+            try:
+                monto_total_reclamadas = pd.to_numeric(df_reclamadas['saldo'], errors='coerce').sum()
+                clientes_unicos_reclamadas = df_reclamadas['cliente'].nunique()
+            except Exception:
+                monto_total_reclamadas = 0
+                clientes_unicos_reclamadas = 0
+
+            kpi_col1.metric(
+                label="Nº Facturas Reclamadas",
+                value=f"{len(df_reclamadas)}"
+            )
+            kpi_col2.metric(
+                label="Monto Total Reclamado",
+                value=f"${monto_total_reclamadas:,.0f}"
+            )
+            kpi_col3.metric(
+                label="Nº Clientes",
+                value=f"{clientes_unicos_reclamadas}"
+            )
+            st.markdown("---")
+            # =================== FIN MODIFICACIÓN: Indicadores (Goal 1) ===================
             
             columnas_mostrar_reclamadas = ['cliente', 'documento', 'titulo_valor', 'factura_norm', 'saldo', 'fecha', 'vencimiento', 'estado', 'clave_unica']
             columnas_existentes_reclamadas = [col for col in columnas_mostrar_reclamadas if col in df_reclamadas.columns]
@@ -742,6 +915,34 @@ def main():
             st.subheader("Ajustes por Abonos Parciales")
             st.markdown("Facturas en **ambos reportes** donde el **Saldo Covinoc es MAYOR** al **Importe Cartera** (implica un abono no reportado).")
             
+            # ================== INICIO MODIFICACIÓN: Indicadores (Goal 1) ==================
+            st.markdown("---")
+            st.subheader("Indicadores de Gestión")
+            
+            kpi_col1, kpi_col2, kpi_col3 = st.columns(3)
+            try:
+                # 'diferencia' ya se calcula como numérica en la carga de datos
+                monto_total_ajuste = pd.to_numeric(df_ajustes['diferencia'], errors='coerce').sum()
+                clientes_unicos_ajuste = df_ajustes['nombrecliente_cartera'].nunique()
+            except Exception:
+                monto_total_ajuste = 0
+                clientes_unicos_ajuste = 0
+
+            kpi_col1.metric(
+                label="Nº Facturas para Ajuste",
+                value=f"{len(df_ajustes)}"
+            )
+            kpi_col2.metric(
+                label="Monto Total a Ajustar",
+                value=f"${monto_total_ajuste:,.0f}"
+            )
+            kpi_col3.metric(
+                label="Nº Clientes Afectados",
+                value=f"{clientes_unicos_ajuste}"
+            )
+            st.markdown("---")
+            # =================== FIN MODIFICACIÓN: Indicadores (Goal 1) ===================
+
             columnas_mostrar_ajustes = [
                 'nombrecliente_cartera', 'nit_cartera', 'factura_norm_cartera', 'importe_cartera', 
                 'saldo_covinoc', 'diferencia', 'dias_vencido_cartera', 'estado_covinoc', 'clave_unica'
