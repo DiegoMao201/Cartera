@@ -259,7 +259,12 @@ def cargar_y_comparar_datos():
 
     # --- Tab 2: Exoneraciones ---
     # 1. Filtrar Covinoc a solo facturas "comparables" (excluir cerradas)
-    estados_cerrados = ['EFECTIVA', 'NEGADA']
+    
+    # ================== INICIO DE LA MODIFICACIÓN (Excluir 'EXONERADA') ==================
+    # Se añade 'EXONERADA' a la lista para que no aparezcan en la pestaña 2.
+    estados_cerrados = ['EFECTIVA', 'NEGADA', 'EXONERADA']
+    # =================== FIN DE LA MODIFICACIÓN (Excluir 'EXONERADA') ===================
+    
     df_covinoc_comparable = df_covinoc[~df_covinoc['estado_norm'].isin(estados_cerrados)].copy()
     # 2. Obtener *todas* las claves únicas que existen en Cartera
     set_claves_cartera_total = set(df_cartera['clave_unica'].dropna().unique())
@@ -279,7 +284,7 @@ def cargar_y_comparar_datos():
     )
     
     # ===================== INICIO DE LA CORRECCIÓN (KeyError) =====================
-    # Renombramos manualmente las columnas que no colisionaron pero que el 
+    # Renombramos manually las columnas que no colisionaron pero que el 
     # código posterior espera que tengan sufijos.
     
     columnas_a_renombrar = {
@@ -493,8 +498,8 @@ def main():
             # script, puedes quitar el '#' para mostrar la imagen.
             
             # st.image(
-            #     "image_5019c6.png", 
-            #     caption="Instructivo Carga Masiva (Referencia)"
+            #      "image_5019c6.png", 
+            #      caption="Instructivo Carga Masiva (Referencia)"
             # )
             # =================== FIN DE LA CORRECCIÓN DEL ERROR ===================
 
@@ -556,7 +561,7 @@ def main():
 
         with tab2:
             st.subheader("Facturas a Exonerar de Covinoc")
-            st.markdown("Facturas en **Covinoc** (que no están 'Efectiva' o 'Negada') pero **NO** en la Cartera Ferreinox.")
+            st.markdown("Facturas en **Covinoc** (que no están 'Efectiva', 'Negada' o 'Exonerada') pero **NO** en la Cartera Ferreinox.")
             
             columnas_mostrar_exonerar = ['cliente', 'documento', 'titulo_valor', 'factura_norm', 'saldo', 'fecha', 'vencimiento', 'estado', 'clave_unica']
             columnas_existentes_exonerar = [col for col in columnas_mostrar_exonerar if col in df_a_exonerar.columns]
