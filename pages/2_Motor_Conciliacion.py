@@ -250,12 +250,16 @@ def cargar_ventas_diarias(path_ventas_diarias):
         # Asumiré nombres comunes. DEBES REEMPLAZARLOS.
         
         # Nombres de columna que ASUMO (REEMPLAZAR)
-        COL_FECHA_VENTA = 'Fecha'
-        COL_CLIENTE_VENTA = 'Cliente'
-        COL_TOTAL_FACTURA = 'Total_Factura'
-        COL_FORMA_PAGO = 'Forma_Pago'
+        COL_FECHA_VENTA = 'Fecha'           # <--- REVISA ESTE NOMBRE EN TU CSV
+        COL_CLIENTE_VENTA = 'Cliente'       # <--- REVISA ESTE NOMBRE EN TU CSV
+        COL_TOTAL_FACTURA = 'Total_Factura' # <--- REVISA ESTE NOMBRE EN TU CSV
+        COL_FORMA_PAGO = 'Forma_Pago'       # <--- REVISA ESTE NOMBRE EN TU CSV
         VALOR_FORMA_PAGO_CONTADO = 'CONTADO' 
 
+        # ==================================================================
+        # --- INICIO DE LA CORRECCIÓN PARA EL 'KeyError: fecha' ---
+        # --- MOVEMOS TODA LA LÓGICA DENTRO DEL TRY...EXCEPT ---
+        # ==================================================================
         try:
             df_std = df.rename(columns={
                 COL_FECHA_VENTA: 'fecha',
@@ -263,20 +267,27 @@ def cargar_ventas_diarias(path_ventas_diarias):
                 COL_FORMA_PAGO: 'forma_pago',
                 COL_CLIENTE_VENTA: 'cliente'
             })
+            
+            # Esta es la línea que generaba el KeyError
+            df_std['fecha'] = pd.to_datetime(df_std['fecha'], errors='coerce')
+            df_std['valor_contado'] = pd.to_numeric(df_std['valor_contado'], errors='coerce').fillna(0)
+            
+            df_contado = df_std[df_std['forma_pago'] == VALOR_FORMA_PAGO_CONTADO].copy()
+            
+            if df_contado.empty:
+                st.warning(f"No se encontraron ventas de contado (Forma_Pago = '{VALOR_FORMA_PAGO_CONTADO}') en 'detalle_ventas'.")
+
+            return df_contado
+
         except KeyError as e:
             st.error(f"Error en 'detalle_ventas': No se encontró la columna {e}.")
-            st.info(f"Por favor, ajusta los nombres de las columnas en la función 'cargar_ventas_diarias' del código.")
+            st.info(f"El error {e} significa que la columna original (p.ej. '{COL_FECHA_VENTA}') no existe en tu CSV, o la renombrada (p.ej. 'fecha') no se pudo crear.")
+            st.info(f"Por favor, ajusta los nombres de las columnas (COL_FECHA_VENTA, etc.) en la función 'cargar_ventas_diarias' del código para que coincidan con tu archivo CSV.")
             return pd.DataFrame()
+        # ==================================================================
+        # --- FIN DE LA CORRECCIÓN ---
+        # ==================================================================
         
-        df_std['fecha'] = pd.to_datetime(df_std['fecha'], errors='coerce')
-        df_std['valor_contado'] = pd.to_numeric(df_std['valor_contado'], errors='coerce').fillna(0)
-        
-        df_contado = df_std[df_std['forma_pago'] == VALOR_FORMA_PAGO_CONTADO].copy()
-        
-        if df_contado.empty:
-            st.warning(f"No se encontraron ventas de contado (Forma_Pago = '{VALOR_FORMA_PAGO_CONTADO}') en 'detalle_ventas'.")
-
-        return df_contado
     return pd.DataFrame()
 
 # ======================================================================================
@@ -299,7 +310,7 @@ def run_auto_reconciliation(df_bancos, df_cartera, df_ventas):
     mapa_facturas = {row['id_factura_unica']: row for _, row in df_cartera.iterrows()}
     
     for idx, pago in df_bancos_pendientes.iterrows():
-        matches = re.findall(r'(\d+-\d+)', pago['texto_match'])
+        matches = re.findall(r'(\d+-\d+)', pago['texto_match']) # Busca patrones como "123-456"
         for id_factura_potencial in matches:
             if id_factura_potencial in mapa_facturas:
                 factura = mapa_facturas[id_factura_potencial]
@@ -321,6 +332,7 @@ def run_auto_reconciliation(df_bancos, df_cartera, df_ventas):
     mapa_nits = cartera_restante.groupby('nit_norm')['IMPORTE'].apply(list).to_dict()
 
     for _, pago in df_bancos_pendientes[~df_bancos_pendientes['id_banco_unico'].isin(ids_banco_conciliados)].iterrows():
+        # Busca NITS (números de 8 a 10 dígitos)
         nits_potenciales = re.findall(r'(\d{8,10})', pago['texto_match'])
         for nit in nits_potenciales:
             if nit in mapa_nits:
@@ -353,7 +365,7 @@ def run_auto_reconciliation(df_bancos, df_cartera, df_ventas):
             fecha_pago_str = pago['fecha'].strftime('%Y-%m-%d')
             if fecha_pago_str in mapa_ventas:
                 for valor_venta in mapa_ventas[fecha_pago_str]:
-                    if abs(pago['valor'] - valor_venta) < 100: 
+                    if abs(pago['valor'] - valor_venta) < 100: # Tolerancia muy baja para contado
                         pago['status'] = 'Conciliado (Auto N3 - Venta Contado)'
                         pago['id_factura_asignada'] = f"CONTADO-{fecha_pago_str}"
                         pago['cliente_asignado'] = "Venta Contado" 
