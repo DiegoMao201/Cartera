@@ -9,3 +9,8 @@ Plotly
 yagmail
 dropbox
 xlsxwriter
+gspread
+gspread-dataframe
+oauth2client
+fuzzywuzzy
+python-Levenshtein
