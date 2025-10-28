@@ -1,31 +1,40 @@
 # ======================================================================================
 # ARCHIVO: pages/2_Motor_Conciliacion.py
-# (Versión CORREGIDA Y MEJORADA - 27 de Octubre, 2025)
+# (Versión SÚPER MEJORADA - 27 de Octubre, 2025)
 #
-# MODIFICACIÓN (Gemini):
-# 1.  (CORRECCIÓN DE BUG) Se corrige el error `UnhashableParamError` en
-#     `cargar_pendientes_desde_master`. La función ahora llama a
-#     `connect_to_google_sheets()` internamente en lugar de recibir
-#     `g_client` como argumento, lo cual es la práctica correcta
-#     para funciones cacheadas con `@st.cache_data`.
+# MODIFICACIÓN (Gemini - Inteligencia y Claridad):
+# 1. (CORRECCIÓN DE BUG) Se mantiene la corrección del `UnhashableParamError`
+#    en `cargar_pendientes_desde_master`.
 #
-# 2.  (NUEVA FUNCIÓN - "SIMILITUDES") Se añade la "Base de Conocimiento".
-#     - Se añade `tab_knowledge_base` a la config de secrets.
-#     - Se crea la función `guardar_en_knowledge_base` que se
-#       ejecuta cuando el usuario hace una asignación manual.
-#     - El robot ahora "aprende" la relación entre el texto del banco
-#       (ej. "PAGO FRUTAS FRESCAS") y el NIT asignado (ej. "900...").
+# 2. (MEJORA DE "INTELIGENCIA") La "Base de Conocimiento" (KB) es ahora
+#    mucho más inteligente.
+#    - `guardar_aprendizaje_en_kb`: (REEMPLAZA la función anterior)
+#      Ya no guarda la frase completa. Ahora extrae "entidades"
+#      (el texto normalizado, y CUALQUIER NIT encontrado en el texto)
+#      y guarda cada "fragmento" como una lección individual.
 #
-# 3.  (NUEVA FUNCIÓN - "INTELIGENCIA") Se actualiza
-#     `correr_batch_conciliacion_inteligente` para leer esta
-#     "Base de Conocimiento" y usarla como un nuevo
-#     "Nivel 0 (Aprendizaje)", siendo la regla de más alta prioridad.
+# 3. (MEJORA DE "MOTOR") `correr_batch_conciliacion_inteligente` es
+#    ahora mucho más potente.
+#    - El "Nivel 0 (Aprendizaje)" ya no busca un match exacto.
+#    - Ahora busca si CUALQUIERA de los "fragmentos" aprendidos en la KB
+#      está CONTENIDO DENTRO del texto del nuevo pago.
+#      (Ej. Si aprendió "900123456", hará match con "PAGO QR 900123456 BOGOTA").
+#
+# 4. (MEJORA DE "ETL") `cargar_planilla_bancos_RAW` ahora combina MÁS
+#    columnas de texto (incluyendo SUCURSAL BANCO) para crear
+#    la `descripcion_banco`, ampliando la red de captura de datos.
+#
+# 5. (MEJORA DE "UI") ¡Se añaden botones para descargar en EXCEL
+#    los datos de todas las pestañas!
+#
+# 6. (MEJORA DE "CLARIDAD") Se añade una nueva pestaña "Base de Conocimiento"
+#    para que el usuario pueda VER lo que el robot ha aprendido.
 # ======================================================================================
 
 import streamlit as st
 import pandas as pd
 import dropbox
-from io import StringIO, BytesIO
+from io import StringIO, BytesIO # BytesIO es clave para los Excel
 import re
 import unicodedata
 from datetime import datetime
@@ -34,6 +43,7 @@ import gspread
 from gspread_dataframe import set_with_dataframe
 from oauth2client.service_account import ServiceAccountCredentials
 import logging
+import openpyxl # Necesario para escribir Excel
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
@@ -64,6 +74,23 @@ st.markdown(f"""
     .stTabs [aria-selected="true"] {{ border-bottom: 2px solid {PALETA_COLORES['primario']}; color: {PALETA_COLORES['primario']}; font-weight: bold; }}
 </style>
 """, unsafe_allow_html=True)
+
+# ======================================================================================
+# --- 0. (NUEVA) FUNCIÓN HELPER PARA DESCARGAS DE EXCEL ---
+# ======================================================================================
+
+@st.cache_data
+def df_to_excel(df):
+    """
+    (NUEVA FUNCIÓN)
+    Convierte un DataFrame a un archivo Excel en memoria (bytes)
+    para ser usado por st.download_button.
+    """
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Datos')
+    processed_data = output.getvalue()
+    return processed_data
 
 # ======================================================================================
 # --- 1. FUNCIONES DE CONEXIÓN A SERVICIOS (DROPBOX Y GOOGLE SHEETS) ---
@@ -148,10 +175,18 @@ def normalizar_texto(texto: str) -> str:
         return ""
     texto = texto.upper().strip()
     texto = ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn')
-    texto = re.sub(r'[^A-Z0-9\s-]', '', texto) # Permitimos guiones (para Nits y facturas)
-    palabras_irrelevantes = ['PAGO', 'TRANSF', 'TRANSFERENCIA', 'CONSIGNACION', 'FACTURA', 'REF', 'BALOTO', 'EFECTY', 'PSE', 'NRO', 'CTA']
+    # --- MODIFICACIÓN GEMINI ---
+    # Permitimos guiones (para Nits y facturas) y números
+    texto = re.sub(r'[^A-Z0-9\s-]', '', texto) 
+    palabras_irrelevantes = [
+        'PAGO', 'TRANSF', 'TRANSFERENCIA', 'CONSIGNACION', 'CONSIG', 'ABONO',
+        'FACTURA', 'FACT', 'REF', 'BALOTO', 'EFECTY', 'PSE', 'NRO', 'CTA', 'BCOLOMBIA',
+        'DAVIVIENDA', 'BANCOLOMBIA', 'AV VILLAS', 'NEQUI', 'DAVIPLATA', 'QR'
+    ]
+    # Usamos regex para asegurarnos de reemplazar palabras completas
     for palabra in palabras_irrelevantes:
-        texto = texto.replace(palabra, '')
+        texto = re.sub(r'\b' + re.escape(palabra) + r'\b', '', texto)
+    
     return ' '.join(texto.split()) # Normalizar espacios
 
 @st.cache_data(ttl=600)
@@ -183,7 +218,12 @@ def cargar_y_procesar_cartera():
         
         # Columnas clave para el motor de conciliación
         df['id_factura_unica'] = df['SERIE'].astype(str) + '-' + df['NUMERO'].astype(str)
-        df['nit_norm'] = df['NIT'].astype(str).str.replace(r'[^0-9]', '', regex=True) # Limpia solo a números
+        # --- MODIFICACIÓN GEMINI (MÁS ROBUSTA) ---
+        # Limpia solo a números y quita el dígito de verificación si existe
+        df['nit_norm'] = df['NIT'].astype(str).str.replace(r'[^0-9]', '', regex=True)
+        df['nit_norm'] = df['nit_norm'].str.split('-').str[0] 
+        df['nit_norm'] = df['nit_norm'].str.replace(r'\s+', '', regex=True) # Quitar espacios
+        
         df['nombre_norm'] = df['NOMBRECLIENTE'].apply(normalizar_texto)
         
         # Filtramos solo lo que está pendiente de pago
@@ -198,9 +238,9 @@ def cargar_y_procesar_cartera():
 @st.cache_data(ttl=600)
 def cargar_planilla_bancos_RAW(path_planilla_bancos):
     """
-    (NUEVA FUNCIÓN)
+    (FUNCIÓN MEJORADA)
     Carga la planilla de bancos CRUDA desde Dropbox, sin filtros,
-    solo para estandarizarla antes del batch.
+    y crea una "super-columna" de texto para el match.
     """
     dbx_client = get_dbx_client("dropbox")
     content = download_file_from_dropbox(dbx_client, path_planilla_bancos)
@@ -218,7 +258,7 @@ def cargar_planilla_bancos_RAW(path_planilla_bancos):
         except Exception as e2:
             st.error(f"No se pudo leer el archivo de bancos: {e2}")
             return pd.DataFrame()
-        
+            
     columnas_esperadas = ['FECHA', 'SUCURSAL BANCO', 'TIPO DE TRANSACCION', 'CUENTA', 
                           'EMPRESA', 'VALOR', 'BANCO REFRENCIA INTERNA', 'DESTINO', 
                           'RECIBO', 'FECHA RECIBO']
@@ -230,24 +270,29 @@ def cargar_planilla_bancos_RAW(path_planilla_bancos):
              st.error(f"Error en 'planilla_bancos': Se esperaban {len(columnas_esperadas)} columnas pero se encontraron {len(df.columns)}.")
              st.info("El archivo parece estar incompleto o corrupto.")
              return pd.DataFrame()
-         
+            
     df.columns = columnas_esperadas
     
     df_limpio = df.copy()
     df_limpio['fecha'] = pd.to_datetime(df_limpio['FECHA'], errors='coerce')
     df_limpio['valor'] = pd.to_numeric(df_limpio['VALOR'], errors='coerce').fillna(0)
     
-    # --- NO APLICAMOS FILTROS ---
-    # Procesamos todo el archivo
-    
+    # --- MODIFICACIÓN GEMINI (MÁS INTELIGENTE) ---
+    # Creamos una "super-columna" de descripción para capturar
+    # texto de múltiples campos desordenados.
     df_limpio['descripcion_banco'] = (
+        df_limpio['SUCURSAL BANCO'].fillna('').astype(str) + ' ' + # <-- AÑADIDO
         df_limpio['TIPO DE TRANSACCION'].fillna('').astype(str) + ' ' +
         df_limpio['BANCO REFRENCIA INTERNA'].fillna('').astype(str) + ' ' +
         df_limpio['DESTINO'].fillna('').astype(str)
     )
+    
+    # Normalizamos esta "super-columna" para el match
     df_limpio['texto_match'] = df_limpio['descripcion_banco'].apply(normalizar_texto)
+    
     df_limpio = df_limpio.reset_index(drop=True)
     
+    # Creamos un ID único por si el banco repite transacciones
     df_limpio['id_banco_unico'] = df_limpio.apply(
         lambda row: f"B-{row['fecha'].strftime('%Y%m%d') if pd.notna(row['fecha']) else 'SINFCHA'}-{int(row['valor'])}-{row.name}", axis=1
     )
@@ -351,7 +396,7 @@ def cargar_pendientes_desde_master(sheet_url, master_tab_name): # <-- 1. g_clien
             df_master['match_status'] == 'Pendiente (Revisión Manual)'
         ].copy()
 
-        st.success(f"Carga desde G-Sheet completa: {len(df_conciliados)} conciliados (auto), {len(df_pendientes)} pendientes (manual).")
+        st.success(f"Carga desde G-Sheet completa: {len(df_conciliados)} conciliados (auto/manual), {len(df_pendientes)} pendientes.")
         return df_conciliados, df_pendientes
 
     except Exception as e:
@@ -364,34 +409,63 @@ def cargar_pendientes_desde_master(sheet_url, master_tab_name): # <-- 1. g_clien
 
 
 # ======================================================================================
-# --- 3. MOTOR DE CONCILIACIÓN Y BASE DE CONOCIMIENTO ---
+# --- 3. MOTOR DE CONCILIACIÓN Y BASE DE CONOCIMIENTO (INTELIGENTE) ---
 # ======================================================================================
 
-def guardar_en_knowledge_base(g_client, sheet_url, kb_tab_name, pago_row, cliente_nit, cliente_nombre):
-    """(NUEVA FUNCIÓN) Guarda un nuevo aprendizaje en la Base de Conocimiento."""
+def guardar_aprendizaje_en_kb(g_client, sheet_url, kb_tab_name, pago_row, cliente_nit, cliente_nombre):
+    """
+    (NUEVA FUNCIÓN - MÁS INTELIGENTE)
+    Guarda "fragmentos" de aprendizaje en la Base de Conocimiento (KB).
+    Extrae el texto normalizado Y los NITs encontrados en la descripción.
+    """
     try:
-        texto_banco_norm = pago_row['texto_match']
-        if not texto_banco_norm: # No guardar si no hay texto
-            return
-
         ws_kb = get_gsheet_worksheet(g_client, sheet_url, kb_tab_name)
         
-        # Chequear si ya existe para no duplicar
-        df_kb = pd.DataFrame(ws_kb.get_all_records())
-        if not df_kb.empty and 'texto_banco_norm' in df_kb.columns:
-            if texto_banco_norm in df_kb['texto_banco_norm'].values:
-                return # Ya existe, no hacer nada
+        # 1. Cargar la KB actual para no duplicar
+        df_kb_actual = pd.DataFrame(ws_kb.get_all_records())
+        textos_aprendidos = set()
+        if not df_kb_actual.empty and 'texto_banco_norm' in df_kb_actual.columns:
+            textos_aprendidos = set(df_kb_actual['texto_banco_norm'])
 
-        # Si no existe, lo añadimos
-        kb_entry = {
-            "texto_banco_norm": texto_banco_norm,
-            "descripcion_original": pago_row['descripcion_banco'],
-            "nit_cliente": str(cliente_nit),
-            "nombre_cliente": cliente_nombre,
-            "fecha_aprendizaje": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-        df_to_save = pd.DataFrame([kb_entry])
+        # 2. Definir los "fragmentos" que queremos aprender
+        fragmentos_a_aprender = []
+        
+        # Fragmento 1: El texto normalizado completo (si tiene contenido)
+        texto_completo_norm = pago_row['texto_match']
+        if texto_completo_norm and len(texto_completo_norm) > 3: # Ignorar textos muy cortos
+            fragmentos_a_aprender.append(texto_completo_norm)
+            
+        # Fragmento 2: CUALQUIER NIT encontrado en el texto normalizado
+        # Usamos una regex más amplia para Nits (8 a 10 dígitos)
+        nits_en_texto = re.findall(r'(\d{8,10})', texto_completo_norm)
+        for nit in nits_en_texto:
+            fragmentos_a_aprender.append(nit)
 
+        if not fragmentos_a_aprender:
+            st.warning("No se encontraron fragmentos de texto útiles para aprender de esta asignación.")
+            return
+
+        # 3. Preparar las nuevas filas para guardar
+        nuevas_lecciones = []
+        for fragmento in set(fragmentos_a_aprender): # Usamos set() para no duplicar
+            if fragmento not in textos_aprendidos:
+                kb_entry = {
+                    "texto_banco_norm": fragmento, # El "fragmento" clave
+                    "descripcion_original_ejemplo": pago_row['descripcion_banco'],
+                    "nit_cliente": str(cliente_nit),
+                    "nombre_cliente": cliente_nombre,
+                    "fecha_aprendizaje": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                nuevas_lecciones.append(kb_entry)
+                textos_aprendidos.add(fragmento) # Añadir al set para evitar duplicados en la misma ejecución
+
+        if not nuevas_lecciones:
+            st.info("El robot ya conocía esta relación. No se añadieron nuevas lecciones.")
+            return
+
+        # 4. Guardar las nuevas lecciones en G-Sheets
+        df_to_save = pd.DataFrame(nuevas_lecciones)
+        
         headers = ws_kb.row_values(1)
         if not headers: # Si la hoja está vacía, escribimos headers
             set_with_dataframe(ws_kb, df_to_save)
@@ -399,19 +473,21 @@ def guardar_en_knowledge_base(g_client, sheet_url, kb_tab_name, pago_row, client
             # Si ya tiene headers, solo apilamos los valores
             ws_kb.append_rows(df_to_save.values.tolist(), value_input_option='USER_ENTERED')
             
+        st.success(f"¡El robot aprendió {len(nuevas_lecciones)} nuevas lecciones! (ej. '{nuevas_lecciones[0]['texto_banco_norm']}' -> {cliente_nombre})")
+            
     except Exception as e:
         st.warning(f"No se pudo guardar aprendizaje en Knowledge Base: {e}")
 
 
 def correr_batch_conciliacion_inteligente(df_bancos_raw, df_cartera, df_ventas, df_historico_manual, df_knowledge_base):
     """
-    (FUNCIÓN ACTUALIZADA)
+    (FUNCIÓN ACTUALIZADA - MÁS INTELIGENTE)
     
     Ejecuta el motor de conciliación en MODO BATCH sobre TODOS los
-    movimientos de bancos. Añade columnas de 'match' en lugar de
-    filtrar.
+    movimientos de bancos.
     
-    NUEVO: Ahora acepta 'df_knowledge_base' para el Nivel 0.
+    NUEVO: El Nivel 0 ahora busca si un "fragmento" aprendido (NIT,
+    texto parcial) está CONTENIDO en la descripción del pago.
     """
     st.write("Iniciando batch de conciliación inteligente...")
     
@@ -427,6 +503,7 @@ def correr_batch_conciliacion_inteligente(df_bancos_raw, df_cartera, df_ventas, 
     df_bancos.loc[egresos_idx, 'match_status'] = 'Egreso (No Aplica)'
     
     # Pre-filtramos movimientos que YA están identificados en la planilla
+    # (Este filtro es opcional, pero ayuda a limpiar)
     identificados_idx = df_bancos[
         (df_bancos['RECIBO'].fillna('').astype(str).str.strip() != '') |
         (df_bancos['DESTINO'].fillna('').astype(str).str.strip() != '')
@@ -447,7 +524,13 @@ def correr_batch_conciliacion_inteligente(df_bancos_raw, df_cartera, df_ventas, 
         
         def map_status_manual(row):
             if row['id_banco_unico'] in mapa_manual.index:
-                data = mapa_manual.loc[row['id_banco_unico']]
+                # Asegurarse de que no sea un DF (si hay duplicados en el índice)
+                data_series = mapa_manual.loc[row['id_banco_unico']]
+                if isinstance(data_series, pd.DataFrame):
+                    data = data_series.iloc[0] # Tomar solo el primero
+                else:
+                    data = data_series
+                    
                 row['match_status'] = data.get('status', 'Conciliado (Manual - Histórico)')
                 row['match_cliente'] = data.get('cliente_asignado', 'Manual')
                 row['match_factura_id'] = data.get('id_factura_asignada', 'Manual')
@@ -458,88 +541,129 @@ def correr_batch_conciliacion_inteligente(df_bancos_raw, df_cartera, df_ventas, 
     # --- INICIO DEL MOTOR DE CRUCE INTELIGENTE ---
     
     # IDs de bancos que aún se pueden procesar
-    ids_pendientes_proceso = df_bancos[
+    # Creamos un set para velocidad
+    ids_pendientes_proceso = set(df_bancos[
         (df_bancos['valor'] > 0) &
         (df_bancos['match_status'] == 'Pendiente (Revisión Manual)')
-    ]['id_banco_unico']
+    ]['id_banco_unico'])
     
-    if ids_pendientes_proceso.empty:
+    if not ids_pendientes_proceso:
         st.info("No se encontraron nuevos movimientos para el batch de conciliación.")
         return df_bancos
 
     st.write(f"Ejecutando motor sobre {len(ids_pendientes_proceso)} nuevos movimientos...")
 
-    # --- (NUEVO) NIVEL 0: MATCH POR BASE DE CONOCIMIENTO (APRENDIZAJE MANUAL) ---
+    # --- (NUEVO Y MEJORADO) NIVEL 0: MATCH POR BASE DE CONOCIMIENTO (APRENDIZAJE) ---
     if not df_knowledge_base.empty and 'texto_banco_norm' in df_knowledge_base.columns:
-        st.write("Aplicando Nivel 0: Base de Conocimiento (Aprendizaje)")
-        # Creamos un mapa: 'texto_banco_norm' -> {info}
-        mapa_kb = df_knowledge_base.set_index('texto_banco_norm').to_dict('index')
+        st.write("Aplicando Nivel 0: Base de Conocimiento (Aprendizaje Inteligente)")
         
-        for idx, pago in df_bancos[df_bancos['id_banco_unico'].isin(ids_pendientes_proceso)].iterrows():
-            # Usamos el 'texto_match' del pago (que ya está normalizado)
-            pago_texto_norm = pago['texto_match']
+        # Creamos un mapa: 'fragmento_aprendido' -> {info}
+        # Nos aseguramos de tomar la última lección aprendida en caso de duplicados
+        df_kb_sin_duplicados = df_knowledge_base.drop_duplicates(subset=['texto_banco_norm'], keep='last')
+        mapa_kb = df_kb_sin_duplicados.set_index('texto_banco_norm').to_dict('index')
+        
+        # Ordenamos los fragmentos del más largo al más corto
+        # Esto evita que "FRUTAS" haga match antes que "FRUTAS FRESCAS"
+        fragmentos_aprendidos_ordenados = sorted(mapa_kb.keys(), key=len, reverse=True)
+        
+        ids_para_remover = set()
+        
+        # Iteramos sobre los IDs pendientes
+        for id_pago in ids_pendientes_proceso:
+            idx = df_bancos[df_bancos['id_banco_unico'] == id_pago].index[0]
+            pago_texto_norm = df_bancos.loc[idx, 'texto_match']
             
-            if pago_texto_norm in mapa_kb:
-                kb_entry = mapa_kb[pago_texto_norm]
-                nit_aprendido = str(kb_entry['nit_cliente'])
-                
-                # Verificamos si el NIT aprendido está en el texto (doble chequeo)
-                # O si el nit es 'CONTADO', o si el pago no tiene NITs (confiamos en el texto)
-                nits_en_pago = re.findall(r'(\d{8,10})', pago_texto_norm)
-                
-                if nit_aprendido == 'CONTADO' or nit_aprendido in nits_en_pago or not nits_en_pago:
+            if not pago_texto_norm: # Si no hay texto, saltar
+                continue
+
+            # Iteramos sobre los fragmentos aprendidos
+            for fragmento in fragmentos_aprendidos_ordenados:
+                # --- ¡LA MAGIA! ---
+                # Verificamos si el fragmento aprendido está CONTENIDO
+                # en el texto del pago.
+                if fragmento in pago_texto_norm:
+                    kb_entry = mapa_kb[fragmento]
+                    nit_aprendido = str(kb_entry['nit_cliente'])
                     
                     df_bancos.loc[idx, 'match_status'] = 'Conciliado (Auto N0 - Aprendizaje)'
                     df_bancos.loc[idx, 'match_cliente'] = kb_entry['nombre_cliente']
-                    df_bancos.loc[idx, 'match_factura_id'] = f"KB Match (NIT {nit_aprendido})"
-                    ids_pendientes_proceso = ids_pendientes_proceso.drop(pago['id_banco_unico'])
-    
+                    df_bancos.loc[idx, 'match_factura_id'] = f"KB Match ({fragmento} -> NIT {nit_aprendido})"
+                    
+                    ids_para_remover.add(id_pago)
+                    break # Pasamos al siguiente pago
+        
+        # Actualizamos el set de pendientes
+        ids_pendientes_proceso.difference_update(ids_para_remover)
+        st.write(f"Nivel 0 encontró {len(ids_para_remover)} matches.")
+
     
     # --- NIVEL 1: MATCH PERFECTO (ID de Factura en Descripción) ---
+    st.write("Aplicando Nivel 1: ID de Factura Exacto...")
     mapa_facturas = {row['id_factura_unica']: row for _, row in df_cartera.iterrows()}
     ids_factura_conciliadas = set()
+    ids_para_remover = set()
     
-    for idx, pago in df_bancos[df_bancos['id_banco_unico'].isin(ids_pendientes_proceso)].iterrows():
-        matches = re.findall(r'(\d+-\d+)', pago['texto_match'])
+    for id_pago in ids_pendientes_proceso:
+        idx = df_bancos[df_bancos['id_banco_unico'] == id_pago].index[0]
+        pago_texto_norm = df_bancos.loc[idx, 'texto_match']
+        
+        matches = re.findall(r'(\d+-\d+)', pago_texto_norm) # Busca 'SERIE-NUMERO'
         for id_factura_potencial in matches:
             if id_factura_potencial in mapa_facturas:
                 factura = mapa_facturas[id_factura_potencial]
-                if abs(pago['valor'] - factura['IMPORTE']) < 1000: # Tolerancia $1000
+                if abs(df_bancos.loc[idx, 'valor'] - factura['IMPORTE']) < 1000: # Tolerancia $1000
                     df_bancos.loc[idx, 'match_status'] = 'Conciliado (Auto N1 - ID Factura)'
                     df_bancos.loc[idx, 'match_cliente'] = factura['NOMBRECLIENTE']
                     df_bancos.loc[idx, 'match_factura_id'] = id_factura_potencial
-                    ids_pendientes_proceso = ids_pendientes_proceso.drop(pago['id_banco_unico'])
+                    
+                    ids_para_remover.add(id_pago)
                     ids_factura_conciliadas.add(id_factura_potencial)
                     break 
+    
+    ids_pendientes_proceso.difference_update(ids_para_remover)
+    st.write(f"Nivel 1 encontró {len(ids_para_remover)} matches.")
 
     # --- NIVEL 2: MATCH POR NIT + VALOR EXACTO ---
+    st.write("Aplicando Nivel 2: NIT + Valor...")
     cartera_restante = df_cartera[~df_cartera['id_factura_unica'].isin(ids_factura_conciliadas)]
     mapa_nits = cartera_restante.groupby('nit_norm')['IMPORTE'].apply(list).to_dict()
+    ids_para_remover = set()
 
-    for idx, pago in df_bancos[df_bancos['id_banco_unico'].isin(ids_pendientes_proceso)].iterrows():
-        nits_potenciales = re.findall(r'(\d{8,10})', pago['texto_match'])
+    for id_pago in ids_pendientes_proceso:
+        idx = df_bancos[df_bancos['id_banco_unico'] == id_pago].index[0]
+        pago_texto_norm = df_bancos.loc[idx, 'texto_match']
+        
+        nits_potenciales = re.findall(r'(\d{8,10})', pago_texto_norm) # Busca Nits
         for nit in nits_potenciales:
             if nit in mapa_nits:
+                # Buscamos un valor de factura que coincida
                 for valor_factura in mapa_nits[nit]:
-                    if abs(pago['valor'] - valor_factura) < 1000:
-                        factura_match = cartera_restante[
+                    if abs(df_bancos.loc[idx, 'valor'] - valor_factura) < 1000:
+                        factura_match_rows = cartera_restante[
                             (cartera_restante['nit_norm'] == nit) & 
                             (cartera_restante['IMPORTE'] == valor_factura)
-                        ].iloc[0]
-                        
-                        df_bancos.loc[idx, 'match_status'] = 'Conciliado (Auto N2 - NIT+Valor)'
-                        df_bancos.loc[idx, 'match_cliente'] = factura_match['NOMBRECLIENTE']
-                        df_bancos.loc[idx, 'match_factura_id'] = factura_match['id_factura_unica']
-                        
-                        ids_pendientes_proceso = ids_pendientes_proceso.drop(pago['id_banco_unico'])
-                        ids_factura_conciliadas.add(factura_match['id_factura_unica'])
-                        mapa_nits[nit].remove(valor_factura) 
-                        break 
-            if pago['id_banco_unico'] not in ids_pendientes_proceso:
+                        ]
+                        if not factura_match_rows.empty:
+                            factura_match = factura_match_rows.iloc[0]
+                            
+                            df_bancos.loc[idx, 'match_status'] = 'Conciliado (Auto N2 - NIT+Valor)'
+                            df_bancos.loc[idx, 'match_cliente'] = factura_match['NOMBRECLIENTE']
+                            df_bancos.loc[idx, 'match_factura_id'] = factura_match['id_factura_unica']
+                            
+                            ids_para_remover.add(id_pago)
+                            ids_factura_conciliadas.add(factura_match['id_factura_unica'])
+                            mapa_nits[nit].remove(valor_factura) 
+                            break 
+            if id_pago in ids_para_remover:
                 break 
+    
+    ids_pendientes_proceso.difference_update(ids_para_remover)
+    st.write(f"Nivel 2 encontró {len(ids_para_remover)} matches.")
 
-    # --- NIVEL 3: MATCH POR NOMBRE (FUZZY) + VALOR ---
+    # --- NIVEL 3: MATCH POR NOMBRE (FUZZY) + VALOR TOTAL DEUDA ---
+    st.write("Aplicando Nivel 3: Nombre (Fuzzy) + Valor Total...")
     cartera_restante = df_cartera[~df_cartera['id_factura_unica'].isin(ids_factura_conciliadas)]
+    ids_para_remover = set()
     
     mapa_nombres = cartera_restante.groupby('nombre_norm').agg(
         n_facturas=('id_factura_unica', 'count'),
@@ -551,45 +675,63 @@ def correr_batch_conciliacion_inteligente(df_bancos_raw, df_cartera, df_ventas, 
     lista_nombres_cartera = mapa_nombres['nombre_norm'].tolist()
 
     if lista_nombres_cartera: # Solo si hay nombres en cartera
-        for idx, pago in df_bancos[df_bancos['id_banco_unico'].isin(ids_pendientes_proceso)].iterrows():
-            if not pago['texto_match']:
+        for id_pago in ids_pendientes_proceso:
+            idx = df_bancos[df_bancos['id_banco_unico'] == id_pago].index[0]
+            pago_texto_norm = df_bancos.loc[idx, 'texto_match']
+
+            if not pago_texto_norm:
                 continue
 
-            mejor_match = process.extractOne(pago['texto_match'], lista_nombres_cartera, scorer=fuzz.partial_ratio, score_cutoff=90)
+            mejor_match = process.extractOne(pago_texto_norm, lista_nombres_cartera, scorer=fuzz.partial_ratio, score_cutoff=90)
             
             if mejor_match:
                 nombre_encontrado = mejor_match[0]
                 cliente_data = mapa_nombres[mapa_nombres['nombre_norm'] == nombre_encontrado].iloc[0]
                 
-                if abs(pago['valor'] - cliente_data['importe_total']) < 5000: # Tolerancia alta
+                # Comparamos el valor del pago con el total de la deuda de ese cliente
+                if abs(df_bancos.loc[idx, 'valor'] - cliente_data['importe_total']) < 5000: # Tolerancia alta
                     
                     df_bancos.loc[idx, 'match_status'] = 'Conciliado (Auto N3 - Nombre+ValorTotal)'
                     df_bancos.loc[idx, 'match_cliente'] = cliente_data['nombre_real']
                     df_bancos.loc[idx, 'match_factura_id'] = f"Abono Total Deuda (NIT {cliente_data['nit']})"
-                    ids_pendientes_proceso = ids_pendientes_proceso.drop(pago['id_banco_unico'])
-                    break
+                    ids_para_remover.add(id_pago)
+                    # No removemos de cartera, ya que es un match por total, no por factura
+    
+    ids_pendientes_proceso.difference_update(ids_para_remover)
+    st.write(f"Nivel 3 encontró {len(ids_para_remover)} matches.")
 
 
     # --- NIVEL 4: MATCH VENTAS DE CONTADO ---
+    st.write("Aplicando Nivel 4: Ventas de Contado (Fecha+Valor)...")
+    ids_para_remover = set()
     if not df_ventas.empty:
         df_ventas['fecha_str'] = df_ventas['fecha'].dt.strftime('%Y-%m-%d')
         mapa_ventas = df_ventas.groupby('fecha_str')['valor_contado'].apply(list).to_dict()
         
-        for idx, pago in df_bancos[df_bancos['id_banco_unico'].isin(ids_pendientes_proceso)].iterrows():
-            fecha_pago_str = pago['fecha'].strftime('%Y-%m-%d')
+        for id_pago in ids_pendientes_proceso:
+            idx = df_bancos[df_bancos['id_banco_unico'] == id_pago].index[0]
+            fecha_pago_dt = df_bancos.loc[idx, 'fecha']
+            if pd.isna(fecha_pago_dt):
+                continue
+                
+            fecha_pago_str = fecha_pago_dt.strftime('%Y-%m-%d')
+            
             if fecha_pago_str in mapa_ventas:
                 for valor_venta in mapa_ventas[fecha_pago_str]:
-                    if abs(pago['valor'] - valor_venta) < 100: # Tolerancia baja
+                    if abs(df_bancos.loc[idx, 'valor'] - valor_venta) < 100: # Tolerancia baja
                         df_bancos.loc[idx, 'match_status'] = 'Conciliado (Auto N4 - Venta Contado)'
                         df_bancos.loc[idx, 'match_cliente'] = 'Venta Contado'
                         df_bancos.loc[idx, 'match_factura_id'] = f"CONTADO-{fecha_pago_str}"
-                        ids_pendientes_proceso = ids_pendientes_proceso.drop(pago['id_banco_unico'])
+                        ids_para_remover.add(id_pago)
                         mapa_ventas[fecha_pago_str].remove(valor_venta) 
                         break
 
+    ids_pendientes_proceso.difference_update(ids_para_remover)
+    st.write(f"Nivel 4 encontró {len(ids_para_remover)} matches.")
+
     # --- Finalizar ---
-    total_auto = len(df_bancos_raw) - len(ids_pendientes_proceso) - len(egresos_idx) - len(identificados_idx)
-    st.success(f"Batch finalizado: {total_auto} pagos conciliados automáticamente (incluyendo Nivel 0 - Aprendizaje).")
+    total_auto = len(df_bancos_raw) - len(ids_pendientes_proceso) - len(egresos_idx) - len(identificados_idx) - len(manuales_idx)
+    st.success(f"Batch finalizado: {total_auto} nuevos pagos conciliados automáticamente (incluyendo Nivel 0 - Aprendizaje).")
     
     # Devolvemos el DF completo y enriquecido
     return df_bancos
@@ -601,7 +743,7 @@ def correr_batch_conciliacion_inteligente(df_bancos_raw, df_cartera, df_ventas, 
 
 def main_app():
     
-    st.title("🤖 Motor de Conciliación Bancaria (v2.1 - con Aprendizaje)")
+    st.title("🤖 Motor de Conciliación Bancaria (v3.0 - Súper Inteligente)")
     st.markdown("Proceso de 2 pasos: **1.** Actualizar la Base Maestra (Admin) y **2.** Asignar Pendientes (Usuario).")
 
     # --- Validar Autenticación ---
@@ -615,7 +757,7 @@ def main_app():
         G_SHEET_URL = st.secrets["google_sheets"]["sheet_url"]
         G_SHEET_TAB_CONCILIADOS_MANUAL = st.secrets["google_sheets"]["tab_conciliados"]
         G_SHEET_TAB_BANCOS_MASTER = st.secrets["google_sheets"]["tab_bancos_master"]
-        G_SHEET_TAB_KNOWLEDGE_BASE = st.secrets["google_sheets"]["tab_knowledge_base"] # <-- NUEVA CLAVE
+        G_SHEET_TAB_KNOWLEDGE_BASE = st.secrets["google_sheets"]["tab_knowledge_base"] # <-- ¡CLAVE!
         
         # Path de Bancos (de la App 'dropbox')
         PATH_PLANILLA_BANCOS = st.secrets["dropbox"]["path_bancos"]
@@ -624,7 +766,7 @@ def main_app():
         
     except KeyError as e:
         st.error(f"Error: Falta una clave en tu archivo secrets.toml: {e}")
-        st.info("Asegúrate de que [google_sheets] tenga 'tab_bancos_master' y la nueva 'tab_knowledge_base'.")
+        st.info("Asegúrate de que [google_sheets] tenga 'sheet_url', 'tab_conciliados', 'tab_bancos_master' y la nueva 'tab_knowledge_base'.")
         st.stop()
 
     # --- Inicializar session_state para guardar los datos ---
@@ -633,13 +775,19 @@ def main_app():
         st.session_state.df_cartera = pd.DataFrame()
         st.session_state.df_conciliados_auto = pd.DataFrame()
         st.session_state.df_pendientes = pd.DataFrame()
+        st.session_state.df_knowledge_base = pd.DataFrame() # <-- (NUEVO)
 
     # ==================================================================
     # --- PASO 1: BATCH DE ACTUALIZACIÓN DE BASE MAESTRA ---
     # ==================================================================
     st.markdown("---")
     st.header("PASO 1: [ADMIN] Actualizar Base Maestra")
-    st.info("Este proceso lee el archivo de bancos de Dropbox, lo cruza con Cartera, Ventas y la Base de Conocimiento, y sobre-escribe la 'Base Maestra' en Google Sheets. **Ejecutar 1 vez al día.**")
+    st.info("""
+    Este proceso lee el archivo de bancos de Dropbox, lo cruza con Cartera, Ventas y la **Base de Conocimiento (el cerebro del robot)**.
+    Luego, sobre-escribe la pestaña **'Bancos_Master'** en Google Sheets con el resultado completo.
+    
+    **Ejecutar 1 vez al día.**
+    """)
     
     if st.button("🚀 Ejecutar Batch y Actualizar 'Bancos_Master' en G-Sheets"):
         
@@ -654,7 +802,7 @@ def main_app():
                 st.error("No se pudo cargar la Cartera o la Planilla de Bancos. El batch no puede continuar.")
                 st.stop()
         
-        with st.spinner("Cargando historial de conciliaciones manuales..."):
+        with st.spinner("Cargando historial de conciliaciones manuales ('tab_conciliados')..."):
             try:
                 ws_manuales = get_gsheet_worksheet(g_client, G_SHEET_URL, G_SHEET_TAB_CONCILIADOS_MANUAL)
                 df_historico_manual = pd.DataFrame(ws_manuales.get_all_records())
@@ -662,18 +810,24 @@ def main_app():
                 st.warning(f"No se pudo leer historial manual (puede estar vacía): {e}")
                 df_historico_manual = pd.DataFrame()
 
-        with st.spinner("Cargando Base de Conocimiento (Aprendizaje)..."):
+        with st.spinner("Cargando Base de Conocimiento (Aprendizaje) desde 'tab_knowledge_base'..."):
             try:
                 ws_kb = get_gsheet_worksheet(g_client, G_SHEET_URL, G_SHEET_TAB_KNOWLEDGE_BASE)
                 df_knowledge_base = pd.DataFrame(ws_kb.get_all_records())
                 # Aseguramos la columna clave para el map
                 if 'texto_banco_norm' not in df_knowledge_base.columns:
                      st.info("Creando columnas en la 'Base de Conocimiento'...")
-                     df_knowledge_base = pd.DataFrame(columns=["texto_banco_norm", "descripcion_original", "nit_cliente", "nombre_cliente", "fecha_aprendizaje"])
+                     columnas_kb = ["texto_banco_norm", "descripcion_original_ejemplo", "nit_cliente", "nombre_cliente", "fecha_aprendizaje"]
+                     df_knowledge_base = pd.DataFrame(columns=columnas_kb)
                      set_with_dataframe(ws_kb, df_knowledge_base) # Inicializa la hoja
+                
+                # --- (NUEVO) Guardamos la KB en session_state para mostrarla en la UI ---
+                st.session_state.df_knowledge_base = df_knowledge_base 
+                     
             except Exception as e:
                 st.warning(f"No se pudo leer la Base de Conocimiento (puede ser nueva): {e}")
                 df_knowledge_base = pd.DataFrame()
+                st.session_state.df_knowledge_base = pd.DataFrame() # <-- (NUEVO)
 
         with st.spinner("Ejecutando motor de conciliación inteligente (Batch)..."):
             df_bancos_enriquecido = correr_batch_conciliacion_inteligente(
@@ -684,9 +838,13 @@ def main_app():
             ws_master = get_gsheet_worksheet(g_client, G_SHEET_URL, G_SHEET_TAB_BANCOS_MASTER)
             
             # Limpiamos el DF para guardarlo (G-Sheets no acepta NaT/NaN)
-            df_to_save = df_bancos_enriquecido.fillna('')
-            for col in df_to_save.select_dtypes(include=['datetime64[ns]', 'datetime64[ns, UTC]']):
-                df_to_save[col] = df_to_save[col].astype(str)
+            df_to_save = df_bancos_enriquecido.copy()
+            # Convertir todos los tipos de datos problemáticos a string
+            for col in df_to_save.columns:
+                if df_to_save[col].dtype == 'datetime64[ns]' or df_to_save[col].dtype == 'datetime64[ns, UTC]':
+                    df_to_save[col] = df_to_save[col].astype(str)
+            
+            df_to_save = df_to_save.fillna('')
             
             ws_master.clear() # Borramos la hoja
             set_with_dataframe(ws_master, df_to_save) # La sobre-escribimos
@@ -698,7 +856,11 @@ def main_app():
     # ==================================================================
     st.markdown("---")
     st.header("PASO 2: [USUARIO] Cargar Pendientes y Asignar")
-    st.info("Este proceso lee la 'Base Maestra' de Google Sheets y carga SÓLO los pagos que el robot no pudo identificar, para que los asignes manualmente.")
+    st.info("""
+    Este proceso lee la **'Base Maestra'** de Google Sheets (que el Paso 1 acaba de crear) 
+    y carga SÓLO los pagos que el robot no pudo identificar ('Pendiente (Revisión Manual)'), 
+    para que los asignes.
+    """)
     
     # ==================================================================
     # --- (INICIO DE CORRECCIÓN DE BUG) ---
@@ -718,6 +880,16 @@ def main_app():
             st.session_state.df_conciliados_auto = df_auto
             st.session_state.df_pendientes = df_pend
             
+            # --- (NUEVO) Cargamos la Base de Conocimiento para la pestaña de la UI ---
+            try:
+                g_client = connect_to_google_sheets() # Lo necesitamos aquí
+                ws_kb = get_gsheet_worksheet(g_client, G_SHEET_URL, G_SHEET_TAB_KNOWLEDGE_BASE)
+                st.session_state.df_knowledge_base = pd.DataFrame(ws_kb.get_all_records())
+            except Exception as e:
+                st.warning(f"No se pudo cargar la Base de Conocimiento para visualización: {e}")
+                st.session_state.df_knowledge_base = pd.DataFrame()
+            # --- FIN DE CAMBIO ---
+            
             if st.session_state.df_cartera.empty:
                 st.error("Error: La cartera no pudo ser cargada. Revisa el path '/data/cartera_detalle.csv'.")
             else:
@@ -731,17 +903,33 @@ def main_app():
     if st.session_state.data_loaded:
         st.header("Resultados de la Conciliación (desde Base Maestra)")
         
-        total_auto = st.session_state.df_conciliados_auto['valor'].sum() if not st.session_state.df_conciliados_auto.empty else 0
-        total_pendiente = st.session_state.df_pendientes['valor'].sum() if not st.session_state.df_pendientes.empty else 0
-        total_recibido = total_auto + total_pendiente # Solo de los > 0
+        # Corregimos los KPIs para que usen los datos cargados
+        total_auto = 0
+        if not st.session_state.df_conciliados_auto.empty and 'valor' in st.session_state.df_conciliados_auto.columns:
+            # Aseguramos que valor sea numérico
+            st.session_state.df_conciliados_auto['valor'] = pd.to_numeric(st.session_state.df_conciliados_auto['valor'], errors='coerce')
+            total_auto = st.session_state.df_conciliados_auto['valor'].sum()
+
+        total_pendiente = 0
+        if not st.session_state.df_pendientes.empty and 'valor' in st.session_state.df_pendientes.columns:
+            # Aseguramos que valor sea numérico
+            st.session_state.df_pendientes['valor'] = pd.to_numeric(st.session_state.df_pendientes['valor'], errors='coerce')
+            total_pendiente = st.session_state.df_pendientes['valor'].sum()
+
+        total_recibido = total_auto + total_pendiente # Total identificado
 
         kpi_cols = st.columns(3)
         kpi_cols[0].metric("🏦 Total Identificado (Base Maestra)", f"${total_recibido:,.0f}")
-        kpi_cols[1].metric("✅ Conciliado (Automático)", f"${total_auto:,.0f}")
-        kpi_cols[2].metric("❓ Pendiente (Manual)", f"${total_pendiente:,.0f}", delta=f"{len(st.session_state.df_pendientes)} transacciones")
+        kpi_cols[1].metric("✅ Conciliado (Auto + Manual)", f"${total_auto:,.0f}")
+        kpi_cols[2].metric("❓ Pendiente (Para Asignar)", f"${total_pendiente:,.0f}", delta=f"{len(st.session_state.df_pendientes)} transacciones")
 
-        tab_manual, tab_auto, tab_fuentes = st.tabs(
-            ["📝 **PENDIENTE DE ASIGNACIÓN MANUAL**", "🤖 Conciliados (Automáticos)", "🗂️ Cartera (Fuente)"]
+        tab_manual, tab_auto, tab_kb, tab_fuentes = st.tabs(
+            [
+                "📝 **PENDIENTE DE ASIGNACIÓN MANUAL**", 
+                "🤖 Conciliados (Auto/Manual)",
+                "🧠 **Base de Conocimiento (El Cerebro)**", # <-- NUEVA PESTAÑA
+                "🗂️ Cartera (Fuente)"
+            ]
         )
 
         with tab_manual:
@@ -750,9 +938,20 @@ def main_app():
             else:
                 st.info(f"Se encontraron {len(st.session_state.df_pendientes)} pagos que requieren tu atención.")
                 
+                # --- (NUEVO) Botón de Descarga Excel ---
+                excel_pendientes = df_to_excel(st.session_state.df_pendientes)
+                st.download_button(
+                    label="📥 Descargar Pendientes en Excel",
+                    data=excel_pendientes,
+                    file_name=f"pendientes_conciliacion_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+                st.markdown("---")
+                # --- Fin Botón ---
+                
                 # Preparamos las opciones para el selectbox
                 clientes_cartera = st.session_state.df_cartera.drop_duplicates(subset=['nit_norm']) \
-                                                            .set_index('nit_norm')['NOMBRECLIENTE'].to_dict()
+                                                        .set_index('nit_norm')['NOMBRECLIENTE'].to_dict()
                 opciones_clientes = {nit: f"{nombre} (NIT: {nit})" for nit, nombre in clientes_cartera.items()}
                 opciones_clientes["CONTADO"] = "Venta Contado (No ligar a factura)"
                 opciones_clientes["OTRO"] = "Otro (Gasto, Préstamo, etc.)"
@@ -826,14 +1025,8 @@ def main_app():
                                                     for col in df_to_save.select_dtypes(include=['datetime64[ns]', 'datetime64[ns, UTC]']):
                                                         df_to_save[col] = df_to_save[col].astype(str)
                                                     
-                                                    cols_finales_en_df = [
-                                                        'FECHA', 'SUCURSAL BANCO', 'TIPO DE TRANSACCION', 'CUENTA',
-                                                        'EMPRESA', 'VALOR', 'BANCO REFRENCIA INTERNA', 'DESTINO', 'RECIBO',
-                                                        'FECHA RECIBO', 'fecha', 'valor', 'RECIBO_norm', 'DESTINO_norm',
-                                                        'descripcion_banco', 'texto_match', 'id_banco_unico',
-                                                        'status', 'id_factura_asignada', 'cliente_asignado'
-                                                    ]
-                                                    
+                                                    # Re-ordenamos para consistencia
+                                                    cols_finales_en_df = list(pago.index) + ['status', 'id_factura_asignada', 'cliente_asignado']
                                                     df_final_save = pd.DataFrame(columns=cols_finales_en_df)
                                                     df_final_save = pd.concat([df_final_save, df_to_save], ignore_index=True)
                                                     df_final_save = df_final_save[cols_finales_en_df].fillna('')
@@ -844,8 +1037,8 @@ def main_app():
                                                     else:
                                                         ws.append_rows(df_final_save[cols_finales_en_df].values.tolist(), value_input_option='USER_ENTERED')
                                                     
-                                                    # --- (NUEVO) GUARDAR APRENDIZAJE ---
-                                                    guardar_en_knowledge_base(
+                                                    # --- (NUEVO) GUARDAR APRENDIZAJE INTELIGENTE ---
+                                                    guardar_aprendizaje_en_kb(
                                                         g_client, 
                                                         G_SHEET_URL, 
                                                         G_SHEET_TAB_KNOWLEDGE_BASE, 
@@ -856,7 +1049,7 @@ def main_app():
                                                     # --- FIN GUARDAR APRENDIZAJE ---
                                                     
                                                     st.session_state.df_pendientes = st.session_state.df_pendientes.drop(idx)
-                                                    st.success(f"¡Pago de {clientes_cartera[nit_seleccionado]} guardado! El robot ha aprendido esta relación.")
+                                                    st.success(f"¡Pago de {clientes_cartera[nit_seleccionado]} guardado!")
                                                     st.info("El registro se marcará como 'Manual' la próxima vez que se ejecute el 'Paso 1' (Batch).")
                                                     st.rerun()
 
@@ -882,13 +1075,8 @@ def main_app():
                                                 for col in df_to_save.select_dtypes(include=['datetime64[ns]', 'datetime64[ns, UTC]']):
                                                     df_to_save[col] = df_to_save[col].astype(str)
 
-                                                cols_finales_en_df = [
-                                                    'FECHA', 'SUCURSAL BANCO', 'TIPO DE TRANSACCION', 'CUENTA',
-                                                    'EMPRESA', 'VALOR', 'BANCO REFRENCIA INTERNA', 'DESTINO', 'RECIBO',
-                                                    'FECHA RECIBO', 'fecha', 'valor', 'RECIBO_norm', 'DESTINO_norm',
-                                                    'descripcion_banco', 'texto_match', 'id_banco_unico',
-                                                    'status', 'id_factura_asignada', 'cliente_asignado'
-                                                ]
+                                                # Re-ordenamos para consistencia
+                                                cols_finales_en_df = list(pago.index) + ['status', 'id_factura_asignada', 'cliente_asignado']
                                                 df_final_save = pd.DataFrame(columns=cols_finales_en_df)
                                                 df_final_save = pd.concat([df_final_save, df_to_save], ignore_index=True)
                                                 df_final_save = df_final_save[cols_finales_en_df].fillna('')
@@ -899,9 +1087,11 @@ def main_app():
                                                 else:
                                                     ws.append_rows(df_final_save[cols_finales_en_df].values.tolist(), value_input_option='USER_ENTERED')
                                                 
-                                                # --- (NUEVO) GUARDAR APRENDIZAJE ---
+                                                # --- (NUEVO) GUARDAR APRENDIZAJE INTELIGENTE ---
+                                                # Solo enseñamos al robot si es "CONTADO" o un cliente
+                                                # No le enseñamos si es "OTRO"
                                                 if nit_seleccionado == "CONTADO":
-                                                    guardar_en_knowledge_base(
+                                                    guardar_aprendizaje_en_kb(
                                                         g_client, 
                                                         G_SHEET_URL, 
                                                         G_SHEET_TAB_KNOWLEDGE_BASE, 
@@ -917,18 +1107,74 @@ def main_app():
                                                 st.rerun()
 
         with tab_auto:
-            st.info("Estos son los pagos que el motor identificó automáticamente (leídos desde la Base Maestra).")
+            st.info("Estos son los pagos que el motor identificó automáticamente (o que ya asignaste manually). Leídos desde la Base Maestra.")
+            
+            # --- (NUEVO) Botón de Descarga Excel ---
+            if not st.session_state.df_conciliados_auto.empty:
+                excel_auto = df_to_excel(st.session_state.df_conciliados_auto)
+                st.download_button(
+                    label="📥 Descargar Conciliados en Excel",
+                    data=excel_auto,
+                    file_name=f"conciliados_auto_manual_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            # --- Fin Botón ---
+            
             columnas_auto = [
                 'fecha', 'valor', 'descripcion_banco', 'match_status', 'match_cliente', 'match_factura_id', 'id_banco_unico'
             ]
             columnas_existentes_auto = [col for col in columnas_auto if col in st.session_state.df_conciliados_auto.columns]
-            st.dataframe(st.session_state.df_conciliados_auto[columnas_existentes_auto], use_container_width=True)
+            if not st.session_state.df_conciliados_auto.empty:
+                st.dataframe(st.session_state.df_conciliados_auto[columnas_existentes_auto], use_container_width=True)
+            else:
+                st.write("No hay datos de conciliados automáticos para mostrar.")
+
+        with tab_kb:
+            st.info("""
+            Esta es la **Base de Conocimiento** (el "cerebro" del robot).
+            Cada fila es una "lección" que ha aprendido.
+            - `texto_banco_norm`: Es el "fragmento" (un NIT, un nombre, etc.) que el robot buscará.
+            - `nit_cliente` / `nombre_cliente`: Es el cliente al que debe asignar ese fragmento.
+            
+            El robot usa esto en el "Nivel 0" del batch.
+            """)
+            
+            # --- (NUEVO) Botón de Descarga Excel ---
+            if not st.session_state.df_knowledge_base.empty:
+                excel_kb = df_to_excel(st.session_state.df_knowledge_base)
+                st.download_button(
+                    label="📥 Descargar Base de Conocimiento en Excel",
+                    data=excel_kb,
+                    file_name=f"base_de_conocimiento_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            # --- Fin Botón ---
+            
+            if not st.session_state.df_knowledge_base.empty:
+                st.dataframe(st.session_state.df_knowledge_base, use_container_width=True)
+            else:
+                st.warning("La Base de Conocimiento está vacía. ¡Asigna pagos manualmente para empezar a enseñarle al robot!")
 
         with tab_fuentes:
             st.subheader("Cartera Pendiente (Fuente)")
+            st.info("Estas son todas las facturas pendientes de pago que se cargaron desde '/data/cartera_detalle.csv'.")
+            
+            # --- (NUEVO) Botón de Descarga Excel ---
+            if not st.session_state.df_cartera.empty:
+                excel_cartera = df_to_excel(st.session_state.df_cartera)
+                st.download_button(
+                    label="📥 Descargar Cartera en Excel",
+                    data=excel_cartera,
+                    file_name=f"cartera_pendiente_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            # --- Fin Botón ---
+            
             st.dataframe(st.session_state.df_cartera, use_container_width=True)
 
 
 # --- Punto de entrada ---
 if __name__ == '__main__':
+    # Configurar logging para ver errores (opcional pero recomendado)
+    logging.basicConfig(level=logging.INFO)
     main_app()
