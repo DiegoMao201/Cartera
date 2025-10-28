@@ -1,30 +1,25 @@
 # ======================================================================================
 # ARCHIVO: pages/2_Motor_Conciliacion.py
-# (Versión MODIFICADA POR GEMINI - 27 de Octubre, 2025)
+# (Versión CORREGIDA Y MEJORADA - 27 de Octubre, 2025)
 #
 # MODIFICACIÓN (Gemini):
-# 1.  Se re-arquitectura el flujo para cumplir la solicitud del usuario:
-#     - Se crea una "Base Maestra" de Bancos en un Google Sheet.
-#     - El script ahora tiene dos flujos:
-#       a) Un BATCH (Admin) que lee el crudo de Dropbox, lo enriquece
-#          inteligentemente contra Cartera y Ventas, y SOBRE-ESCRIBE
-#          la hoja "Bancos_Master" en Google Sheets.
-#       b) Un flujo INTERACTIVO (Usuario) que LEE desde "Bancos_Master"
-#          y filtra solo los pagos pendientes para la asignación manual.
+# 1.  (CORRECCIÓN DE BUG) Se corrige el error `UnhashableParamError` en
+#     `cargar_pendientes_desde_master`. La función ahora llama a
+#     `connect_to_google_sheets()` internamente en lugar de recibir
+#     `g_client` como argumento, lo cual es la práctica correcta
+#     para funciones cacheadas con `@st.cache_data`.
 #
-# 2.  Se crea `cargar_planilla_bancos_RAW` para leer el archivo de bancos
-#     de Dropbox sin aplicar NINGÚN filtro.
+# 2.  (NUEVA FUNCIÓN - "SIMILITUDES") Se añade la "Base de Conocimiento".
+#     - Se añade `tab_knowledge_base` a la config de secrets.
+#     - Se crea la función `guardar_en_knowledge_base` que se
+#       ejecuta cuando el usuario hace una asignación manual.
+#     - El robot ahora "aprende" la relación entre el texto del banco
+#       (ej. "PAGO FRUTAS FRESCAS") y el NIT asignado (ej. "900...").
 #
-# 3.  Se crea `correr_batch_conciliacion_inteligente` (reemplaza al antiguo
-#     `run_auto_reconciliation`). Este motor corre sobre TODO el
-#     dataframe de bancos y añade columnas ('match_status', 'match_cliente', etc.).
-#     - Se añade Lógica de Match por Nombre (Fuzzywuzzy) como Nivel 3.
-#
-# 4.  Se modifica `cargar_planilla_bancos` (ahora `cargar_pendientes_desde_master`)
-#     para LEER desde el G-Sheet "Bancos_Master" y filtrar los pendientes.
-#
-# 5.  La UI de `main_app` se divide en "Paso 1: Actualizar Base Maestra" y
-#     "Paso 2: Asignación Manual".
+# 3.  (NUEVA FUNCIÓN - "INTELIGENCIA") Se actualiza
+#     `correr_batch_conciliacion_inteligente` para leer esta
+#     "Base de Conocimiento" y usarla como un nuevo
+#     "Nivel 0 (Aprendizaje)", siendo la regla de más alta prioridad.
 # ======================================================================================
 
 import streamlit as st
@@ -322,16 +317,20 @@ def cargar_ventas_diarias(path_ventas_diarias):
         st.info(f"Esto sugiere que el archivo en '{path_ventas_diarias}' no coincide con la estructura de 18 columnas de 'ventas_detalle.csv'.")
         return pd.DataFrame()
         
+# ==================================================================
+# --- (INICIO DE CORRECCIÓN DE BUG) ---
+# ==================================================================
 @st.cache_data(ttl=600)
-def cargar_pendientes_desde_master(g_client, sheet_url, master_tab_name):
+def cargar_pendientes_desde_master(sheet_url, master_tab_name): # <-- 1. g_client REMOVIDO de args
     """
-    (FUNCIÓN MODIFICADA)
+    (FUNCIÓN MODIFICADA Y CORREGIDA)
     Lee la "Base Maestra" desde Google Sheets y filtra los
     movimientos que están PENDIENTES de asignación manual.
     """
     st.write(f"Cargando datos desde G-Sheet '{master_tab_name}'...")
+    g_client = connect_to_google_sheets() # <-- 2. g_client se obtiene INTERNAMENTE
     try:
-        ws_master = get_gsheet_worksheet(g_client, sheet_url, master_tab_name)
+        ws_master = get_gsheet_worksheet(g_client, sheet_url, master_tab_name) # <-- 3. Se usa el g_client interno
         df_master = pd.DataFrame(ws_master.get_all_records())
         
         if df_master.empty:
@@ -359,19 +358,60 @@ def cargar_pendientes_desde_master(g_client, sheet_url, master_tab_name):
         st.error(f"Error al leer la Base Maestra de Google Sheets: {e}")
         st.info("Asegúrate de que la pestaña 'Bancos_Master' exista y tenga datos.")
         return pd.DataFrame(), pd.DataFrame()
+# ==================================================================
+# --- (FIN DE CORRECCIÓN DE BUG) ---
+# ==================================================================
 
 
 # ======================================================================================
-# --- 3. MOTOR DE CONCILIACIÓN (BATCH INTELIGENTE) ---
+# --- 3. MOTOR DE CONCILIACIÓN Y BASE DE CONOCIMIENTO ---
 # ======================================================================================
 
-def correr_batch_conciliacion_inteligente(df_bancos_raw, df_cartera, df_ventas, df_historico_manual):
+def guardar_en_knowledge_base(g_client, sheet_url, kb_tab_name, pago_row, cliente_nit, cliente_nombre):
+    """(NUEVA FUNCIÓN) Guarda un nuevo aprendizaje en la Base de Conocimiento."""
+    try:
+        texto_banco_norm = pago_row['texto_match']
+        if not texto_banco_norm: # No guardar si no hay texto
+            return
+
+        ws_kb = get_gsheet_worksheet(g_client, sheet_url, kb_tab_name)
+        
+        # Chequear si ya existe para no duplicar
+        df_kb = pd.DataFrame(ws_kb.get_all_records())
+        if not df_kb.empty and 'texto_banco_norm' in df_kb.columns:
+            if texto_banco_norm in df_kb['texto_banco_norm'].values:
+                return # Ya existe, no hacer nada
+
+        # Si no existe, lo añadimos
+        kb_entry = {
+            "texto_banco_norm": texto_banco_norm,
+            "descripcion_original": pago_row['descripcion_banco'],
+            "nit_cliente": str(cliente_nit),
+            "nombre_cliente": cliente_nombre,
+            "fecha_aprendizaje": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        df_to_save = pd.DataFrame([kb_entry])
+
+        headers = ws_kb.row_values(1)
+        if not headers: # Si la hoja está vacía, escribimos headers
+            set_with_dataframe(ws_kb, df_to_save)
+        else:
+            # Si ya tiene headers, solo apilamos los valores
+            ws_kb.append_rows(df_to_save.values.tolist(), value_input_option='USER_ENTERED')
+            
+    except Exception as e:
+        st.warning(f"No se pudo guardar aprendizaje en Knowledge Base: {e}")
+
+
+def correr_batch_conciliacion_inteligente(df_bancos_raw, df_cartera, df_ventas, df_historico_manual, df_knowledge_base):
     """
-    (NUEVA FUNCIÓN - REEMPLAZA A run_auto_reconciliation)
+    (FUNCIÓN ACTUALIZADA)
     
     Ejecuta el motor de conciliación en MODO BATCH sobre TODOS los
     movimientos de bancos. Añade columnas de 'match' en lugar de
     filtrar.
+    
+    NUEVO: Ahora acepta 'df_knowledge_base' para el Nivel 0.
     """
     st.write("Iniciando batch de conciliación inteligente...")
     
@@ -428,6 +468,32 @@ def correr_batch_conciliacion_inteligente(df_bancos_raw, df_cartera, df_ventas, 
         return df_bancos
 
     st.write(f"Ejecutando motor sobre {len(ids_pendientes_proceso)} nuevos movimientos...")
+
+    # --- (NUEVO) NIVEL 0: MATCH POR BASE DE CONOCIMIENTO (APRENDIZAJE MANUAL) ---
+    if not df_knowledge_base.empty and 'texto_banco_norm' in df_knowledge_base.columns:
+        st.write("Aplicando Nivel 0: Base de Conocimiento (Aprendizaje)")
+        # Creamos un mapa: 'texto_banco_norm' -> {info}
+        mapa_kb = df_knowledge_base.set_index('texto_banco_norm').to_dict('index')
+        
+        for idx, pago in df_bancos[df_bancos['id_banco_unico'].isin(ids_pendientes_proceso)].iterrows():
+            # Usamos el 'texto_match' del pago (que ya está normalizado)
+            pago_texto_norm = pago['texto_match']
+            
+            if pago_texto_norm in mapa_kb:
+                kb_entry = mapa_kb[pago_texto_norm]
+                nit_aprendido = str(kb_entry['nit_cliente'])
+                
+                # Verificamos si el NIT aprendido está en el texto (doble chequeo)
+                # O si el nit es 'CONTADO', o si el pago no tiene NITs (confiamos en el texto)
+                nits_en_pago = re.findall(r'(\d{8,10})', pago_texto_norm)
+                
+                if nit_aprendido == 'CONTADO' or nit_aprendido in nits_en_pago or not nits_en_pago:
+                    
+                    df_bancos.loc[idx, 'match_status'] = 'Conciliado (Auto N0 - Aprendizaje)'
+                    df_bancos.loc[idx, 'match_cliente'] = kb_entry['nombre_cliente']
+                    df_bancos.loc[idx, 'match_factura_id'] = f"KB Match (NIT {nit_aprendido})"
+                    ids_pendientes_proceso = ids_pendientes_proceso.drop(pago['id_banco_unico'])
+    
     
     # --- NIVEL 1: MATCH PERFECTO (ID de Factura en Descripción) ---
     mapa_facturas = {row['id_factura_unica']: row for _, row in df_cartera.iterrows()}
@@ -473,10 +539,8 @@ def correr_batch_conciliacion_inteligente(df_bancos_raw, df_cartera, df_ventas, 
                 break 
 
     # --- NIVEL 3: MATCH POR NOMBRE (FUZZY) + VALOR ---
-    # (Este es el cruce "inteligente" por nombre que solicitaste)
     cartera_restante = df_cartera[~df_cartera['id_factura_unica'].isin(ids_factura_conciliadas)]
     
-    # Creamos un mapa de nombres únicos y sus facturas
     mapa_nombres = cartera_restante.groupby('nombre_norm').agg(
         n_facturas=('id_factura_unica', 'count'),
         importe_total=('IMPORTE', 'sum'),
@@ -491,21 +555,18 @@ def correr_batch_conciliacion_inteligente(df_bancos_raw, df_cartera, df_ventas, 
             if not pago['texto_match']:
                 continue
 
-            # Buscamos el mejor match de nombre
             mejor_match = process.extractOne(pago['texto_match'], lista_nombres_cartera, scorer=fuzz.partial_ratio, score_cutoff=90)
             
             if mejor_match:
                 nombre_encontrado = mejor_match[0]
                 cliente_data = mapa_nombres[mapa_nombres['nombre_norm'] == nombre_encontrado].iloc[0]
                 
-                # Verificamos si el valor pagado se acerca al total de la deuda de ese cliente
                 if abs(pago['valor'] - cliente_data['importe_total']) < 5000: # Tolerancia alta
                     
                     df_bancos.loc[idx, 'match_status'] = 'Conciliado (Auto N3 - Nombre+ValorTotal)'
                     df_bancos.loc[idx, 'match_cliente'] = cliente_data['nombre_real']
                     df_bancos.loc[idx, 'match_factura_id'] = f"Abono Total Deuda (NIT {cliente_data['nit']})"
                     ids_pendientes_proceso = ids_pendientes_proceso.drop(pago['id_banco_unico'])
-                    # No removemos facturas de cartera, ya que es un abono general
                     break
 
 
@@ -528,7 +589,7 @@ def correr_batch_conciliacion_inteligente(df_bancos_raw, df_cartera, df_ventas, 
 
     # --- Finalizar ---
     total_auto = len(df_bancos_raw) - len(ids_pendientes_proceso) - len(egresos_idx) - len(identificados_idx)
-    st.success(f"Batch finalizado: {total_auto} pagos conciliados automáticamente.")
+    st.success(f"Batch finalizado: {total_auto} pagos conciliados automáticamente (incluyendo Nivel 0 - Aprendizaje).")
     
     # Devolvemos el DF completo y enriquecido
     return df_bancos
@@ -540,7 +601,7 @@ def correr_batch_conciliacion_inteligente(df_bancos_raw, df_cartera, df_ventas, 
 
 def main_app():
     
-    st.title("🤖 Motor de Conciliación Bancaria (v2 - Base Maestra)")
+    st.title("🤖 Motor de Conciliación Bancaria (v2.1 - con Aprendizaje)")
     st.markdown("Proceso de 2 pasos: **1.** Actualizar la Base Maestra (Admin) y **2.** Asignar Pendientes (Usuario).")
 
     # --- Validar Autenticación ---
@@ -553,7 +614,8 @@ def main_app():
         # Configuración de Google Sheets
         G_SHEET_URL = st.secrets["google_sheets"]["sheet_url"]
         G_SHEET_TAB_CONCILIADOS_MANUAL = st.secrets["google_sheets"]["tab_conciliados"]
-        G_SHEET_TAB_BANCOS_MASTER = st.secrets["google_sheets"]["tab_bancos_master"] # <-- NUEVA CLAVE
+        G_SHEET_TAB_BANCOS_MASTER = st.secrets["google_sheets"]["tab_bancos_master"]
+        G_SHEET_TAB_KNOWLEDGE_BASE = st.secrets["google_sheets"]["tab_knowledge_base"] # <-- NUEVA CLAVE
         
         # Path de Bancos (de la App 'dropbox')
         PATH_PLANILLA_BANCOS = st.secrets["dropbox"]["path_bancos"]
@@ -562,7 +624,7 @@ def main_app():
         
     except KeyError as e:
         st.error(f"Error: Falta una clave en tu archivo secrets.toml: {e}")
-        st.info("Revisa la estructura de ejemplo y asegúrate de que [google_sheets] tenga 'tab_bancos_master'.")
+        st.info("Asegúrate de que [google_sheets] tenga 'tab_bancos_master' y la nueva 'tab_knowledge_base'.")
         st.stop()
 
     # --- Inicializar session_state para guardar los datos ---
@@ -577,7 +639,7 @@ def main_app():
     # ==================================================================
     st.markdown("---")
     st.header("PASO 1: [ADMIN] Actualizar Base Maestra")
-    st.info("Este proceso lee el archivo de bancos de Dropbox, lo cruza con Cartera y Ventas, y sobre-escribe la 'Base Maestra' en Google Sheets. **Ejecutar 1 vez al día.**")
+    st.info("Este proceso lee el archivo de bancos de Dropbox, lo cruza con Cartera, Ventas y la Base de Conocimiento, y sobre-escribe la 'Base Maestra' en Google Sheets. **Ejecutar 1 vez al día.**")
     
     if st.button("🚀 Ejecutar Batch y Actualizar 'Bancos_Master' en G-Sheets"):
         
@@ -600,9 +662,22 @@ def main_app():
                 st.warning(f"No se pudo leer historial manual (puede estar vacía): {e}")
                 df_historico_manual = pd.DataFrame()
 
+        with st.spinner("Cargando Base de Conocimiento (Aprendizaje)..."):
+            try:
+                ws_kb = get_gsheet_worksheet(g_client, G_SHEET_URL, G_SHEET_TAB_KNOWLEDGE_BASE)
+                df_knowledge_base = pd.DataFrame(ws_kb.get_all_records())
+                # Aseguramos la columna clave para el map
+                if 'texto_banco_norm' not in df_knowledge_base.columns:
+                     st.info("Creando columnas en la 'Base de Conocimiento'...")
+                     df_knowledge_base = pd.DataFrame(columns=["texto_banco_norm", "descripcion_original", "nit_cliente", "nombre_cliente", "fecha_aprendizaje"])
+                     set_with_dataframe(ws_kb, df_knowledge_base) # Inicializa la hoja
+            except Exception as e:
+                st.warning(f"No se pudo leer la Base de Conocimiento (puede ser nueva): {e}")
+                df_knowledge_base = pd.DataFrame()
+
         with st.spinner("Ejecutando motor de conciliación inteligente (Batch)..."):
             df_bancos_enriquecido = correr_batch_conciliacion_inteligente(
-                df_bancos_raw, df_cartera, df_ventas, df_historico_manual
+                df_bancos_raw, df_cartera, df_ventas, df_historico_manual, df_knowledge_base # <-- Pasamos el KB
             )
         
         with st.spinner(f"Guardando {len(df_bancos_enriquecido)} registros en G-Sheet '{G_SHEET_TAB_BANCOS_MASTER}'..."):
@@ -625,14 +700,19 @@ def main_app():
     st.header("PASO 2: [USUARIO] Cargar Pendientes y Asignar")
     st.info("Este proceso lee la 'Base Maestra' de Google Sheets y carga SÓLO los pagos que el robot no pudo identificar, para que los asignes manualmente.")
     
+    # ==================================================================
+    # --- (INICIO DE CORRECCIÓN DE BUG) ---
+    # ==================================================================
     if st.button("🔄 Cargar Pendientes de Asignación Manual", type="primary"):
         with st.spinner("Cargando datos desde la Base Maestra de Google Sheets..."):
             
-            g_client = connect_to_google_sheets()
+            # g_client = connect_to_google_sheets() # <-- 1. Esta línea ya no es necesaria aquí
             st.session_state.df_cartera = cargar_y_procesar_cartera()
             
             df_auto, df_pend = cargar_pendientes_desde_master(
-                g_client, G_SHEET_URL, G_SHEET_TAB_BANCOS_MASTER
+                # g_client, # <-- 2. REMOVIDO este argumento
+                G_SHEET_URL, 
+                G_SHEET_TAB_BANCOS_MASTER
             )
             
             st.session_state.df_conciliados_auto = df_auto
@@ -642,6 +722,10 @@ def main_app():
                 st.error("Error: La cartera no pudo ser cargada. Revisa el path '/data/cartera_detalle.csv'.")
             else:
                 st.session_state.data_loaded = True
+    # ==================================================================
+    # --- (FIN DE CORRECCIÓN DE BUG) ---
+    # ==================================================================
+
 
     # --- RESULTADOS DE LA CONCILIACIÓN (Leídos desde G-Sheets) ---
     if st.session_state.data_loaded:
@@ -734,7 +818,7 @@ def main_app():
                                                 pago_conciliado['cliente_asignado'] = clientes_cartera[nit_seleccionado]
                                                 
                                                 # Guardar en Google Sheets (Histórico Manual)
-                                                with st.spinner("Guardando en G-Sheet 'Conciliados_Historico' (y removiendo de 'Pendientes')..."):
+                                                with st.spinner("Guardando en G-Sheet 'Conciliados_Historico' (y enseñando al robot)..."):
                                                     g_client = connect_to_google_sheets()
                                                     ws = get_gsheet_worksheet(g_client, G_SHEET_URL, G_SHEET_TAB_CONCILIADOS_MANUAL)
                                                     
@@ -742,8 +826,6 @@ def main_app():
                                                     for col in df_to_save.select_dtypes(include=['datetime64[ns]', 'datetime64[ns, UTC]']):
                                                         df_to_save[col] = df_to_save[col].astype(str)
                                                     
-                                                    # Preparamos las columnas que existen en la hoja de conciliados
-                                                    # (Usamos las de la hoja original para no dañarla)
                                                     cols_finales_en_df = [
                                                         'FECHA', 'SUCURSAL BANCO', 'TIPO DE TRANSACCION', 'CUENTA',
                                                         'EMPRESA', 'VALOR', 'BANCO REFRENCIA INTERNA', 'DESTINO', 'RECIBO',
@@ -752,21 +834,29 @@ def main_app():
                                                         'status', 'id_factura_asignada', 'cliente_asignado'
                                                     ]
                                                     
-                                                    # Creamos un DF vacío con todas las columnas posibles y lo llenamos
                                                     df_final_save = pd.DataFrame(columns=cols_finales_en_df)
                                                     df_final_save = pd.concat([df_final_save, df_to_save], ignore_index=True)
                                                     df_final_save = df_final_save[cols_finales_en_df].fillna('')
 
-                                                    # Leemos los headers actuales de la hoja de manuales
                                                     headers = ws.row_values(1)
-                                                    if not headers: # Si la hoja está vacía, escribimos headers
+                                                    if not headers:
                                                         set_with_dataframe(ws, df_final_save[cols_finales_en_df])
                                                     else:
-                                                        # Si ya tiene headers, solo apilamos los valores
                                                         ws.append_rows(df_final_save[cols_finales_en_df].values.tolist(), value_input_option='USER_ENTERED')
                                                     
+                                                    # --- (NUEVO) GUARDAR APRENDIZAJE ---
+                                                    guardar_en_knowledge_base(
+                                                        g_client, 
+                                                        G_SHEET_URL, 
+                                                        G_SHEET_TAB_KNOWLEDGE_BASE, 
+                                                        pago_conciliado, 
+                                                        nit_seleccionado, # El NIT real del cliente
+                                                        pago_conciliado['cliente_asignado']
+                                                    )
+                                                    # --- FIN GUARDAR APRENDIZAJE ---
+                                                    
                                                     st.session_state.df_pendientes = st.session_state.df_pendientes.drop(idx)
-                                                    st.success(f"¡Pago de {clientes_cartera[nit_seleccionado]} guardado en G-Sheets!")
+                                                    st.success(f"¡Pago de {clientes_cartera[nit_seleccionado]} guardado! El robot ha aprendido esta relación.")
                                                     st.info("El registro se marcará como 'Manual' la próxima vez que se ejecute el 'Paso 1' (Batch).")
                                                     st.rerun()
 
@@ -784,7 +874,7 @@ def main_app():
                                             pago_conciliado['cliente_asignado'] = opciones_clientes[nit_seleccionado]
                                             
                                             # Guardar en Google Sheets (Histórico Manual)
-                                            with st.spinner("Guardando en G-Sheet 'Conciliados_Historico' (y removiendo de 'Pendientes')..."):
+                                            with st.spinner("Guardando en G-Sheet 'Conciliados_Historico' (y enseñando al robot si es 'Contado')..."):
                                                 g_client = connect_to_google_sheets()
                                                 ws = get_gsheet_worksheet(g_client, G_SHEET_URL, G_SHEET_TAB_CONCILIADOS_MANUAL)
                                                 
@@ -792,7 +882,6 @@ def main_app():
                                                 for col in df_to_save.select_dtypes(include=['datetime64[ns]', 'datetime64[ns, UTC]']):
                                                     df_to_save[col] = df_to_save[col].astype(str)
 
-                                                # (Misma lógica de guardado que el caso 1)
                                                 cols_finales_en_df = [
                                                     'FECHA', 'SUCURSAL BANCO', 'TIPO DE TRANSACCION', 'CUENTA',
                                                     'EMPRESA', 'VALOR', 'BANCO REFRENCIA INTERNA', 'DESTINO', 'RECIBO',
@@ -809,6 +898,18 @@ def main_app():
                                                     set_with_dataframe(ws, df_final_save[cols_finales_en_df])
                                                 else:
                                                     ws.append_rows(df_final_save[cols_finales_en_df].values.tolist(), value_input_option='USER_ENTERED')
+                                                
+                                                # --- (NUEVO) GUARDAR APRENDIZAJE ---
+                                                if nit_seleccionado == "CONTADO":
+                                                    guardar_en_knowledge_base(
+                                                        g_client, 
+                                                        G_SHEET_URL, 
+                                                        G_SHEET_TAB_KNOWLEDGE_BASE, 
+                                                        pago_conciliado, 
+                                                        "CONTADO", 
+                                                        "Venta Contado"
+                                                    )
+                                                # --- FIN GUARDAR APRENDIZAJE ---
                                                 
                                                 st.session_state.df_pendientes = st.session_state.df_pendientes.drop(idx)
                                                 st.success(f"¡Pago guardado como {opciones_clientes[nit_seleccionado]} en G-Sheets!")
