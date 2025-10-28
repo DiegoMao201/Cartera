@@ -1,13 +1,31 @@
 # ======================================================================================
 # ARCHIVO: pages/2_Motor_Conciliacion.py
-# (Versión CORREGIDA - Carga cartera con path hardcodeado)
+# (Versión CORREGIDA Y MEJORADA - 27 de Octubre, 2025)
+#
+# MODIFICACIÓN (Gemini):
+# 1.  Se actualiza `cargar_planilla_bancos` para filtrar solo los pagos
+#     pendientes de identificar, basándose en la nueva lógica de negocio:
+#     - VALOR > 0 (Es un ingreso)
+#     - RECIBO está VACÍO (No es un pago de cartera/crédito)
+#     - DESTINO está VACÍO (No se ha identificado)
+#
+# 2.  Se actualiza `cargar_ventas_diarias` para usar la estructura de 18 columnas
+#     del script 'Resumen Mensual.py' (ventas_detalle.csv).
+#     - Se asume que una "Venta de Contado" se identifica por
+#       TipoDocumento == 'CONTADO'.
+#     - Esto corrige el 'KeyError: fecha' al usar 'fecha_venta' y
+#       'valor_venta' como columnas fuente.
+#
+# 3.  Se mantiene `cargar_y_procesar_cartera` sin cambios, ya que procesa
+#     el archivo de cartera de crédito (cartera_detalle.csv), que es
+#     distinto al archivo de ventas (ventas_detalle.csv).
 # ======================================================================================
 import streamlit as st
 import pandas as pd
 import dropbox
 from io import StringIO, BytesIO
 import re
-import unicodedata
+import unicodata
 from datetime import datetime
 from fuzzywuzzy import fuzz
 import gspread
@@ -78,7 +96,6 @@ def connect_to_google_sheets():
             'https://www.googleapis.com/auth/spreadsheets',
             'https://www.googleapis.com/auth/drive'
         ]
-        # Esta línea fallará si no renombras [google_credentials] a [gcp_service_account] en tus secrets
         creds_dict = dict(st.secrets["gcp_service_account"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
@@ -138,8 +155,8 @@ def normalizar_texto(texto: str) -> str:
 @st.cache_data(ttl=600)
 def cargar_y_procesar_cartera():
     """
-    Carga y procesa la cartera desde Dropbox (App 'dropbox').
-    Esta función AHORA usa el path hardcodeado, igual que tu Tablero_Principal.py.
+    Carga y procesa la cartera (crédito) desde Dropbox (App 'dropbox').
+    Esta función usa el path hardcodeado '/data/cartera_detalle.csv'.
     """
     dbx_client = get_dbx_client("dropbox")
     path_archivo_dropbox = '/data/cartera_detalle.csv'
@@ -175,10 +192,14 @@ def cargar_y_procesar_cartera():
 
 @st.cache_data(ttl=600)
 def cargar_planilla_bancos(path_planilla_bancos):
-    """Carga y limpia la planilla de bancos desde Dropbox (App 'dropbox')."""
-    # Usa la conexión de cartera ('dropbox') porque está en la misma app
+    """
+    Carga y limpia la planilla de bancos desde Dropbox (App 'dropbox').
+    NUEVA LÓGICA: Filtra solo los ingresos (valor > 0) donde 'RECIBO' y
+    'DESTINO' están vacíos, ya que esos son los pendientes de identificar.
+    """
     dbx_client = get_dbx_client("dropbox")
     content = download_file_from_dropbox(dbx_client, path_planilla_bancos)
+    
     if content:
         try:
             df = pd.read_excel(BytesIO(content))
@@ -194,10 +215,8 @@ def cargar_planilla_bancos(path_planilla_bancos):
                               'EMPRESA', 'VALOR', 'BANCO REFRENCIA INTERNA', 'DESTINO', 
                               'RECIBO', 'FECHA RECIBO']
         
-        # Comparamos la cantidad de columnas encontradas vs las esperadas
         if len(df.columns) > len(columnas_esperadas):
             st.warning(f"Advertencia en 'planilla_bancos': Se encontraron {len(df.columns)} columnas, pero se esperaban {len(columnas_esperadas)}. Se usarán solo las primeras {len(columnas_esperadas)}.")
-            # Tomamos solo las primeras 10 columnas
             df = df.iloc[:, :len(columnas_esperadas)]
         elif len(df.columns) < len(columnas_esperadas):
                  st.error(f"Error en 'planilla_bancos': Se esperaban {len(columnas_esperadas)} columnas pero se encontraron {len(df.columns)}.")
@@ -210,85 +229,116 @@ def cargar_planilla_bancos(path_planilla_bancos):
         df_limpio['fecha'] = pd.to_datetime(df_limpio['FECHA'], errors='coerce')
         df_limpio['valor'] = pd.to_numeric(df_limpio['VALOR'], errors='coerce').fillna(0)
         
-        # --- INICIO DE LA CORRECCIÓN (Error 2: TypeError) ---
-        # Forzamos todas las columnas a string ANTES de concatenar
-        df_limpio['descripcion_banco'] = (
-            df_limpio['TIPO DE TRANSACCION'].fillna('').astype(str) + ' ' +
-            df_limpio['BANCO REFRENCIA INTERNA'].fillna('').astype(str) + ' ' +
-            df_limpio['DESTINO'].fillna('').astype(str)
+        # --- INICIO DE LA NUEVA LÓGICA DE FILTRADO ---
+        
+        # 1. Filtramos solo los que son INGRESOS
+        df_ingresos = df_limpio[df_limpio['valor'] > 0].copy()
+        
+        if df_ingresos.empty:
+            st.info("El archivo de bancos no contiene movimientos de ingreso (valor > 0).")
+            return pd.DataFrame()
+
+        # 2. Normalizamos columnas de lógica para el filtro
+        # Usamos .fillna('') para que los nulos se traten como strings vacíos
+        df_ingresos['RECIBO_norm'] = df_ingresos['RECIBO'].fillna('').astype(str).str.strip()
+        df_ingresos['DESTINO_norm'] = df_ingresos['DESTINO'].fillna('').astype(str).str.strip()
+
+        # 3. APLICAMOS LÓGICA DE NEGOCIO:
+        #    Queremos solo los pagos que NO son de cartera (RECIBO está vacío)
+        #    Y que NO están identificados (DESTINO está vacío)
+        df_pendientes = df_ingresos[
+            (df_ingresos['RECIBO_norm'] == '') &
+            (df_ingresos['DESTINO_norm'] == '')
+        ].copy()
+        
+        # 4. Si no hay pendientes, retornamos un DF vacío
+        if df_pendientes.empty:
+            st.info("Se leyeron los movimientos bancarios, pero no se encontraron nuevos pagos pendientes de identificar (Recibo y Destino vacíos).")
+            # Devolvemos un DF con la misma estructura para evitar errores
+            columnas_finales = list(df_ingresos.columns) + ['descripcion_banco', 'texto_match', 'id_banco_unico']
+            return pd.DataFrame(columns=columnas_finales)
+        
+        st.success(f"Se encontraron {len(df_pendientes)} nuevos pagos pendientes de identificar.")
+
+        # 5. Continuamos el procesamiento SOLO con los pendientes
+        df_pendientes['descripcion_banco'] = (
+            df_pendientes['TIPO DE TRANSACCION'].fillna('').astype(str) + ' ' +
+            df_pendientes['BANCO REFRENCIA INTERNA'].fillna('').astype(str) + ' ' +
+            df_pendientes['DESTINO'].fillna('').astype(str) # Aunque esté vacío, lo mantenemos
         )
-        # --- FIN DE LA CORRECCIÓN ---
+        df_pendientes['texto_match'] = df_pendientes['descripcion_banco'].apply(normalizar_texto)
+        df_pendientes = df_pendientes.reset_index(drop=True)
         
-        df_limpio['texto_match'] = df_limpio['descripcion_banco'].apply(normalizar_texto)
-        df_ingresos = df_limpio[df_limpio['valor'] > 0].reset_index(drop=True)
-        
-        df_ingresos['id_banco_unico'] = df_ingresos.apply(
+        df_pendientes['id_banco_unico'] = df_pendientes.apply(
             lambda row: f"B-{row['fecha'].strftime('%Y%m%d')}-{int(row['valor'])}-{row.name}", axis=1
         )
-        return df_ingresos
-    return pd.DataFrame()
+        
+        # --- FIN DE LA NUEVA LÓGICA ---
+        
+        return df_pendientes
 
 @st.cache_data(ttl=600)
 def cargar_ventas_diarias(path_ventas_diarias):
-    """Carga las ventas diarias ('detalle_ventas') desde Dropbox (App 'dropbox_ventas')."""
-    # ¡¡USA LA CONEXIÓN DE VENTAS!!
+    """
+    Carga las ventas diarias ('ventas_detalle.csv') desde Dropbox (App 'dropbox_ventas').
+    Usa la estructura de 18 columnas de 'Resumen Mensual.py'.
+    Asume que 'CONTADO' es un 'TipoDocumento'.
+    """
     dbx_client = get_dbx_client("dropbox_ventas") 
     content = download_file_from_dropbox(dbx_client, path_ventas_diarias)
-    if content:
-        try:
-            # ==================================================================
-            # --- AQUÍ ESTÁ LA CORRECCIÓN PARA EL ERROR 'utf-8' ---
-            # ==================================================================
-            df = pd.read_csv(BytesIO(content), sep=';', encoding='latin-1') 
-            
-        except Exception as e:
-            st.error(f"No se pudo leer el archivo de ventas ({path_ventas_diarias}): {e}")
-            return pd.DataFrame()
-        
-        # --- !! ATENCIÓN: AJUSTAR ESTAS COLUMNAS !! ---
-        # Esta parte depende de la estructura de tu archivo 'detalle_ventas.csv'
-        # Asumiré nombres comunes. DEBES REEMPLAZARLOS.
-        
-        # Nombres de columna que ASUMO (REEMPLAZAR)
-        COL_FECHA_VENTA = 'Fecha'           # <--- REVISA ESTE NOMBRE EN TU CSV
-        COL_CLIENTE_VENTA = 'Cliente'       # <--- REVISA ESTE NOMBRE EN TU CSV
-        COL_TOTAL_FACTURA = 'Total_Factura' # <--- REVISA ESTE NOMBRE EN TU CSV
-        COL_FORMA_PAGO = 'Forma_Pago'       # <--- REVISA ESTE NOMBRE EN TU CSV
-        VALOR_FORMA_PAGO_CONTADO = 'CONTADO' 
+    
+    if not content:
+        st.error(f"No se pudo descargar el archivo de ventas '{path_ventas_diarias}' desde la App 'dropbox_ventas'.")
+        return pd.DataFrame()
 
-        # ==================================================================
-        # --- INICIO DE LA CORRECCIÓN PARA EL 'KeyError: fecha' ---
-        # --- MOVEMOS TODA LA LÓGICA DENTRO DEL TRY...EXCEPT ---
-        # ==================================================================
-        try:
-            df_std = df.rename(columns={
-                COL_FECHA_VENTA: 'fecha',
-                COL_TOTAL_FACTURA: 'valor_contado',
-                COL_FORMA_PAGO: 'forma_pago',
-                COL_CLIENTE_VENTA: 'cliente'
-            })
-            
-            # Esta es la línea que generaba el KeyError
-            df_std['fecha'] = pd.to_datetime(df_std['fecha'], errors='coerce')
-            df_std['valor_contado'] = pd.to_numeric(df_std['valor_contado'], errors='coerce').fillna(0)
-            
-            df_contado = df_std[df_std['forma_pago'] == VALOR_FORMA_PAGO_CONTADO].copy()
-            
-            if df_contado.empty:
-                st.warning(f"No se encontraron ventas de contado (Forma_Pago = '{VALOR_FORMA_PAGO_CONTADO}') en 'detalle_ventas'.")
+    # Columnas correctas (de Resumen Mensual.py)
+    nombres_columnas = [
+        'anio', 'mes', 'fecha_venta', 'Serie', 'TipoDocumento', 
+        'codigo_vendedor', 'nomvendedor', 'cliente_id', 'nombre_cliente', 
+        'codigo_articulo', 'nombre_articulo', 'categoria_producto', 
+        'linea_producto', 'marca_producto', 'valor_venta', 
+        'unidades_vendidas', 'costo_unitario', 'super_categoria'
+    ]
 
-            return df_contado
+    try:
+        # Leemos el CSV usando la nueva lista de 18 columnas
+        df = pd.read_csv(BytesIO(content), sep=';', encoding='latin-1', header=None, names=nombres_columnas)
+    except Exception as e:
+        st.error(f"No se pudo leer el archivo de ventas ({path_ventas_diarias}): {e}")
+        return pd.DataFrame()
 
-        except KeyError as e:
-            st.error(f"Error en 'detalle_ventas': No se encontró la columna {e}.")
-            st.info(f"El error {e} significa que la columna original (p.ej. '{COL_FECHA_VENTA}') no existe en tu CSV, o la renombrada (p.ej. 'fecha') no se pudo crear.")
-            st.info(f"Por favor, ajusta los nombres de las columnas (COL_FECHA_VENTA, etc.) en la función 'cargar_ventas_diarias' del código para que coincidan con tu archivo CSV.")
-            return pd.DataFrame()
-        # ==================================================================
-        # --- FIN DE LA CORRECCIÓN ---
-        # ==================================================================
+    try:
+        # Limpieza básica
+        df['fecha_venta'] = pd.to_datetime(df['fecha_venta'], errors='coerce')
+        df['valor_venta'] = pd.to_numeric(df['valor_venta'], errors='coerce').fillna(0)
+        df['TipoDocumento'] = df['TipoDocumento'].fillna('').astype(str).apply(normalizar_texto)
         
-    return pd.DataFrame()
+        # --- NUEVA LÓGICA DE FILTRO ---
+        # Asumimos que 'CONTADO' es un TipoDocumento
+        VALOR_FORMA_PAGO_CONTADO = 'CONTADO'
+        df_contado = df[df['TipoDocumento'] == VALOR_FORMA_PAGO_CONTADO].copy()
+
+        if df_contado.empty:
+            st.warning(f"No se encontraron ventas de contado (TipoDocumento = '{VALOR_FORMA_PAGO_CONTADO}') en el archivo de ventas.")
+            # Devolvemos un DF vacío con la estructura esperada
+            cols_esperadas = ['fecha', 'valor_contado', 'forma_pago', 'cliente']
+            return pd.DataFrame(columns=cols_esperadas)
+
+        # Renombramos para que coincida con el motor de conciliación
+        df_std = df_contado.rename(columns={
+            'fecha_venta': 'fecha',
+            'valor_venta': 'valor_contado',
+            'TipoDocumento': 'forma_pago',
+            'nombre_cliente': 'cliente'
+        })
+        
+        # Seleccionamos solo las columnas que usa el Nivel 3
+        return df_std[['fecha', 'valor_contado', 'forma_pago', 'cliente']]
+
+    except KeyError as e:
+        st.error(f"Error en 'cargar_ventas_diarias': No se encontró la columna {e}.")
+        st.info(f"Esto sugiere que el archivo en '{path_ventas_diarias}' no coincide con la estructura de 18 columnas de 'ventas_detalle.csv'.")
+        return pd.DataFrame()
 
 # ======================================================================================
 # --- 3. MOTOR DE CONCILIACIÓN AUTOMÁTICA ---
@@ -310,7 +360,8 @@ def run_auto_reconciliation(df_bancos, df_cartera, df_ventas):
     mapa_facturas = {row['id_factura_unica']: row for _, row in df_cartera.iterrows()}
     
     for idx, pago in df_bancos_pendientes.iterrows():
-        matches = re.findall(r'(\d+-\d+)', pago['texto_match']) # Busca patrones como "123-456"
+        # Busca patrones como "123-456"
+        matches = re.findall(r'(\d+-\d+)', pago['texto_match'])
         for id_factura_potencial in matches:
             if id_factura_potencial in mapa_facturas:
                 factura = mapa_facturas[id_factura_potencial]
@@ -429,17 +480,26 @@ def main_app():
         with st.spinner("Conectando y cargando datos..."):
             
             st.session_state.df_cartera = cargar_y_procesar_cartera()
-            st.session_state.df_bancos = cargar_planilla_bancos(PATH_PLANILLA_BANCOS)
-            st.session_state.df_ventas = cargar_ventas_diarias(PATH_VENTAS_DIARIAS)
+            # Carga solo los bancos PENDIENTES (Recibo y Destino vacíos)
+            st.session_state.df_bancos = cargar_planilla_bancos(PATH_PLANILLA_BANCOS) 
+            # Carga solo las ventas de CONTADO (TipoDocumento == 'CONTADO')
+            st.session_state.df_ventas = cargar_ventas_diarias(PATH_VENTAS_DIARIAS) 
             st.session_state.data_loaded = True
             
-            if st.session_state.df_bancos.empty or st.session_state.df_cartera.empty:
-                st.error("Error: La planilla de bancos o la cartera no pudieron ser cargadas. Revisa los paths y los archivos.")
+            if st.session_state.df_cartera.empty:
+                st.error("Error: La cartera no pudo ser cargada. Revisa el path '/data/cartera_detalle.csv' y el archivo.")
                 st.session_state.data_loaded = False
+            
+            # Ya no fallamos si bancos o ventas están vacíos, 
+            # porque la función de carga puede devolver vacío si no hay pendientes.
+            elif st.session_state.df_bancos.empty:
+                st.warning("No se encontraron NUEVOS movimientos bancarios pendientes de identificar.")
+                # Continuamos, puede que solo queramos ver el histórico
+            
             else:
-                st.success(f"Datos cargados: {len(st.session_state.df_cartera)} facturas, {len(st.session_state.df_bancos)} mov. bancarios, {len(st.session_state.df_ventas)} ventas contado.")
+                st.success(f"Datos cargados: {len(st.session_state.df_cartera)} facturas (cartera), {len(st.session_state.df_bancos)} mov. bancarios (pendientes), {len(st.session_state.df_ventas)} ventas (contado).")
         
-        if st.session_state.data_loaded: # Solo si la carga inicial fue exitosa
+        if st.session_state.data_loaded: 
             with st.spinner("Ejecutando motor de conciliación automática..."):
                 g_client = connect_to_google_sheets()
                 ws_conciliados = get_gsheet_worksheet(g_client, G_SHEET_URL, G_SHEET_TAB_CONCILIADOS)
@@ -460,7 +520,7 @@ def main_app():
                 ]
                 
                 if bancos_a_procesar.empty:
-                    st.info("No se encontraron nuevos movimientos bancarios para procesar.")
+                    st.info("No se encontraron nuevos movimientos bancarios para procesar (ya estaban en G-Sheets o no había pendientes).")
                     st.session_state.df_pendientes = pd.DataFrame()
                     st.session_state.df_conciliados_auto = pd.DataFrame()
                 else:
@@ -499,7 +559,7 @@ def main_app():
         total_pendiente = st.session_state.df_pendientes['valor'].sum()
 
         kpi_cols = st.columns(3)
-        kpi_cols[0].metric("🏦 Nuevos Pagos (Bancos)", f"${total_recibido_nuevos:,.0f}")
+        kpi_cols[0].metric("🏦 Nuevos Pagos (Pendientes de ID)", f"${total_recibido_nuevos:,.0f}")
         kpi_cols[1].metric("✅ Conciliado (Automático)", f"${total_auto:,.0f}")
         kpi_cols[2].metric("❓ Pendiente (Manual)", f"${total_pendiente:,.0f}", delta=f"{len(st.session_state.df_pendientes)} transacciones")
 
@@ -513,9 +573,14 @@ def main_app():
             else:
                 st.info(f"Se encontraron {len(st.session_state.df_pendientes)} pagos que requieren tu atención.")
                 
+                # Preparamos las opciones para el selectbox
                 clientes_cartera = st.session_state.df_cartera.drop_duplicates(subset=['nit_norm']) \
                                             .set_index('nit_norm')['NOMBRECLIENTE'].to_dict()
                 opciones_clientes = {nit: f"{nombre} (NIT: {nit})" for nit, nombre in clientes_cartera.items()}
+                # Añadimos opciones para "Venta Contado" y "Otro"
+                opciones_clientes["CONTADO"] = "Venta Contado (No ligar a factura)"
+                opciones_clientes["OTRO"] = "Otro (Gasto, Préstamo, etc.)"
+
 
                 for idx, pago in st.session_state.df_pendientes.iterrows():
                     container_key = f"pago_{pago['id_banco_unico']}"
@@ -525,59 +590,99 @@ def main_app():
                         
                         with col_pago:
                             st.markdown("**Detalle del Pago:**")
-                            st.dataframe(pago.drop(['texto_match', 'status']))
+                            columnas_a_mostrar = [
+                                'fecha', 'valor', 'descripcion_banco', 'SUCURSAL BANCO',
+                                'TIPO DE TRANSACCION', 'BANCO REFRENCIA INTERNA'
+                            ]
+                            # Filtramos solo las columnas que existen en el DF 'pago'
+                            columnas_existentes = [col for col in columnas_a_mostrar if col in pago.index]
+                            st.dataframe(pago[columnas_existentes])
                         
                         with col_asignacion:
-                            st.markdown("**Asignar Pago a Cliente:**")
+                            st.markdown("**Asignar Pago:**")
                             
                             nit_seleccionado = st.selectbox(
-                                "Buscar Cliente por NIT o Nombre:",
+                                "Buscar Cliente por NIT o Nombre (o asignar a Contado/Otro):",
                                 options=[""] + list(opciones_clientes.keys()),
                                 format_func=lambda nit: "Selecciona un cliente..." if nit == "" else opciones_clientes[nit],
                                 key=f"cliente_sel_{container_key}"
                             )
                             
                             if nit_seleccionado:
-                                facturas_cliente = st.session_state.df_cartera[
-                                    st.session_state.df_cartera['nit_norm'] == nit_seleccionado
-                                ].sort_values(by='DIAS_VENCIDO', ascending=False)
+                                # --- LÓGICA PARA ASIGNACIÓN MANUAL ---
                                 
-                                if facturas_cliente.empty:
-                                    st.warning("Este cliente no tiene facturas pendientes en cartera.")
-                                else:
-                                    opciones_facturas = {
-                                        row['id_factura_unica']: f"Fact: {row['id_factura_unica']} | Valor: ${row['IMPORTE']:,.0f} | Venc: {row['DIAS_VENCIDO']} días"
-                                        for _, row in facturas_cliente.iterrows()
-                                    }
+                                # CASO 1: Es un cliente de cartera
+                                if nit_seleccionado not in ["CONTADO", "OTRO"]:
+                                    facturas_cliente = st.session_state.df_cartera[
+                                        st.session_state.df_cartera['nit_norm'] == nit_seleccionado
+                                    ].sort_values(by='DIAS_VENCIDO', ascending=False)
                                     
-                                    facturas_seleccionadas = st.multiselect(
-                                        "Selecciona la(s) factura(s) que cubre este pago:",
-                                        options=opciones_facturas.keys(),
-                                        format_func=lambda id_fact: opciones_facturas[id_fact],
-                                        key=f"fact_sel_{container_key}"
-                                    )
-                                    
-                                    if st.button("💾 Guardar Conciliación Manual", key=f"btn_save_{container_key}"):
-                                        if not facturas_seleccionadas:
-                                            st.error("Debes seleccionar al menos una factura.")
-                                        else:
-                                            with st.spinner("Guardando..."):
+                                    if facturas_cliente.empty:
+                                        st.warning("Este cliente no tiene facturas pendientes en cartera.")
+                                    else:
+                                        opciones_facturas = {
+                                            row['id_factura_unica']: f"Fact: {row['id_factura_unica']} | Valor: ${row['IMPORTE']:,.0f} | Venc: {row['DIAS_VENCIDO']} días"
+                                            for _, row in facturas_cliente.iterrows()
+                                        }
+                                        
+                                        facturas_seleccionadas = st.multiselect(
+                                            "Selecciona la(s) factura(s) que cubre este pago:",
+                                            options=opciones_facturas.keys(),
+                                            format_func=lambda id_fact: opciones_facturas[id_fact],
+                                            key=f"fact_sel_{container_key}"
+                                        )
+                                        
+                                        if st.button("💾 Guardar Conciliación (Cartera)", key=f"btn_save_cartera_{container_key}"):
+                                            if not facturas_seleccionadas:
+                                                st.error("Debes seleccionar al menos una factura.")
+                                            else:
                                                 pago_conciliado = pago.copy()
-                                                pago_conciliado['status'] = 'Conciliado (Manual)'
+                                                pago_conciliado['status'] = 'Conciliado (Manual - Cartera)'
                                                 pago_conciliado['id_factura_asignada'] = ", ".join(facturas_seleccionadas)
                                                 pago_conciliado['cliente_asignado'] = clientes_cartera[nit_seleccionado]
+                                                
+                                                # Guardar en Google Sheets
+                                                with st.spinner("Guardando..."):
+                                                    g_client = connect_to_google_sheets()
+                                                    ws = get_gsheet_worksheet(g_client, G_SHEET_URL, G_SHEET_TAB_CONCILIADOS)
+                                                    
+                                                    df_to_save = pd.DataFrame([pago_conciliado])
+                                                    for col in df_to_save.select_dtypes(include=['datetime64[ns]', 'datetime64[ns, UTC]']):
+                                                        df_to_save[col] = df_to_save[col].astype(str)
+                                                    
+                                                    ws.append_rows(df_to_save.values.tolist(), value_input_option='USER_ENTERED')
+                                                    
+                                                    st.session_state.df_pendientes = st.session_state.df_pendientes.drop(idx)
+                                                    st.success(f"¡Pago de {clientes_cartera[nit_seleccionado]} guardado!")
+                                                    st.rerun()
+
+                                # CASO 2: Es Venta de Contado u Otro
+                                else:
+                                    comentario_manual = st.text_input("Añadir comentario (ej. 'Abono cliente XXX', 'Pago datáfono')", key=f"comentario_{container_key}")
+                                    
+                                    if st.button(f"💾 Guardar como '{opciones_clientes[nit_seleccionado]}'", key=f"btn_save_otro_{container_key}"):
+                                        if nit_seleccionado == "OTRO" and not comentario_manual:
+                                            st.error("Debes añadir un comentario si seleccionas 'Otro'.")
+                                        else:
+                                            pago_conciliado = pago.copy()
+                                            pago_conciliado['status'] = f'Conciliado (Manual - {nit_seleccionado})'
+                                            pago_conciliado['id_factura_asignada'] = comentario_manual if comentario_manual else nit_seleccionado
+                                            pago_conciliado['cliente_asignado'] = opciones_clientes[nit_seleccionado]
+                                            
+                                            # Guardar en Google Sheets
+                                            with st.spinner("Guardando..."):
+                                                g_client = connect_to_google_sheets()
+                                                ws = get_gsheet_worksheet(g_client, G_SHEET_URL, G_SHEET_TAB_CONCILIADOS)
                                                 
                                                 df_to_save = pd.DataFrame([pago_conciliado])
                                                 for col in df_to_save.select_dtypes(include=['datetime64[ns]', 'datetime64[ns, UTC]']):
                                                     df_to_save[col] = df_to_save[col].astype(str)
                                                 
-                                                g_client = connect_to_google_sheets()
-                                                ws = get_gsheet_worksheet(g_client, G_SHEET_URL, G_SHEET_TAB_CONCILIADOS)
                                                 ws.append_rows(df_to_save.values.tolist(), value_input_option='USER_ENTERED')
                                                 
                                                 st.session_state.df_pendientes = st.session_state.df_pendientes.drop(idx)
-                                                st.success(f"¡Pago de {clientes_cartera[nit_seleccionado]} guardado!")
-                                                st.rerun() 
+                                                st.success(f"¡Pago guardado como {opciones_clientes[nit_seleccionado]}!")
+                                                st.rerun()
 
         with tab_auto:
             st.info("Estos son los pagos que el motor identificó y guardó en Google Sheets automáticamente.")
@@ -587,7 +692,7 @@ def main_app():
             st.subheader("Cartera Pendiente (Fuente)")
             st.dataframe(st.session_state.df_cartera, use_container_width=True)
             
-            st.subheader("Planilla Bancos (Fuente)")
+            st.subheader("Planilla Bancos (Fuente - Solo Pendientes de ID)")
             st.dataframe(st.session_state.df_bancos, use_container_width=True)
             
             st.subheader("Ventas de Contado (Fuente)")
