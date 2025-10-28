@@ -78,6 +78,7 @@ def connect_to_google_sheets():
             'https://www.googleapis.com/auth/spreadsheets',
             'https://www.googleapis.com/auth/drive'
         ]
+        # Esta línea fallará si no renombras [google_credentials] a [gcp_service_account] en tus secrets
         creds_dict = dict(st.secrets["gcp_service_account"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
@@ -199,9 +200,9 @@ def cargar_planilla_bancos(path_planilla_bancos):
             # Tomamos solo las primeras 10 columnas
             df = df.iloc[:, :len(columnas_esperadas)]
         elif len(df.columns) < len(columnas_esperadas):
-             st.error(f"Error en 'planilla_bancos': Se esperaban {len(columnas_esperadas)} columnas pero se encontraron {len(df.columns)}.")
-             st.info("El archivo parece estar incompleto o corrupto.")
-             return pd.DataFrame()
+                 st.error(f"Error en 'planilla_bancos': Se esperaban {len(columnas_esperadas)} columnas pero se encontraron {len(df.columns)}.")
+                 st.info("El archivo parece estar incompleto o corrupto.")
+                 return pd.DataFrame()
             
         df.columns = columnas_esperadas
         
@@ -235,7 +236,11 @@ def cargar_ventas_diarias(path_ventas_diarias):
     content = download_file_from_dropbox(dbx_client, path_ventas_diarias)
     if content:
         try:
-            df = pd.read_csv(BytesIO(content), sep=';') 
+            # ==================================================================
+            # --- AQUÍ ESTÁ LA CORRECCIÓN PARA EL ERROR 'utf-8' ---
+            # ==================================================================
+            df = pd.read_csv(BytesIO(content), sep=';', encoding='latin-1') 
+            
         except Exception as e:
             st.error(f"No se pudo leer el archivo de ventas ({path_ventas_diarias}): {e}")
             return pd.DataFrame()
@@ -497,7 +502,7 @@ def main_app():
                 st.info(f"Se encontraron {len(st.session_state.df_pendientes)} pagos que requieren tu atención.")
                 
                 clientes_cartera = st.session_state.df_cartera.drop_duplicates(subset=['nit_norm']) \
-                                       .set_index('nit_norm')['NOMBRECLIENTE'].to_dict()
+                                            .set_index('nit_norm')['NOMBRECLIENTE'].to_dict()
                 opciones_clientes = {nit: f"{nombre} (NIT: {nit})" for nit, nombre in clientes_cartera.items()}
 
                 for idx, pago in st.session_state.df_pendientes.iterrows():
