@@ -104,11 +104,9 @@ def get_gsheet_worksheet(g_client, sheet_url, worksheet_name):
 def download_file_from_dropbox(dbx_client, file_path):
     """Descarga el contenido de un archivo desde Dropbox."""
     try:
-        # --- INICIO DE LA CORRECCIÓN (Error 2: Path de Dropbox) ---
         # Aseguramos que el path sea absoluto (inicie con /)
         if not file_path.startswith('/'):
             file_path = '/' + file_path
-        # --- FIN DE LA CORRECCIÓN ---
 
         metadata, res = dbx_client.files_download(path=file_path)
         return res.content
@@ -142,12 +140,8 @@ def cargar_y_procesar_cartera():
     Carga y procesa la cartera desde Dropbox (App 'dropbox').
     Esta función AHORA usa el path hardcodeado, igual que tu Tablero_Principal.py.
     """
-    # --- INICIO DE LA CORRECCIÓN ---
-    # Usamos el cliente 'dropbox' (el de cartera)
     dbx_client = get_dbx_client("dropbox")
-    # Usamos el path hardcodeado de tu archivo principal
     path_archivo_dropbox = '/data/cartera_detalle.csv'
-    # --- FIN DE LA CORRECCIÓN ---
     
     content = download_file_from_dropbox(dbx_client, path_archivo_dropbox)
     
@@ -199,7 +193,6 @@ def cargar_planilla_bancos(path_planilla_bancos):
                               'EMPRESA', 'VALOR', 'BANCO REFRENCIA INTERNA', 'DESTINO', 
                               'RECIBO', 'FECHA RECIBO']
         
-        # --- INICIO DE LA CORRECCIÓN (Error 1: 10 vs 12 columnas) ---
         # Comparamos la cantidad de columnas encontradas vs las esperadas
         if len(df.columns) > len(columnas_esperadas):
             st.warning(f"Advertencia en 'planilla_bancos': Se encontraron {len(df.columns)} columnas, pero se esperaban {len(columnas_esperadas)}. Se usarán solo las primeras {len(columnas_esperadas)}.")
@@ -209,7 +202,6 @@ def cargar_planilla_bancos(path_planilla_bancos):
              st.error(f"Error en 'planilla_bancos': Se esperaban {len(columnas_esperadas)} columnas pero se encontraron {len(df.columns)}.")
              st.info("El archivo parece estar incompleto o corrupto.")
              return pd.DataFrame()
-        # --- FIN DE LA CORRECCIÓN ---
             
         df.columns = columnas_esperadas
         
@@ -217,11 +209,14 @@ def cargar_planilla_bancos(path_planilla_bancos):
         df_limpio['fecha'] = pd.to_datetime(df_limpio['FECHA'], errors='coerce')
         df_limpio['valor'] = pd.to_numeric(df_limpio['VALOR'], errors='coerce').fillna(0)
         
+        # --- INICIO DE LA CORRECCIÓN (Error 2: TypeError) ---
+        # Forzamos todas las columnas a string ANTES de concatenar
         df_limpio['descripcion_banco'] = (
-            df_limpio['TIPO DE TRANSACCION'].fillna('') + ' ' +
+            df_limpio['TIPO DE TRANSACCION'].fillna('').astype(str) + ' ' +
             df_limpio['BANCO REFRENCIA INTERNA'].fillna('').astype(str) + ' ' +
-            df_limpio['DESTINO'].fillna('')
+            df_limpio['DESTINO'].fillna('').astype(str)
         )
+        # --- FIN DE LA CORRECCIÓN ---
         
         df_limpio['texto_match'] = df_limpio['descripcion_banco'].apply(normalizar_texto)
         df_ingresos = df_limpio[df_limpio['valor'] > 0].reset_index(drop=True)
@@ -391,13 +386,10 @@ def main_app():
         G_SHEET_URL = st.secrets["google_sheets"]["sheet_url"]
         G_SHEET_TAB_CONCILIADOS = st.secrets["google_sheets"]["tab_conciliados"]
         
-        # --- INICIO DE LA CORRECCIÓN ---
         # Path de Bancos (de la App 'dropbox')
         PATH_PLANILLA_BANCOS = st.secrets["dropbox"]["path_bancos"]
         # Path de Ventas (de la App 'dropbox_ventas')
         PATH_VENTAS_DIARIAS = st.secrets["dropbox_ventas"]["path_ventas"]
-        # Ya NO buscamos 'path_cartera' aquí
-        # --- FIN DE LA CORRECCIÓN ---
         
     except KeyError as e:
         st.error(f"Error: Falta una clave en tu archivo secrets.toml: {e}")
@@ -419,11 +411,7 @@ def main_app():
     if st.button("🔄 Cargar y Conciliar Datos", type="primary"):
         with st.spinner("Conectando y cargando datos..."):
             
-            # --- INICIO DE LA CORRECCIÓN ---
-            # Llamamos a la función sin argumentos, ya que tiene el path hardcodeado
             st.session_state.df_cartera = cargar_y_procesar_cartera()
-            # --- FIN DE LA CORRECCIÓN ---
-            
             st.session_state.df_bancos = cargar_planilla_bancos(PATH_PLANILLA_BANCOS)
             st.session_state.df_ventas = cargar_ventas_diarias(PATH_VENTAS_DIARIAS)
             st.session_state.data_loaded = True
