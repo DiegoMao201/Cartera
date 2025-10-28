@@ -25,7 +25,7 @@ import pandas as pd
 import dropbox
 from io import StringIO, BytesIO
 import re
-import unicodata
+import unicodedata # <- CORRECCIÓN APLICADA AQUÍ
 from datetime import datetime
 from fuzzywuzzy import fuzz
 import gspread
@@ -554,7 +554,7 @@ def main_app():
         st.header("Resultados de la Conciliación")
         
         total_recibido_nuevos = (st.session_state.df_conciliados_auto['valor'].sum() + 
-                                   st.session_state.df_pendientes['valor'].sum())
+                                     st.session_state.df_pendientes['valor'].sum())
         total_auto = st.session_state.df_conciliados_auto['valor'].sum()
         total_pendiente = st.session_state.df_pendientes['valor'].sum()
 
@@ -575,7 +575,7 @@ def main_app():
                 
                 # Preparamos las opciones para el selectbox
                 clientes_cartera = st.session_state.df_cartera.drop_duplicates(subset=['nit_norm']) \
-                                            .set_index('nit_norm')['NOMBRECLIENTE'].to_dict()
+                                                             .set_index('nit_norm')['NOMBRECLIENTE'].to_dict()
                 opciones_clientes = {nit: f"{nombre} (NIT: {nit})" for nit, nombre in clientes_cartera.items()}
                 # Añadimos opciones para "Venta Contado" y "Otro"
                 opciones_clientes["CONTADO"] = "Venta Contado (No ligar a factura)"
