@@ -84,6 +84,7 @@ def connect_to_google_sheets():
         return client
     except Exception as e:
         st.error(f"Error conectando a Google Sheets: {e}")
+        st.info("Asegúrate de haber añadido la sección [gcp_service_account] a tu secrets.toml.")
         st.stop()
 
 def get_gsheet_worksheet(g_client, sheet_url, worksheet_name):
@@ -103,6 +104,12 @@ def get_gsheet_worksheet(g_client, sheet_url, worksheet_name):
 def download_file_from_dropbox(dbx_client, file_path):
     """Descarga el contenido de un archivo desde Dropbox."""
     try:
+        # --- INICIO DE LA CORRECCIÓN (Error 2: Path de Dropbox) ---
+        # Aseguramos que el path sea absoluto (inicie con /)
+        if not file_path.startswith('/'):
+            file_path = '/' + file_path
+        # --- FIN DE LA CORRECCIÓN ---
+
         metadata, res = dbx_client.files_download(path=file_path)
         return res.content
     except dropbox.exceptions.ApiError as e:
@@ -192,10 +199,17 @@ def cargar_planilla_bancos(path_planilla_bancos):
                               'EMPRESA', 'VALOR', 'BANCO REFRENCIA INTERNA', 'DESTINO', 
                               'RECIBO', 'FECHA RECIBO']
         
-        if len(df.columns) != len(columnas_esperadas):
-            st.error(f"Error en 'planilla_bancos': Se esperaban {len(columnas_esperadas)} columnas pero se encontraron {len(df.columns)}.")
-            st.info("Asegúrate de que el archivo no tenga filas vacías al inicio o esté corrupto.")
-            return pd.DataFrame()
+        # --- INICIO DE LA CORRECCIÓN (Error 1: 10 vs 12 columnas) ---
+        # Comparamos la cantidad de columnas encontradas vs las esperadas
+        if len(df.columns) > len(columnas_esperadas):
+            st.warning(f"Advertencia en 'planilla_bancos': Se encontraron {len(df.columns)} columnas, pero se esperaban {len(columnas_esperadas)}. Se usarán solo las primeras {len(columnas_esperadas)}.")
+            # Tomamos solo las primeras 10 columnas
+            df = df.iloc[:, :len(columnas_esperadas)]
+        elif len(df.columns) < len(columnas_esperadas):
+             st.error(f"Error en 'planilla_bancos': Se esperaban {len(columnas_esperadas)} columnas pero se encontraron {len(df.columns)}.")
+             st.info("El archivo parece estar incompleto o corrupto.")
+             return pd.DataFrame()
+        # --- FIN DE LA CORRECCIÓN ---
             
         df.columns = columnas_esperadas
         
@@ -420,61 +434,62 @@ def main_app():
             else:
                 st.success(f"Datos cargados: {len(st.session_state.df_cartera)} facturas, {len(st.session_state.df_bancos)} mov. bancarios, {len(st.session_state.df_ventas)} ventas contado.")
         
-        with st.spinner("Ejecutando motor de conciliación automática..."):
-            g_client = connect_to_google_sheets()
-            ws_conciliados = get_gsheet_worksheet(g_client, G_SHEET_URL, G_SHEET_TAB_CONCILIADOS)
-            
-            try:
-                df_historico_gsheet = pd.DataFrame(ws_conciliados.get_all_records())
-            except Exception as e:
-                st.warning(f"No se pudo leer historial de Google Sheets (puede estar vacía): {e}")
-                df_historico_gsheet = pd.DataFrame()
+        if st.session_state.data_loaded: # Solo si la carga inicial fue exitosa
+            with st.spinner("Ejecutando motor de conciliación automática..."):
+                g_client = connect_to_google_sheets()
+                ws_conciliados = get_gsheet_worksheet(g_client, G_SHEET_URL, G_SHEET_TAB_CONCILIADOS)
+                
+                try:
+                    df_historico_gsheet = pd.DataFrame(ws_conciliados.get_all_records())
+                except Exception as e:
+                    st.warning(f"No se pudo leer historial de Google Sheets (puede estar vacía): {e}")
+                    df_historico_gsheet = pd.DataFrame()
 
-            ids_ya_conciliados = set()
-            if not df_historico_gsheet.empty and 'id_banco_unico' in df_historico_gsheet.columns:
-                ids_ya_conciliados = set(df_historico_gsheet['id_banco_unico'])
-                st.write(f"Se encontraron {len(ids_ya_conciliados)} registros ya conciliados en Google Sheets.")
-            
-            bancos_a_procesar = st.session_state.df_bancos[
-                ~st.session_state.df_bancos['id_banco_unico'].isin(ids_ya_conciliados)
-            ]
-            
-            if bancos_a_procesar.empty:
-                st.info("No se encontraron nuevos movimientos bancarios para procesar.")
-                st.session_state.df_pendientes = pd.DataFrame()
-                st.session_state.df_conciliados_auto = pd.DataFrame()
-            else:
-                df_auto, df_pend = run_auto_reconciliation(
-                    bancos_a_procesar, 
-                    st.session_state.df_cartera, 
-                    st.session_state.df_ventas
-                )
+                ids_ya_conciliados = set()
+                if not df_historico_gsheet.empty and 'id_banco_unico' in df_historico_gsheet.columns:
+                    ids_ya_conciliados = set(df_historico_gsheet['id_banco_unico'])
+                    st.write(f"Se encontraron {len(ids_ya_conciliados)} registros ya conciliados en Google Sheets.")
                 
-                st.session_state.df_conciliados_auto = df_auto
-                st.session_state.df_pendientes = df_pend
+                bancos_a_procesar = st.session_state.df_bancos[
+                    ~st.session_state.df_bancos['id_banco_unico'].isin(ids_ya_conciliados)
+                ]
                 
-                if not df_auto.empty:
-                    with st.spinner("Guardando conciliados automáticos en Google Sheets..."):
-                        df_auto_save = df_auto.copy()
-                        for col in df_auto_save.select_dtypes(include=['datetime64[ns]', 'datetime64[ns, UTC]']):
-                            df_auto_save[col] = df_auto_save[col].astype(str)
-                        
-                        existing_data = ws_conciliados.get_all_values()
-                        list_of_lists_to_add = df_auto_save.values.tolist()
-                        
-                        if len(existing_data) > 0:
-                            ws_conciliados.append_rows(list_of_lists_to_add, value_input_option='USER_ENTERED')
-                        else: 
-                            set_with_dataframe(ws_conciliados, df_auto_save)
+                if bancos_a_procesar.empty:
+                    st.info("No se encontraron nuevos movimientos bancarios para procesar.")
+                    st.session_state.df_pendientes = pd.DataFrame()
+                    st.session_state.df_conciliados_auto = pd.DataFrame()
+                else:
+                    df_auto, df_pend = run_auto_reconciliation(
+                        bancos_a_procesar, 
+                        st.session_state.df_cartera, 
+                        st.session_state.df_ventas
+                    )
+                    
+                    st.session_state.df_conciliados_auto = df_auto
+                    st.session_state.df_pendientes = df_pend
+                    
+                    if not df_auto.empty:
+                        with st.spinner("Guardando conciliados automáticos en Google Sheets..."):
+                            df_auto_save = df_auto.copy()
+                            for col in df_auto_save.select_dtypes(include=['datetime64[ns]', 'datetime64[ns, UTC]']):
+                                df_auto_save[col] = df_auto_save[col].astype(str)
                             
-                        st.success(f"{len(df_auto)} pagos automáticos guardados en Google Sheets.")
+                            existing_data = ws_conciliados.get_all_values()
+                            list_of_lists_to_add = df_auto_save.values.tolist()
+                            
+                            if len(existing_data) > 0:
+                                ws_conciliados.append_rows(list_of_lists_to_add, value_input_option='USER_ENTERED')
+                            else: 
+                                set_with_dataframe(ws_conciliados, df_auto_save)
+                                
+                            st.success(f"{len(df_auto)} pagos automáticos guardados en Google Sheets.")
 
     # --- RESULTADOS DE LA CONCILIACIÓN ---
     if st.session_state.data_loaded:
         st.header("Resultados de la Conciliación")
         
         total_recibido_nuevos = (st.session_state.df_conciliados_auto['valor'].sum() + 
-                                 st.session_state.df_pendientes['valor'].sum())
+                                   st.session_state.df_pendientes['valor'].sum())
         total_auto = st.session_state.df_conciliados_auto['valor'].sum()
         total_pendiente = st.session_state.df_pendientes['valor'].sum()
 
