@@ -25,7 +25,7 @@ import pandas as pd
 import dropbox
 from io import StringIO, BytesIO
 import re
-import unicodedata # <- CORRECCIÓN APLICADA AQUÍ
+import unicodedata
 from datetime import datetime
 from fuzzywuzzy import fuzz
 import gspread
@@ -553,10 +553,20 @@ def main_app():
     if st.session_state.data_loaded:
         st.header("Resultados de la Conciliación")
         
-        total_recibido_nuevos = (st.session_state.df_conciliados_auto['valor'].sum() + 
-                                     st.session_state.df_pendientes['valor'].sum())
-        total_auto = st.session_state.df_conciliados_auto['valor'].sum()
-        total_pendiente = st.session_state.df_pendientes['valor'].sum()
+        # ==================================================================
+        # --- INICIO DE LA CORRECCIÓN ---
+        # Si el DataFrame está vacío (porque no se procesó nada),
+        # no podemos acceder a ['valor'].sum() o dará KeyError.
+        # Verificamos si está vacío primero.
+        # ==================================================================
+        
+        total_auto = st.session_state.df_conciliados_auto['valor'].sum() if not st.session_state.df_conciliados_auto.empty else 0
+        total_pendiente = st.session_state.df_pendientes['valor'].sum() if not st.session_state.df_pendientes.empty else 0
+        total_recibido_nuevos = total_auto + total_pendiente
+
+        # ==================================================================
+        # --- FIN DE LA CORRECCIÓN ---
+        # ==================================================================
 
         kpi_cols = st.columns(3)
         kpi_cols[0].metric("🏦 Nuevos Pagos (Pendientes de ID)", f"${total_recibido_nuevos:,.0f}")
