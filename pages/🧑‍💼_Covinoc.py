@@ -1,14 +1,14 @@
 # ======================================================================================
 # ARCHIVO: Pagina_Covinoc.py (v10 - Filtros Días Emisión/Serie y Mensaje Wpp)
-# MODIFICADO: 
-#           (Solicitud Usuario 04/11/2025)
-#           1. Se añade filtro FIJO a Tab 1 para mostrar SÓLO facturas
-#              con 1 a 5 días desde su FECHA DE EMISIÓN ('fecha_documento').
-#           2. Se añade filtro de INTERFAZ en Tab 1 para seleccionar por SERIE.
-#           3. Se actualiza el formato del mensaje de WhatsApp en Tab 3.
+# MODIFICADO: 
+#           (Solicitud Usuario 04/11/2025)
+#           1. Se añade filtro FIJO a Tab 1 para mostrar SÓLO facturas
+#              con 1 a 5 días desde su FECHA DE EMISIÓN ('fecha_documento').
+#           2. Se añade filtro de INTERFAZ en Tab 1 para seleccionar por SERIE.
+#           3. Se actualiza el formato del mensaje de WhatsApp en Tab 3.
 #
 # MODIFICACIÓN (v9 - Filtros Avanzados y Selección Total en Tab 1)
-#           Se añaden KPIs a todas las pestañas.
+#           Se añaden KPIs a todas las pestañas.
 #           Se añade filtro de exclusión de clientes en Tab 1.
 #           Se añade selección por checkbox (data_editor) en Tab 1.
 #           Se optimiza Tab 3 para agrupar facturas por cliente en el mensaje
@@ -310,7 +310,7 @@ def cargar_y_comparar_datos():
     today = pd.to_datetime(datetime.now().date())
     if 'fecha_documento' in df_a_subir_raw.columns:
         df_a_subir_raw['dias_emision'] = (today - df_a_subir_raw['fecha_documento']).dt.days
-        
+        
         # Se aplica el filtro estricto: solo facturas de 1 a 5 días de emitidas
         df_a_subir = df_a_subir_raw[
             (df_a_subir_raw['dias_emision'] >= 1) & (df_a_subir_raw['dias_emision'] <= 5)
@@ -318,7 +318,7 @@ def cargar_y_comparar_datos():
     else:
         # Si no hay 'fecha_documento', no se puede aplicar el filtro.
         # Se devuelve un DF vacío para Tab 1 para evitar subir datos incorrectos.
-        df_a_subir = df_a_subir_raw.iloc[0:0].copy() 
+        df_a_subir = df_a_subir_raw.iloc[0:0].copy() 
     # --- FIN MODIFICACIÓN: Filtro Fijo 1-5 Días Emisión ---
 
     # --- Tab 2: Exoneraciones ---
@@ -600,10 +600,10 @@ def main():
                 series_options_base = ['156', '157', '158', '189', '238', '439']
                 # Obtenemos series únicas del DF (que ya está filtrado por 1-5 días)
                 series_disponibles_en_df = sorted(df_a_subir['serie'].dropna().astype(str).unique())
-                
+                
                 # Combinamos las series base con las disponibles, por si hay nuevas
                 series_options_final = sorted(list(set(series_options_base + series_disponibles_en_df)))
-                
+                
                 series_seleccionadas = st.multiselect(
                     "2. Filtrar por Serie (Seleccione una o varias):",
                     options=series_options_final,
@@ -695,7 +695,7 @@ def main():
 
                 # --- INICIO MODIFICACIÓN: Añadir columnas de emisión (SOLICITUD USUARIO) ---
                 columnas_mostrar_subir = [
-                    'nombrecliente', 'nit', 'serie', 'numero', 'factura_norm', 
+                    'nombrecliente', 'nit', 'serie', 'numero', 'factura_norm', 
                     'fecha_documento', 'dias_emision', # <-- Columnas nuevas
                     'fecha_vencimiento', 'dias_vencido', 'importe', 'nomvendedor', 'clave_unica'
                 ]
@@ -840,7 +840,7 @@ def main():
             st.subheader("Facturas para Aviso de No Pago")
             st.markdown("Facturas que están **en ambos reportes**, tienen **>= 25 días** vencidas, **importe > 0** y no están **Exoneradas** o **Negadas**.")
             
-          _ # ================== INICIO MODIFICACIÓN: Indicadores (KPIs Diferenciados) ==================
+            # ================== INICIO MODIFICACIÓN: Indicadores (KPIs Diferenciados) ==================
             st.markdown("---")
             st.subheader("Indicadores de Gestión")
             
@@ -1003,7 +1003,7 @@ def main():
                         except Exception:
                             nombre_corto = vendor_name # No se usa en el nuevo template, pero se deja por si acaso
 
-                  _     # Mensaje de encabezado actualizado
+                        # Mensaje de encabezado actualizado
                         mensaje_header = f"Buen día compañero☀🌈\n\nPor favor gestionar la siguiente cartera que presenta más de 20 días vencidos y se encuentra próxima a:\nAVISO DE NO PAGO EN COVINOC 😨⚠\n"
                         
                         # Agrupar facturas por cliente
@@ -1060,7 +1060,7 @@ def main():
                                 "Mensaje a Enviar:", 
                                 value=mensaje_completo, 
                                 height=300, # Altura aumentada
-                D               key=f"msg_{vendor_name_norm}",
+                                key=f"msg_{vendor_name_norm}",
                                 disabled=True
                             )
             # =================== FIN DE LA MODIFICACIÓN (Gestión WhatsApp v3 - Filtrada) ===================
@@ -1074,7 +1074,7 @@ def main():
             st.subheader("Indicadores de Gestión")
             
             kpi_col1, kpi_col2, kpi_col3 = st.columns(3)
-            try:
+      S       try:
                 monto_total_reclamadas = pd.to_numeric(df_reclamadas['saldo'], errors='coerce').sum()
                 clientes_unicos_reclamadas = df_reclamadas['cliente'].nunique()
             except Exception:
@@ -1091,7 +1091,7 @@ def main():
             )
             kpi_col3.metric(
                 label="Nº Clientes",
-      T         value=f"{clientes_unicos_reclamadas}"
+                value=f"{clientes_unicos_reclamadas}"
             )
             st.markdown("---")
             # =================== FIN MODIFICACIÓN: Indicadores (Goal 1) ===================
@@ -1121,7 +1121,7 @@ def main():
             kpi_col1.metric(
                 label="Nº Facturas para Ajuste",
                 value=f"{len(df_ajustes)}"
-A         )
+section       )
             kpi_col2.metric(
                 label="Monto Total a Ajustar",
                 value=f"${monto_total_ajuste:,.0f}"
@@ -1129,48 +1129,48 @@ A         )
             kpi_col3.metric(
                 label="Nº Clientes Afectados",
                 value=f"{clientes_unicos_ajuste}"
-A         )
+            )
             st.markdown("---")
             # =================== FIN MODIFICACIÓN: Indicadores (Goal 1) ===================
 
             columnas_mostrar_ajustes = [
-                'nombrecliente_cartera', 'nit_cartera', 'factura_norm_cartera', 'importe_cartera',a 
-                'saldo_covinoc', 'diferencia', 'dias_vencido_cartera', 'estado_covinoc', 'clave_unica'
+                'nombrecliente_cartera', 'nit_cartera', 'factura_norm_cartera', 'importe_cartera',
+s              'saldo_covinoc', 'diferencia', 'dias_vencido_cartera', 'estado_covinoc', 'clave_unica'
             ]
             columnas_existentes_ajustes = [col for col in columnas_mostrar_ajustes if col in df_ajustes.columns]
             
             # Formatear columnas para mejor visualización
             df_ajustes_display = df_ajustes[columnas_existentes_ajustes].copy()
-            for col_moneda in ['importe_cartera', 'saldo_covinoc', 'diferencia']:
+section         for col_moneda in ['importe_cartera', 'saldo_covinoc', 'diferencia']:
                 if col_moneda in df_ajustes_display.columns:
                     df_ajustes_display[col_moneda] = df_ajustes_display[col_moneda].map('${:,.0f}'.format)
-            
+nbsp        
             st.dataframe(df_ajustes_display, use_container_width=True, hide_index=True)
             
             # --- Lógica de Descarga Excel (Tab 5) ---
             if not df_ajustes.empty:
                 df_ajustes_excel = pd.DataFrame()
-a               # ================== INICIO DE LA MODIFICACIÓN SOLICITADA ==================
+                # ================== INICIO DE LA MODIFICACIÓN SOLICITADA ==================
                 # Se usa el 'documento' original de Covinoc para TIPO y DOCUMENTO
                 df_ajustes_excel['TIPO_DOCUMENTO'] = df_ajustes['documento'].apply(get_tipo_doc_from_nit_col)
-                df_ajustes_excel['DOCUMENTO'] = df_ajustes['documento']
+section           df_ajustes_excel['DOCUMENTO'] = df_ajustes['documento']
                 # =================== FIN DE LA MODIFICACIÓN SOLICITLADA ===================
-route               df_ajustes_excel['TITULO_VALOR'] = df_ajustes['factura_norm_cartera']
+                df_ajustes_excel['TITULO_VALOR'] = df_ajustes['factura_norm_cartera']
                 # El VALOR a exonerar es la DIFERENCIA
                 df_ajustes_excel['VALOR'] = pd.to_numeric(df_ajustes['diferencia'], errors='coerce').fillna(0).astype(int)
-                df_ajustes_excel['FECHA'] = pd.to_datetime(df_ajustes['fecha_vencimiento_cartera'], errors='coerce').apply(format_date)
+scope           df_ajustes_excel['FECHA'] = pd.to_datetime(df_ajustes['fecha_vencimiento_cartera'], errors='coerce').apply(format_date)
                 excel_data_ajustes = to_excel(df_ajustes_excel)
             else:
-  True           excel_data_ajustes = b""
+                excel_data_ajustes = b""
 
-            st.download_button(
+description   st.download_button(
                 label="📥 Descargar Excel de Ajuste (Exoneración Parcial)", 
                 data=excel_data_ajustes, 
                 file_name="5_ajustes_exoneracion_parcial.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
                 disabled=df_ajustes.empty
-            )
+  section     )
 
 
 if __name__ == '__main__':
-Enter   main()
+    main()
