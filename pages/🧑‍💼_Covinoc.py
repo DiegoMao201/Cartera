@@ -109,17 +109,17 @@ def procesar_cartera(df: pd.DataFrame) -> pd.DataFrame:
     if 'dias_vencido' not in df_proc.columns: df_proc['dias_vencido'] = 0
     if 'nomvendedor' not in df_proc.columns: df_proc['nomvendedor'] = None
     if 'serie' not in df_proc.columns: df_proc['serie'] = ''
-    # --- INICIO MODIFICACIÓN: Asegurar que 'fecha_documento' exista ---
+    # --- INICIO MODIFICACIÓN: Asegurar que 'fecha_documento' exista ---
     if 'fecha_documento' not in df_proc.columns: df_proc['fecha_documento'] = pd.NaT
-    # --- FIN MODIFICACIÓN ---
+    # --- FIN MODIFICACIÓN ---
 
     df_proc['importe'] = pd.to_numeric(df_proc['importe'], errors='coerce').fillna(0)
     df_proc['numero'] = df_proc['numero'].astype(str) 
     df_proc['serie'] = df_proc['serie'].astype(str) 
     df_proc['dias_vencido'] = pd.to_numeric(df_proc['dias_vencido'], errors='coerce').fillna(0)
-    # --- INICIO MODIFICACIÓN: Convertir 'fecha_documento' ---
+    # --- INICIO MODIFICACIÓN: Convertir 'fecha_documento' ---
     df_proc['fecha_documento'] = pd.to_datetime(df_proc['fecha_documento'], errors='coerce')
-    # --- FIN MODIFICACIÓN ---
+    # --- FIN MODIFICACIÓN ---
     df_proc['nomvendedor_norm'] = df_proc['nomvendedor'].apply(normalizar_nombre)
     ZONAS_SERIE_STR = {zona: [str(s) for s in series] for zona, series in ZONAS_SERIE.items()}
     
@@ -131,7 +131,7 @@ def procesar_cartera(df: pd.DataFrame) -> pd.DataFrame:
             if set(numeros_en_celda) & set(series_clave_str): return zona
         return "OTRAS ZONAS"
     
-    df_proc['zona'] = df_proc['serie'].apply(assignar_zona_robusta)
+    df_proc['zona'] = df_proc['serie'].apply(asignar_zona_robusta)
     bins = [-float('inf'), 0, 15, 30, 60, float('inf')]; labels = ['Al día', '1-15 días', '16-30 días', '31-60 días', 'Más de 60 días']
     df_proc['edad_cartera'] = pd.cut(df_proc['dias_vencido'], bins=bins, labels=labels, right=True)
     return df_proc
@@ -234,7 +234,7 @@ def cargar_y_comparar_datos():
     2. Filtra series 'W', 'X' y las terminadas en 'U'.
     3. Lógica de Aviso No Pago >= 25 días.
     4. Lógica de Ajustes Parciales (Covinoc > Cartera).
-    5. MODIFICADO: Filtra 'A Subir' para incluir solo 1-5 días de emisión.
+    5. MODIFICADO: Filtra 'A Subir' para incluir solo 1-5 días de emisión.
     """
     
     # 1. Cargar Cartera Ferreinox
@@ -305,7 +305,7 @@ def cargar_y_comparar_datos():
         ~df_cartera_protegida['clave_unica'].isin(set_claves_covinoc_total)
     ].copy()
 
-    # --- INICIO MODIFICACIÓN: Filtro Fijo 1-5 Días Emisión (SOLICITUD USUARIO) ---
+    # --- INICIO MODIFICACIÓN: Filtro Fijo 1-5 Días Emisión (SOLICITUD USUARIO) ---
     # Se calcula la diferencia entre hoy y la 'fecha_documento' (emisión)
     today = pd.to_datetime(datetime.now().date())
     if 'fecha_documento' in df_a_subir_raw.columns:
@@ -319,7 +319,7 @@ def cargar_y_comparar_datos():
         # Si no hay 'fecha_documento', no se puede aplicar el filtro.
         # Se devuelve un DF vacío para Tab 1 para evitar subir datos incorrectos.
         df_a_subir = df_a_subir_raw.iloc[0:0].copy() 
-    # --- FIN MODIFICACIÓN: Filtro Fijo 1-5 Días Emisión ---
+    # --- FIN MODIFICACIÓN: Filtro Fijo 1-5 Días Emisión ---
 
     # --- Tab 2: Exoneraciones ---
     # 1. Filtrar Covinoc a solo facturas "comparables" (excluir cerradas)
@@ -574,10 +574,10 @@ def main():
 
         with tab1:
             st.subheader("Facturas a Subir a Covinoc")
-            # --- INICIO MODIFICACIÓN: Texto descriptivo actualizado ---
+            # --- INICIO MODIFICACIÓN: Texto descriptivo actualizado ---
             st.markdown("Facturas de **clientes protegidos** que están en **Cartera Ferreinox** pero **NO** en Covinoc.")
             st.warning("🚩 **Importante:** Esta lista ya está pre-filtrada para mostrar **ÚNICAMENTE** facturas con 1 a 5 días desde su fecha de emisión.")
-            # --- FIN MODIFICACIÓN ---
+            # --- FIN MODIFICACIÓN ---
             
             if df_a_subir.empty:
                 st.info("No hay facturas pendientes por subir que cumplan el criterio de 1 a 5 días de emisión.")
@@ -595,7 +595,7 @@ def main():
                     help="Seleccione uno o más clientes para ocultar sus facturas de la lista de selección."
                 )
                 
-                # --- INICIO MODIFICACIÓN: Filtro por Serie (SOLICITUD USUARIO) ---
+                # --- INICIO MODIFICACIÓN: Filtro por Serie (SOLICITUD USUARIO) ---
                 # --- Filtro 2: Incluir Series ---
                 series_options_base = ['156', '157', '158', '189', '238', '439']
                 # Obtenemos series únicas del DF (que ya está filtrado por 1-5 días)
@@ -610,7 +610,7 @@ def main():
                     default=series_disponibles_en_df, # Por defecto seleccionamos las que SÍ están en la lista
                     help="Seleccione las series de factura que desea incluir en la lista."
                 )
-                # --- FIN MODIFICACIÓN: Filtro por Serie ---
+                # --- FIN MODIFICACIÓN: Filtro por Serie ---
 
                 # --- Filtro 3: Días Vencido (ANTERIORMENTE Filtro 2) ---
                 if not df_a_subir['dias_vencido'].empty:
@@ -693,13 +693,13 @@ def main():
                         st.rerun()
                 # --- Fin Lógica Botones ---
 
-                # --- INICIO MODIFICACIÓN: Añadir columnas de emisión (SOLICITUD USUARIO) ---
+                # --- INICIO MODIFICACIÓN: Añadir columnas de emisión (SOLICITUD USUARIO) ---
                 columnas_mostrar_subir = [
                     'nombrecliente', 'nit', 'serie', 'numero', 'factura_norm', 
                     'fecha_documento', 'dias_emision', # <-- Columnas nuevas
                     'fecha_vencimiento', 'dias_vencido', 'importe', 'nomvendedor', 'clave_unica'
                 ]
-                # --- FIN MODIFICACIÓN ---
+                # --- FIN MODIFICACIÓN ---
                 columnas_existentes_subir = [col for col in columnas_mostrar_subir if col in df_a_subir_filtrado.columns]
                 
                 # Preparamos el DF para el editor, AHORA basado en df_a_subir_filtrado
@@ -729,7 +729,7 @@ def main():
                             "Días Vencido",
                             format="%d días"
                         ),
-                        # --- INICIO MODIFICACIÓN: Configuración visual nuevas columnas ---
+                        # --- INICIO MODIFICACIÓN: Configuración visual nuevas columnas ---
                         "fecha_documento": st.column_config.DateColumn(
                             "Fecha Emisión",
                             format="YYYY-MM-DD",
@@ -740,7 +740,7 @@ def main():
                             format="%d días",
                             help="Días transcurridos desde la fecha de emisión. Solo se listan 1-5 días."
                         )
-                        # --- FIN MODIFICACIÓN ---
+                        # --- FIN MODIFICACIÓN ---
                     },
                     # Deshabilitamos la edición de las columnas de datos
                     disabled=columnas_deshabilitadas, 
@@ -840,7 +840,7 @@ def main():
             st.subheader("Facturas para Aviso de No Pago")
             st.markdown("Facturas que están **en ambos reportes**, tienen **>= 25 días** vencidas, **importe > 0** y no están **Exoneradas** o **Negadas**.")
             
-            # ================== INICIO MODIFICACIÓN: Indicadores (KPIs Diferenciados) ==================
+          _ # ================== INICIO MODIFICACIÓN: Indicadores (KPIs Diferenciados) ==================
             st.markdown("---")
             st.subheader("Indicadores de Gestión")
             
@@ -939,7 +939,7 @@ def main():
                 df_aviso_excel['FECHA'] = pd.to_datetime(df_para_enviar_aviso['fecha_vencimiento_cartera'], errors='coerce').apply(format_date)
                 excel_data_aviso = to_excel(df_aviso_excel)
             else:
-              A excel_data_aviso = b""
+                excel_data_aviso = b""
 
             # Botón de descarga (MODIFICADO: solo para enviar)
             st.download_button(
@@ -1003,7 +1003,7 @@ def main():
                         except Exception:
                             nombre_corto = vendor_name # No se usa en el nuevo template, pero se deja por si acaso
 
-                        # Mensaje de encabezado actualizado
+                  _     # Mensaje de encabezado actualizado
                         mensaje_header = f"Buen día compañero☀🌈\n\nPor favor gestionar la siguiente cartera que presenta más de 20 días vencidos y se encuentra próxima a:\nAVISO DE NO PAGO EN COVINOC 😨⚠\n"
                         
                         # Agrupar facturas por cliente
@@ -1026,11 +1026,11 @@ def main():
                                 dias = row['dias_vencido_cartera']
                                 
                                 # Formato de factura actualizado (sin asteriscos en títulos)
-                                mensaje_clientes_facturas.append(f"    - Factura: {factura} | Valor: {valor_str} | Días Vencidos: {dias}")
+                                mensaje_clientes_facturas.append(f"    - Factura: {factura} | Valor: {valor_str} | Días Vencidos: {dias}")
 
                         # Mensaje de pie de página actualizado
                         mensaje_footer = "\n\nAgradecemos indicar novedad o gestión de pago, en caso contrario se avanzará con el proceso de aviso de no pago.\n\nQuedamos pendientes, muchas gracias"
-s                      
+                        
                         # Unir todo el mensaje
                         mensaje_completo = mensaje_header + "\n".join(mensaje_clientes_facturas) + mensaje_footer
                         # --- FIN MODIFICACIÓN: Mensaje WhatsApp ---
@@ -1060,7 +1060,7 @@ s                      
                                 "Mensaje a Enviar:", 
                                 value=mensaje_completo, 
                                 height=300, # Altura aumentada
-                                key=f"msg_{vendor_name_norm}",
+                D               key=f"msg_{vendor_name_norm}",
                                 disabled=True
                             )
             # =================== FIN DE LA MODIFICACIÓN (Gestión WhatsApp v3 - Filtrada) ===================
@@ -1091,7 +1091,7 @@ s                      
             )
             kpi_col3.metric(
                 label="Nº Clientes",
-                value=f"{clientes_unicos_reclamadas}"
+      T         value=f"{clientes_unicos_reclamadas}"
             )
             st.markdown("---")
             # =================== FIN MODIFICACIÓN: Indicadores (Goal 1) ===================
@@ -1121,7 +1121,7 @@ s                      
             kpi_col1.metric(
                 label="Nº Facturas para Ajuste",
                 value=f"{len(df_ajustes)}"
-            )
+A         )
             kpi_col2.metric(
                 label="Monto Total a Ajustar",
                 value=f"${monto_total_ajuste:,.0f}"
@@ -1129,12 +1129,12 @@ s                      
             kpi_col3.metric(
                 label="Nº Clientes Afectados",
                 value=f"{clientes_unicos_ajuste}"
-            )
+A         )
             st.markdown("---")
-route           # =================== FIN MODIFICACIÓN: Indicadores (Goal 1) ===================
+            # =================== FIN MODIFICACIÓN: Indicadores (Goal 1) ===================
 
             columnas_mostrar_ajustes = [
-                'nombrecliente_cartera', 'nit_cartera', 'factura_norm_cartera', 'importe_cartera', 
+                'nombrecliente_cartera', 'nit_cartera', 'factura_norm_cartera', 'importe_cartera',a 
                 'saldo_covinoc', 'diferencia', 'dias_vencido_cartera', 'estado_covinoc', 'clave_unica'
             ]
             columnas_existentes_ajustes = [col for col in columnas_mostrar_ajustes if col in df_ajustes.columns]
@@ -1149,19 +1149,19 @@ route           # =================== FIN MODIFICACIÓN: Indicadores (Goal 
             
             # --- Lógica de Descarga Excel (Tab 5) ---
             if not df_ajustes.empty:
-    t           df_ajustes_excel = pd.DataFrame()
-                # ================== INICIO DE LA MODIFICACIÓN SOLICITADA ==================
+                df_ajustes_excel = pd.DataFrame()
+a               # ================== INICIO DE LA MODIFICACIÓN SOLICITADA ==================
                 # Se usa el 'documento' original de Covinoc para TIPO y DOCUMENTO
                 df_ajustes_excel['TIPO_DOCUMENTO'] = df_ajustes['documento'].apply(get_tipo_doc_from_nit_col)
-Route               df_ajustes_excel['DOCUMENTO'] = df_ajustes['documento']
+                df_ajustes_excel['DOCUMENTO'] = df_ajustes['documento']
                 # =================== FIN DE LA MODIFICACIÓN SOLICITLADA ===================
-                df_ajustes_excel['TITULO_VALOR'] = df_ajustes['factura_norm_cartera']
+route               df_ajustes_excel['TITULO_VALOR'] = df_ajustes['factura_norm_cartera']
                 # El VALOR a exonerar es la DIFERENCIA
                 df_ajustes_excel['VALOR'] = pd.to_numeric(df_ajustes['diferencia'], errors='coerce').fillna(0).astype(int)
-s               df_ajustes_excel['FECHA'] = pd.to_datetime(df_ajustes['fecha_vencimiento_cartera'], errors='coerce').apply(format_date)
+                df_ajustes_excel['FECHA'] = pd.to_datetime(df_ajustes['fecha_vencimiento_cartera'], errors='coerce').apply(format_date)
                 excel_data_ajustes = to_excel(df_ajustes_excel)
             else:
-  t           excel_data_ajustes = b""
+  True           excel_data_ajustes = b""
 
             st.download_button(
                 label="📥 Descargar Excel de Ajuste (Exoneración Parcial)", 
@@ -1169,8 +1169,8 @@ s               df_ajustes_excel['FECHA'] = pd.to_datetime(df_ajustes['fe
                 file_name="5_ajustes_exoneracion_parcial.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
                 disabled=df_ajustes.empty
-G           )
+            )
 
 
 if __name__ == '__main__':
-    main()
+Enter   main()
