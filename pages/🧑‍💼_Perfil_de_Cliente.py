@@ -1,88 +1,72 @@
-# ======================================================================================
-# ARCHIVO: pages/1_🚀_Estrategia_Cobranza.py
-# VERSIÓN: WAR ROOM "SUPER GESTIÓN" (Correos Masivos, WhatsApp, Sin Errores)
-# ======================================================================================
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 from io import BytesIO, StringIO
 import dropbox
 import glob
 import unicodedata
 import re
-from datetime import datetime, timedelta
 from urllib.parse import quote
 from openpyxl import Workbook
-from openpyxl.styles import PatternFill, Font, Alignment
-from openpyxl.utils import get_column_letter
+from openpyxl.styles import PatternFill, Font
 from openpyxl.worksheet.table import Table, TableStyleInfo
-import yagmail # Necesario para enviar correos reales
+import yagmail
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="War Room Cobranza", page_icon="🚀", layout="wide")
 
-# --- ESTILOS CSS PROFESIONALES ---
+# --- ESTILOS CSS MEJORADOS ---
 st.markdown("""
 <style>
     .stApp { background-color: #F4F6F9; }
     .stMetric { background-color: #FFFFFF; border-radius: 8px; padding: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-left: 5px solid #0058A7; }
-    .big-font { font-size: 20px !important; font-weight: bold; color: #1F2937; }
     .management-card { background-color: #FFFFFF; padding: 25px; border-radius: 12px; border: 1px solid #E5E7EB; box-shadow: 0 4px 10px rgba(0,0,0,0.05); margin-bottom: 20px; }
     .whatsapp-btn { 
         background-color: #25D366; color: white !important; padding: 10px 20px; 
         border-radius: 8px; text-decoration: none; font-weight: bold; 
-        display: block; text-align: center; margin-top: 10px;
+        display: block; text-align: center; margin-top: 10px; border: 1px solid #20b85c;
     }
     .email-btn { 
         background-color: #EA4335; color: white !important; padding: 10px 20px; 
         border-radius: 8px; text-decoration: none; font-weight: bold; 
-        display: block; text-align: center; margin-top: 10px;
+        display: block; text-align: center; margin-top: 10px; border: 1px solid #d62516;
     }
-    .status-badge { padding: 5px 10px; border-radius: 15px; font-weight: bold; font-size: 12px; color: white;}
+    .whatsapp-btn:hover, .email-btn:hover { opacity: 0.9; }
 </style>
 """, unsafe_allow_html=True)
 
 # ======================================================================================
-# --- 1. CARGA DE DATOS BLINDADA (Cero Errores de Columnas) ---
+# --- 1. CARGA DE DATOS BLINDADA (CORRECCIÓN CRÍTICA AQUI) ---
 # ======================================================================================
 
-def normalizar_texto(texto: str) -> str:
-    if not isinstance(texto, str): return ""
-    texto = texto.upper().strip()
-    return ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn')
-
 def limpiar_columnas(df):
-    """Normaliza los nombres de las columnas para evitar KeyError."""
-    # 1. Quitar espacios, guiones, puntos y pasar a minúsculas
-    df.columns = [c.strip().lower().replace('-', '_').replace('.', '').replace(' ', '_') for c in df.columns]
+    """Normaliza nombres y elimina duplicados para evitar el TypeError."""
+    if df.empty: return df
+
+    # 1. Normalización básica
+    df.columns = [str(c).strip().lower().replace('-', '_').replace('.', '').replace(' ', '_') for c in df.columns]
     
-    # 2. Mapeo de sinónimos a nombres estándar
+    # 2. Mapeo inteligente
     mapa = {
-        'email': 'e_mail',
-        'correo': 'e_mail',
-        'correo_electronico': 'e_mail',
-        'mail': 'e_mail',
-        'telefono': 'telefono1',
-        'celular': 'telefono1',
-        'nombre_cliente': 'nombrecliente',
-        'cliente': 'nombrecliente',
-        'vendedor': 'nomvendedor',
-        'nombre_vendedor': 'nomvendedor',
-        'dias_mora': 'dias_vencido',
-        'dias': 'dias_vencido',
-        'valor': 'importe',
-        'saldo': 'importe',
-        'total': 'importe'
+        'email': 'e_mail', 'correo': 'e_mail', 'mail': 'e_mail', 'correo_electronico': 'e_mail',
+        'telefono': 'telefono1', 'celular': 'telefono1', 'movil': 'telefono1',
+        'nombre_cliente': 'nombrecliente', 'cliente': 'nombrecliente', 'razon_social': 'nombrecliente',
+        'vendedor': 'nomvendedor', 'nombre_vendedor': 'nomvendedor',
+        'dias_mora': 'dias_vencido', 'dias': 'dias_vencido', 'vencimiento': 'dias_vencido',
+        'valor': 'importe', 'saldo': 'importe', 'total': 'importe', 'deuda': 'importe',
+        'nit': 'nit', 'cedula': 'nit'
     }
     df = df.rename(columns=mapa)
     
-    # 3. Garantizar columnas críticas (si no existen, crearlas vacías)
+    # 3. CRÍTICO: Eliminar columnas duplicadas INMEDIATAMENTE después de renombrar
+    # Esto previene que existan dos columnas 'importe'
+    df = df.loc[:, ~df.columns.duplicated()]
+    
+    # 4. Garantizar columnas base
     cols_criticas = ['e_mail', 'telefono1', 'nomvendedor', 'nombrecliente', 'nit', 'importe', 'dias_vencido']
     for col in cols_criticas:
         if col not in df.columns:
-            df[col] = "No registrado" if col not in ['importe', 'dias_vencido'] else 0
+            df[col] = 0 if col in ['importe', 'dias_vencido'] else "No registrado"
             
     return df
 
@@ -98,22 +82,20 @@ def cargar_datos_maestros():
             REFRESH_TOKEN = st.secrets["dropbox"]["refresh_token"]
             with dropbox.Dropbox(app_key=APP_KEY, app_secret=APP_SECRET, oauth2_refresh_token=REFRESH_TOKEN) as dbx:
                 _, res = dbx.files_download(path='/data/cartera_detalle.csv')
-                # Cargar sin nombres primero para ver qué llega, o usar nombres forzados
-                nombres_cols = ['Serie', 'Numero', 'Fecha Documento', 'Fecha Vencimiento', 'Cod Cliente',
-                                'NombreCliente', 'Nit', 'Poblacion', 'Provincia', 'Telefono1', 'Telefono2',
-                                'NomVendedor', 'Entidad Autoriza', 'E-Mail', 'Importe', 'Descuento',
-                                'Cupo Aprobado', 'Dias Vencido']
-                df_dropbox = pd.read_csv(StringIO(res.content.decode('latin-1')), header=None, names=nombres_cols, sep='|', engine='python')
+                # Forzar lectura como string para evitar conversiones prematuras
+                df_dropbox = pd.read_csv(StringIO(res.content.decode('latin-1')), sep='|', dtype=str)
                 df_final = pd.concat([df_final, df_dropbox])
-    except Exception: pass 
+    except Exception as e:
+        print(f"Nota: No se cargó de Dropbox: {e}")
 
-    # --- INTENTO 2: ARCHIVOS LOCALES ---
+    # --- INTENTO 2: LOCAL ---
     archivos = glob.glob("Cartera_*.xlsx")
     for archivo in archivos:
         try:
-            df_hist = pd.read_excel(archivo)
+            df_hist = pd.read_excel(archivo, dtype=str) # Leer todo como texto para limpiar despues
             if not df_hist.empty:
-                if "Total" in str(df_hist.iloc[-1, 0]): df_hist = df_hist.iloc[:-1]
+                # Limpiar filas de totales basura
+                df_hist = df_hist[~df_hist.iloc[:, 0].astype(str).str.contains("Total", na=False, case=False)]
                 df_final = pd.concat([df_final, df_hist])
         except Exception: pass
 
@@ -122,16 +104,15 @@ def cargar_datos_maestros():
     # --- LIMPIEZA PROFUNDA ---
     df_final = limpiar_columnas(df_final)
     
-    # Convertir numéricos
-    df_final['importe'] = pd.to_numeric(df_final['importe'], errors='coerce').fillna(0)
-    df_final['dias_vencido'] = pd.to_numeric(df_final['dias_vencido'], errors='coerce').fillna(0)
-    
-    # Filtrar notas crédito/basura
+    # Conversión Numérica Robusta (Elimina $, comas, puntos raros)
+    for col in ['importe', 'dias_vencido']:
+        # Limpiar caracteres no numéricos excepto el punto decimal y el menos
+        df_final[col] = df_final[col].astype(str).str.replace(r'[$,]', '', regex=True)
+        df_final[col] = pd.to_numeric(df_final[col], errors='coerce').fillna(0)
+
+    # Filtros adicionales de basura
     if 'serie' in df_final.columns:
         df_final = df_final[~df_final['serie'].astype(str).str.contains('W|X', case=False, na=False)]
-    
-    # Eliminar duplicados de columnas
-    df_final = df_final.loc[:, ~df_final.columns.duplicated()]
     
     return df_final
 
@@ -141,20 +122,19 @@ def cargar_datos_maestros():
 
 def procesar_cartera(df):
     if df.empty: return pd.DataFrame()
-    df = df[df['importe'] > 0].copy() # Solo lo que deben
+    df = df[df['importe'] > 1000].copy() # Filtrar saldos insignificantes
     
-    # Agrupar por Cliente
+    # Agrupar por Cliente (Usando un fillna previo para agrupar bien)
     cols_group = ['nombrecliente', 'nit', 'nomvendedor', 'telefono1', 'e_mail']
-    # Asegurar que existen en el DF actual
-    cols_validas = [c for c in cols_group if c in df.columns]
+    df[cols_group] = df[cols_group].fillna("Sin Datos")
     
-    kpis = df.groupby(cols_validas).agg({
+    kpis = df.groupby(cols_group).agg({
         'importe': 'sum',
-        'dias_vencido': 'max',
-        'numero': 'count'
-    }).reset_index()
+        'dias_vencido': 'max', # Tomamos la factura más vieja
+        'nit': 'count' # Usamos nit para contar facturas
+    }).rename(columns={'nit': 'num_facturas'}).reset_index()
     
-    # Definir Estrategia y Prioridad
+    # Estrategia
     def estrategia(dias):
         if dias > 90: return "🔴 JURÍDICO"
         if dias > 60: return "⛔ PRE-JURÍDICO"
@@ -164,24 +144,24 @@ def procesar_cartera(df):
 
     kpis['Estado'] = kpis['dias_vencido'].apply(estrategia)
     
-    # Score: 60% Días Mora + 40% Monto Deuda
+    # Score de Prioridad (Normalizado 0-100)
     kpis['Prioridad'] = (
-        (kpis['dias_vencido'].clip(upper=120) / 1.2) * 0.6 + 
-        (kpis['importe'].clip(upper=20000000) / 20000000 * 100) * 0.4
+        (kpis['dias_vencido'].clip(upper=120) / 120 * 60) + 
+        (kpis['importe'].clip(upper=50000000) / 50000000 * 40)
     )
     
     return kpis.sort_values('Prioridad', ascending=False).reset_index(drop=True)
 
 # ======================================================================================
-# --- 3. EXCEL ---
+# --- 3. EXPORTACIÓN EXCEL ---
 # ======================================================================================
 def generar_excel(df):
     output = BytesIO()
     wb = Workbook()
     ws = wb.active
-    ws.title = "Matriz de Gestión"
+    ws.title = "Matriz de Cobro"
     
-    headers = ["Prioridad", "Cliente", "NIT", "Teléfono", "Email", "Deuda Total", "Días Mora", "Estado", "Vendedor"]
+    headers = ["Score", "Cliente", "NIT", "Teléfono", "Email", "Deuda Total", "Días Mora", "Estado", "Vendedor", "# Facturas"]
     ws.append(headers)
     
     # Estilo Header
@@ -202,11 +182,12 @@ def generar_excel(df):
             row['importe'],
             row['dias_vencido'],
             row['Estado'],
-            row['nomvendedor']
+            row['nomvendedor'],
+            row['num_facturas']
         ])
     
-    # Tabla
-    tab = Table(displayName="DatosCartera", ref=f"A1:I{len(df)+1}")
+    # Convertir a Tabla Excel real
+    tab = Table(displayName="TablaCartera", ref=f"A1:J{len(df)+1}")
     tab.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
     ws.add_table(tab)
     
@@ -214,192 +195,151 @@ def generar_excel(df):
     return output.getvalue()
 
 # ======================================================================================
-# --- 4. INTERFAZ PRINCIPAL ---
+# --- 4. INTERFAZ ---
 # ======================================================================================
 
 def main():
-    st.title("🚀 Centro de Comando de Cobranza (War Room)")
+    st.title("🚀 Centro de Comando de Cobranza")
     
-    # 1. Cargar
-    df_raw = cargar_datos_maestros()
+    # 1. Carga
+    with st.spinner('Conectando bases de datos y consolidando cartera...'):
+        df_raw = cargar_datos_maestros()
+    
     if df_raw.empty:
-        st.error("No hay datos. Cargue archivos en Dropbox o en la carpeta local.")
-        st.stop()
-        
-    # 2. Procesar
+        st.warning("⚠️ No se encontraron datos de cartera. Verifique la conexión a Dropbox o cargue archivos 'Cartera_*.xlsx' en la carpeta.")
+        return # Detener ejecución limpiamente
+
+    # 2. Procesamiento
     df_gestion = procesar_cartera(df_raw)
     
     # 3. Sidebar Filtros
-    st.sidebar.header("🔍 Filtros de Gestión")
-    vendedores = ["TODOS"] + sorted(df_gestion['nomvendedor'].unique().tolist())
-    filtro_vend = st.sidebar.selectbox("Vendedor:", vendedores)
+    st.sidebar.markdown("### 🔍 Filtros Inteligentes")
     
-    estados = ["TODOS"] + sorted(df_gestion['Estado'].unique().tolist())
-    filtro_estado = st.sidebar.selectbox("Estado:", estados)
+    lista_vendedores = ["TODOS"] + sorted(list(df_gestion['nomvendedor'].unique()))
+    filtro_vend = st.sidebar.selectbox("Vendedor:", lista_vendedores)
     
-    # Aplicar Filtros
+    lista_estados = ["TODOS"] + sorted(list(df_gestion['Estado'].unique()))
+    filtro_estado = st.sidebar.selectbox("Estado de Cartera:", lista_estados)
+    
+    # Aplicar filtros
     df_view = df_gestion.copy()
     if filtro_vend != "TODOS":
         df_view = df_view[df_view['nomvendedor'] == filtro_vend]
     if filtro_estado != "TODOS":
         df_view = df_view[df_view['Estado'] == filtro_estado]
         
-    # 4. KPIs Globales
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Clientes a Gestionar", f"{len(df_view)}")
-    k2.metric("Total Cartera Filtro", f"${df_view['importe'].sum():,.0f}")
-    k3.metric("Ticket Promedio", f"${df_view['importe'].mean():,.0f}")
-    criticos = len(df_view[df_view['dias_vencido'] > 60])
-    k4.metric("🚨 Casos Críticos (>60 días)", f"{criticos}")
+    # 4. KPIs
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Clientes", f"{len(df_view)}")
+    col2.metric("Cartera Total", f"${df_view['importe'].sum():,.0f}")
+    criticos = df_view[df_view['dias_vencido'] > 60].shape[0]
+    col3.metric("🚨 Riesgo Alto", f"{criticos} Clientes")
+    ticket = df_view['importe'].mean() if not df_view.empty else 0
+    col4.metric("Ticket Promedio", f"${ticket:,.0f}")
     
     st.markdown("---")
-
-    # ==================================================================================
-    # ZONA DE SUPER GESTIÓN (Pestañas)
-    # ==================================================================================
-    tab_gestion, tab_analisis, tab_admin = st.tabs(["⚡ GESTIÓN UNO A UNO", "📊 VISIÓN GENERAL", "📥 EXPORTAR"])
-
-    # --- PESTAÑA 1: GESTIÓN UNO A UNO (Poderosa) ---
-    with tab_gestion:
-        st.info("💡 Seleccione un cliente de la lista para activar las herramientas de cobro (WhatsApp y Email).")
-        
-        # Selector de Cliente con Búsqueda
-        lista_clientes = df_view['nombrecliente'].unique()
-        cliente_sel = st.selectbox("👤 Buscar Cliente (Escriba nombre o NIT):", lista_clientes)
-        
+    
+    # 5. TABS PRINCIPALES
+    tab1, tab2, tab3 = st.tabs(["⚡ GESTIÓN RÁPIDA", "📊 ANÁLISIS VISUAL", "📥 DESCARGAS"])
+    
+    # --- PESTAÑA 1: GESTIÓN ---
+    with tab1:
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            st.markdown("### 👤 Seleccionar Cliente")
+            opciones_cliente = df_view['nombrecliente'].unique()
+            cliente_sel = st.selectbox("Busque por nombre:", opciones_cliente)
+            
         if cliente_sel:
-            # Datos del Cliente Seleccionado
             data_cli = df_view[df_view['nombrecliente'] == cliente_sel].iloc[0]
             
-            # --- TARJETA DE GESTIÓN ---
-            col_info, col_accion = st.columns([1, 1.5])
-            
-            with col_info:
-                st.markdown(f"""
-                <div class="management-card">
-                    <h3 style="color:#003366; margin:0;">{data_cli['nombrecliente']}</h3>
-                    <p style="color:#666; font-size:14px;">NIT: {data_cli['nit']}</p>
-                    <hr>
-                    <div style="display:flex; justify-content:space-between;">
-                        <div>
-                            <small>DEUDA TOTAL</small><br>
-                            <b style="font-size:22px; color:#D32F2F;">${data_cli['importe']:,.0f}</b>
-                        </div>
-                        <div style="text-align:right;">
-                            <small>DÍAS MORA</small><br>
-                            <b style="font-size:22px; color:#F57C00;">{data_cli['dias_vencido']}</b>
-                        </div>
+            # Tarjeta de Datos
+            st.markdown(f"""
+            <div class="management-card">
+                <h3 style="color:#003366; margin:0;">{data_cli['nombrecliente']}</h3>
+                <p><b>NIT:</b> {data_cli['nit']} | <b>Vendedor:</b> {data_cli['nomvendedor']}</p>
+                <hr>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <span style="font-size:12px; color:#666;">DEUDA TOTAL</span><br>
+                        <span style="font-size:24px; font-weight:bold; color:#B71C1C;">${data_cli['importe']:,.0f}</span>
                     </div>
-                    <div style="margin-top:15px;">
-                        <span style="background:#EEE; padding:5px 10px; border-radius:5px;">{data_cli['Estado']}</span>
-                        <span style="float:right;">🧑‍💼 {data_cli['nomvendedor']}</span>
+                    <div>
+                        <span style="font-size:12px; color:#666;">DÍAS DE MORA</span><br>
+                        <span style="font-size:24px; font-weight:bold; color:#FF6F00;">{int(data_cli['dias_vencido'])} días</span>
+                    </div>
+                    <div style="text-align:right;">
+                        <span class="status-badge" style="background-color:#0058A7;">{data_cli['Estado']}</span>
                     </div>
                 </div>
-                """, unsafe_allow_html=True)
-
-            with col_accion:
-                st.markdown("### 🛠️ Herramientas de Contacto")
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Acciones
+            col_wa, col_email = st.columns(2)
+            
+            # --- WHATSAPP ---
+            with col_wa:
+                st.markdown("#### 💬 WhatsApp")
+                tel_limpio = re.sub(r'\D', '', str(data_cli['telefono1']))
+                tel_input = st.text_input("Número (+57):", value=tel_limpio if len(tel_limpio) >= 10 else "")
                 
-                # --- HERRAMIENTA 1: WHATSAPP ---
-                with st.expander("📱 Enviar WhatsApp", expanded=True):
-                    # Limpieza Teléfono
-                    tel_raw = str(data_cli['telefono1']).replace('.0', '')
-                    tel_clean = re.sub(r'\D', '', tel_raw)
-                    if len(tel_clean) < 10: tel_clean = "" 
-                    
-                    c_wa1, c_wa2 = st.columns([1, 2])
-                    tel_final = c_wa1.text_input("Celular (+57):", value=tel_clean)
-                    
-                    # Plantilla Dinámica
-                    if data_cli['dias_vencido'] > 60:
-                        msg_wa = f"Hola {cliente_sel}, le escribe el área de Cartera de Ferreinox. Su saldo de ${data_cli['importe']:,.0f} presenta {data_cli['dias_vencido']} días de mora. Requerimos pago inmediato para evitar reporte."
+                msg_base = f"Hola {data_cli['nombrecliente']}, le saludamos de Cartera. "
+                if data_cli['dias_vencido'] > 60:
+                    msg_base += f"Su saldo vencido es de ${data_cli['importe']:,.0f} con {int(data_cli['dias_vencido'])} días de mora. Requerimos pago inmediato."
+                else:
+                    msg_base += f"Recordamos amablemente su saldo pendiente de ${data_cli['importe']:,.0f}. Agradecemos su gestión."
+                
+                msg_wa = st.text_area("Mensaje:", value=msg_base, height=100)
+                
+                if tel_input:
+                    link_wa = f"https://wa.me/57{tel_input}?text={quote(msg_wa)}"
+                    st.markdown(f'<a href="{link_wa}" target="_blank" class="whatsapp-btn">Enviar WhatsApp 🚀</a>', unsafe_allow_html=True)
+            
+            # --- EMAIL ---
+            with col_email:
+                st.markdown("#### 📧 Email")
+                email_val = str(data_cli['e_mail']) if "@" in str(data_cli['e_mail']) else ""
+                destinatario = st.text_input("Correo Destino:", value=email_val)
+                asunto = st.text_input("Asunto:", value=f"Estado de Cuenta - {data_cli['nombrecliente']}")
+                
+                if st.button("Enviar Correo Electrónico"):
+                    if not destinatario:
+                        st.error("Falta el correo.")
                     else:
-                        msg_wa = f"Hola {cliente_sel}, un saludo de Ferreinox. Recordamos amablemente su saldo pendiente de ${data_cli['importe']:,.0f}. Agradecemos su gestión."
-                    
-                    msg_final = c_wa2.text_area("Mensaje:", value=msg_wa, height=100)
-                    
-                    if tel_final:
-                        link = f"https://wa.me/57{tel_final}?text={quote(msg_final)}"
-                        st.markdown(f'<a href="{link}" target="_blank" class="whatsapp-btn">🚀 Abrir WhatsApp</a>', unsafe_allow_html=True)
-                    else:
-                        st.warning("Sin teléfono válido.")
+                        try:
+                            # Intento usar credenciales si existen
+                            user = st.secrets["email_credentials"]["sender_email"]
+                            pwd = st.secrets["email_credentials"]["sender_password"]
+                            yag = yagmail.SMTP(user, pwd)
+                            yag.send(to=destinatario, subject=asunto, contents=msg_base)
+                            st.success(f"Correo enviado a {destinatario}")
+                        except Exception:
+                            # Fallback a mailto client side
+                            link_mail = f"mailto:{destinatario}?subject={quote(asunto)}&body={quote(msg_base)}"
+                            st.markdown(f'<a href="{link_mail}" target="_blank" class="email-btn">Abrir Outlook/Gmail Local</a>', unsafe_allow_html=True)
+                            st.info("Nota: Se abrio su gestor de correo local porque no hay credenciales automáticas configuradas.")
 
-                # --- HERRAMIENTA 2: EMAIL ---
-                with st.expander("📧 Enviar Correo Electrónico", expanded=False):
-                    email_reg = str(data_cli['e_mail']) if pd.notna(data_cli['e_mail']) and '@' in str(data_cli['e_mail']) else ""
-                    
-                    email_dest = st.text_input("Para:", value=email_reg)
-                    asunto_mail = st.text_input("Asunto:", value=f"Estado de Cuenta - {cliente_sel}")
-                    
-                    cuerpo_mail = st.text_area("Cuerpo del Correo:", value=f"""
-Estimados {cliente_sel},
-
-Adjuntamos relación de su estado de cuenta a la fecha.
-Saldo Total: ${data_cli['importe']:,.0f}
-Días de Vencimiento: {data_cli['dias_vencido']} días.
-
-Agradecemos su pronta gestión y soporte de pago.
-
-Cordialmente,
-Equipo de Cartera Ferreinox
-                    """, height=150)
-                    
-                    if st.button("📨 Enviar Correo Ahora"):
-                        if not email_dest:
-                            st.error("Falta el correo destinatario.")
-                        else:
-                            try:
-                                # Intentar enviar con Yagmail
-                                user = st.secrets["email_credentials"]["sender_email"]
-                                password = st.secrets["email_credentials"]["sender_password"]
-                                yag = yagmail.SMTP(user, password)
-                                yag.send(to=email_dest, subject=asunto_mail, contents=cuerpo_mail)
-                                st.success(f"¡Correo enviado a {email_dest}!")
-                            except KeyError:
-                                st.error("⚠️ Faltan credenciales en secrets.toml. Usando método manual.")
-                                # Fallback a Mailto
-                                body_encoded = quote(cuerpo_mail)
-                                subject_encoded = quote(asunto_mail)
-                                link_mail = f"mailto:{email_dest}?subject={subject_encoded}&body={body_encoded}"
-                                st.markdown(f'<a href="{link_mail}" target="_blank" class="email-btn">Abrir Gestor de Correo (Outlook/Gmail)</a>', unsafe_allow_html=True)
-                            except Exception as e:
-                                st.error(f"Error al enviar: {e}")
-
-        st.markdown("---")
-        st.subheader("📋 Lista Táctica de Clientes (Filtro Actual)")
-        st.dataframe(
-            df_view[['Prioridad', 'nombrecliente', 'nit', 'telefono1', 'e_mail', 'dias_vencido', 'importe', 'Estado']],
-            column_config={
-                "Prioridad": st.column_config.ProgressColumn("Urgencia", min_value=0, max_value=100),
-                "importe": st.column_config.NumberColumn("Deuda", format="$%d"),
-                "e_mail": "Email",
-            },
-            hide_index=True,
-            use_container_width=True
-        )
-
-    # --- PESTAÑA 2: VISIÓN GENERAL ---
-    with tab_analisis:
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("Distribución por Estado")
-            fig_pie = px.pie(df_view, names='Estado', values='importe', hole=0.4, title="Cartera por Estado de Gestión")
-            st.plotly_chart(fig_pie, use_container_width=True)
-        with c2:
-            st.subheader("Mapa de Riesgo")
-            fig_scat = px.scatter(df_view, x='dias_vencido', y='importe', color='Estado', size='importe', hover_name='nombrecliente', title="Mora vs Importe")
-            st.plotly_chart(fig_scat, use_container_width=True)
-
-    # --- PESTAÑA 3: EXPORTAR ---
-    with tab_admin:
-        st.header("📥 Descargar Reportes")
-        st.write("Descargue la matriz completa para trabajar en Excel si lo prefiere.")
-        
-        excel_bytes = generar_excel(df_gestion)
+    # --- PESTAÑA 2: GRÁFICOS ---
+    with tab2:
+        if not df_view.empty:
+            c1, c2 = st.columns(2)
+            with c1:
+                fig = px.sunburst(df_view, path=['Estado', 'nomvendedor'], values='importe', title="Distribución de Cartera")
+                st.plotly_chart(fig, use_container_width=True)
+            with c2:
+                fig2 = px.scatter(df_view, x="dias_vencido", y="importe", size="importe", color="Estado", hover_name="nombrecliente", title="Mapa de Riesgo (Mora vs Deuda)")
+                st.plotly_chart(fig2, use_container_width=True)
+                
+    # --- PESTAÑA 3: DESCARGAS ---
+    with tab3:
+        st.subheader("Generar Reportes")
+        st.write("Descargue la matriz de gestión actual con filtros aplicados.")
+        excel_data = generar_excel(df_view)
         st.download_button(
-            label="💾 Descargar Matriz de Gestión (.xlsx)",
-            data=excel_bytes,
-            file_name="Gestion_Cartera_Total.xlsx",
+            label="💾 Descargar Excel (.xlsx)",
+            data=excel_data,
+            file_name="Gestion_Cartera_Corte.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary"
         )
