@@ -1,6 +1,6 @@
 # ======================================================================================
 # ARCHIVO: pages/2_Motor_Conciliacion.py
-# (Versión v9.0 - "El Auditor": Conciliación Factura a Factura + Excel Premium)
+# (Versión v9.1 - "El Auditor": Corrección de Indentación y Limpieza Total)
 # ======================================================================================
 
 import streamlit as st
@@ -374,10 +374,6 @@ def analizar_cliente(nombre_banco, valor_pago, facturas_cliente):
     return res
 
 def correr_motor_inteligente(df_bancos, df_cartera, df_kb):
-    
-
-[Image of data reconciliation process]
-
     st.info("🔎 Iniciando auditoría detallada...")
     
     # Preparar mapas de búsqueda
@@ -449,7 +445,7 @@ def correr_motor_inteligente(df_bancos, df_cartera, df_kb):
 # ======================================================================================
 
 def main():
-    st.title("🏦 Conciliador Financiero v9.0")
+    st.title("🏦 Conciliador Financiero v9.1")
     st.markdown("**El Auditor Digital:** Identificación de facturas específicas, descuentos e impuestos.")
     
     # --- BARRA LATERAL ---
