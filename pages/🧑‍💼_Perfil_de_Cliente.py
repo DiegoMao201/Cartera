@@ -1,6 +1,6 @@
 # ======================================================================================
 # ARCHIVO: pages/1_🚀_Estrategia_Cobranza.py
-# VERSIÓN: WAR ROOM 2.0 (Acción, Evolución y Estrategia Gerencial)
+# VERSIÓN: FINAL CORREGIDA (Fix KeyError e_mail y normalización robusta)
 # ======================================================================================
 
 import streamlit as st
@@ -41,7 +41,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ======================================================================================
-# --- 1. CARGA DE DATOS (Mismo motor robusto) ---
+# --- 1. CARGA DE DATOS (Mismo motor robusto con FIX de columnas) ---
 # ======================================================================================
 
 def normalizar_nombre(nombre: str) -> str:
@@ -53,6 +53,7 @@ def normalizar_nombre(nombre: str) -> str:
 @st.cache_data(ttl=600)
 def cargar_datos_maestros():
     df_final = pd.DataFrame()
+    
     # 1. Dropbox
     try:
         if "dropbox" in st.secrets:
@@ -62,6 +63,7 @@ def cargar_datos_maestros():
             with dropbox.Dropbox(app_key=APP_KEY, app_secret=APP_SECRET, oauth2_refresh_token=REFRESH_TOKEN) as dbx:
                 _, res = dbx.files_download(path='/data/cartera_detalle.csv')
                 csv_content = res.content.decode('latin-1')
+                # Definimos nombres explícitos para asegurar consistencia
                 nombres_cols = ['Serie', 'Numero', 'Fecha Documento', 'Fecha Vencimiento', 'Cod Cliente',
                                 'NombreCliente', 'Nit', 'Poblacion', 'Provincia', 'Telefono1', 'Telefono2',
                                 'NomVendedor', 'Entidad Autoriza', 'E-Mail', 'Importe', 'Descuento',
@@ -82,14 +84,37 @@ def cargar_datos_maestros():
 
     if df_final.empty: return pd.DataFrame()
 
-    # Limpieza
+    # --- LIMPIEZA Y NORMALIZACIÓN DE COLUMNAS ---
+    # Convertimos todo a minúsculas y reemplazamos espacios por guiones bajos
     df_final = df_final.rename(columns=lambda x: normalizar_nombre(x).lower().replace(' ', '_'))
+    
+    # FIX: Renombrar variaciones comunes de email para evitar KeyError
+    mapa_renombre = {
+        'e-mail': 'e_mail',
+        'email': 'e_mail',
+        'correo': 'e_mail',
+        'telefono': 'telefono1',
+        'nombre_cliente': 'nombrecliente'
+    }
+    df_final = df_final.rename(columns=mapa_renombre)
+    
+    # Asegurar que existan las columnas críticas aunque estén vacías
+    columnas_criticas = ['e_mail', 'telefono1', 'nomvendedor', 'nombrecliente', 'nit']
+    for col in columnas_criticas:
+        if col not in df_final.columns:
+            df_final[col] = "No registrado"
+
+    # Eliminar duplicados de columnas si se generaron
     df_final = df_final.loc[:, ~df_final.columns.duplicated()]
     
+    # Conversión de tipos
     if 'importe' in df_final.columns: df_final['importe'] = pd.to_numeric(df_final['importe'], errors='coerce').fillna(0)
     else: df_final['importe'] = 0
+    
     if 'dias_vencido' in df_final.columns: df_final['dias_vencido'] = pd.to_numeric(df_final['dias_vencido'], errors='coerce').fillna(0)
+    
     if 'fecha_vencimiento' in df_final.columns: df_final['fecha_vencimiento'] = pd.to_datetime(df_final['fecha_vencimiento'], errors='coerce')
+    
     if 'serie' in df_final.columns: df_final = df_final[~df_final['serie'].astype(str).str.contains('W|X', case=False, na=False)]
     
     return df_final
@@ -104,7 +129,9 @@ def procesar_estrategia(df):
     df = df[df['importe'] > 0] # Solo deuda real
     
     # Agrupar por Cliente
+    # Usamos las columnas que aseguramos en la carga
     cols_group = ['nombrecliente', 'nit', 'nomvendedor', 'telefono1', 'e_mail']
+    # Doble chequeo por si alguna se perdió, aunque el fix de arriba lo previene
     cols_existentes = [c for c in cols_group if c in df.columns]
     
     cliente_kpis = df.groupby(cols_existentes).agg({
@@ -117,7 +144,6 @@ def procesar_estrategia(df):
     # Definir Estrategia
     def definir_accion(row):
         dias = row['dias_vencido']
-        monto = row['importe']
         
         if dias > 120: return "🔴 JURÍDICO INMEDIATO"
         if dias > 90: return "⛔ BLOQUEO Y CONCILIACIÓN"
@@ -165,22 +191,24 @@ def generar_excel_master(df_estrategia):
     ws_accion.column_dimensions['B'].width = 40
 
     for idx, row in df_estrategia.iterrows():
+        # Uso seguro de .get por si acaso
         ws_accion.append([
-            f"{row['Prioridad_Score']:.1f}",
-            row['nombrecliente'],
-            row['nit'],
-            row['telefono1'],
-            row['importe'],
-            row['dias_vencido'],
-            row['Estrategia'],
-            row['nomvendedor']
+            f"{row.get('Prioridad_Score', 0):.1f}",
+            row.get('nombrecliente', ''),
+            row.get('nit', ''),
+            row.get('telefono1', ''),
+            row.get('importe', 0),
+            row.get('dias_vencido', 0),
+            row.get('Estrategia', ''),
+            row.get('nomvendedor', '')
         ])
     
     # Formato Tabla y Condicional
     filas = len(df_estrategia) + 1
-    tab = Table(displayName="TablaAccion", ref=f"A1:H{filas}")
-    tab.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
-    ws_accion.add_table(tab)
+    if filas > 1:
+        tab = Table(displayName="TablaAccion", ref=f"A1:H{filas}")
+        tab.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
+        ws_accion.add_table(tab)
     
     # Formato Moneda
     for r in range(2, filas + 1):
@@ -200,7 +228,12 @@ def generar_excel_master(df_estrategia):
     
     top_10 = df_estrategia.head(10)
     for _, row in top_10.iterrows():
-        ws_gerencia.append([row['nombrecliente'], row['importe'], row['dias_vencido'], row['nomvendedor']])
+        ws_gerencia.append([
+            row.get('nombrecliente', ''), 
+            row.get('importe', 0), 
+            row.get('dias_vencido', 0), 
+            row.get('nomvendedor', '')
+        ])
         
     # Formatos hoja 2
     ws_gerencia.column_dimensions['A'].width = 40
@@ -294,7 +327,10 @@ def main():
             c_wa_1, c_wa_2 = st.columns([2, 1])
             with c_wa_1:
                 st.write("**📝 Redactar Mensaje:**")
-                tel_limpio = re.sub(r'\D', '', str(cliente_top['telefono1']))
+                # Limpieza de teléfono segura
+                tel_raw = str(cliente_top.get('telefono1', ''))
+                tel_limpio = re.sub(r'\D', '', tel_raw)
+                
                 telefono_editable = st.text_input("Confirmar Teléfono (+57):", value=tel_limpio, key="tel_focus")
                 
                 # Plantilla dinámica según estado
@@ -313,12 +349,20 @@ def main():
             
             with c_wa_2:
                 st.info("💡 **Tip:** Si el cliente solicita soporte o factura, recuerda actualizar el correo en el sistema ERP.")
-                st.write(f"📧 **Email registrado:** {cliente_top['e_mail']}")
+                # FIX KEYERROR: Uso seguro de .get()
+                email_safe = cliente_top.get('e_mail', 'No registrado')
+                st.write(f"📧 **Email registrado:** {email_safe}")
 
         # --- LISTADO TÁCTICO COMPLETO ---
         st.markdown("### 📋 Listado de Gestión (Siguientes en la fila)")
+        
+        # Selección segura de columnas para mostrar
+        cols_display = ['Prioridad_Score', 'nombrecliente', 'telefono1', 'dias_vencido', 'importe', 'Estrategia', 'nomvendedor']
+        # Intersección con las columnas que realmente existen
+        cols_final_display = [c for c in cols_display if c in df_show.columns]
+        
         st.dataframe(
-            df_show.iloc[1:][['Prioridad_Score', 'nombrecliente', 'telefono1', 'dias_vencido', 'importe', 'Estrategia', 'nomvendedor']],
+            df_show.iloc[1:][cols_final_display],
             column_config={
                 "Prioridad_Score": st.column_config.ProgressColumn("Urgencia", min_value=0, max_value=100),
                 "importe": st.column_config.NumberColumn("Deuda", format="$%d"),
@@ -351,23 +395,24 @@ def main():
         with col_chart2:
             st.subheader("⚠️ Concentración de Riesgo")
             # Scatter plot: Días vencido vs Monto
-            fig_scatter = px.scatter(
-                df_kpi[df_kpi['dias_vencido']>0], 
-                x="dias_vencido", y="importe", 
-                size="importe", color="Estrategia",
-                hover_name="nombrecliente",
-                title="Mapa de Calor: Mora vs Valor",
-                color_discrete_map={
-                    "🔴 JURÍDICO INMEDIATO": "red",
-                    "⛔ BLOQUEO Y CONCILIACIÓN": "darkred",
-                    "🟠 COBRO ADMINISTRATIVO FUERTE": "orange",
-                    "🟡 GESTIÓN TELEFÓNICA": "gold",
-                    "🟢 RECORDATORIO DE PAGO": "green"
-                }
-            )
-            # Línea de peligro
-            fig_scatter.add_vline(x=90, line_dash="dash", line_color="red", annotation_text="Límite Jurídico")
-            st.plotly_chart(fig_scatter, use_container_width=True)
+            if not df_kpi.empty:
+                fig_scatter = px.scatter(
+                    df_kpi[df_kpi['dias_vencido']>0], 
+                    x="dias_vencido", y="importe", 
+                    size="importe", color="Estrategia",
+                    hover_name="nombrecliente",
+                    title="Mapa de Calor: Mora vs Valor",
+                    color_discrete_map={
+                        "🔴 JURÍDICO INMEDIATO": "red",
+                        "⛔ BLOQUEO Y CONCILIACIÓN": "darkred",
+                        "🟠 COBRO ADMINISTRATIVO FUERTE": "orange",
+                        "🟡 GESTIÓN TELEFÓNICA": "gold",
+                        "🟢 RECORDATORIO DE PAGO": "green"
+                    }
+                )
+                # Línea de peligro
+                fig_scatter.add_vline(x=90, line_dash="dash", line_color="red", annotation_text="Límite Jurídico")
+                st.plotly_chart(fig_scatter, use_container_width=True)
 
     # ==================================================================================
     # PESTAÑA 3: ESTRATEGIA GERENCIAL (Foco: Decisiones de Alto Nivel)
@@ -378,7 +423,7 @@ def main():
         
         # KPIs Gerenciales
         total_risk = df_kpi[df_kpi['dias_vencido'] > 60]['importe'].sum()
-        pct_risk = (total_risk / df_kpi['importe'].sum()) * 100
+        pct_risk = (total_risk / df_kpi['importe'].sum()) * 100 if df_kpi['importe'].sum() > 0 else 0
         
         g1, g2, g3 = st.columns(3)
         g1.metric("🚨 Cartera en Riesgo Alto (>60 días)", f"${total_risk:,.0f}")
@@ -389,8 +434,12 @@ def main():
         st.markdown("Estos clientes tienen **más de 90 días de mora**. Se sugiere suspender despachos inmediatamente.")
         
         df_block = df_kpi[df_kpi['dias_vencido'] > 90].sort_values('importe', ascending=False)
+        
+        cols_block = ['nombrecliente', 'nit', 'importe', 'dias_vencido', 'nomvendedor']
+        cols_final_block = [c for c in cols_block if c in df_block.columns]
+        
         st.dataframe(
-            df_block[['nombrecliente', 'nit', 'importe', 'dias_vencido', 'nomvendedor']],
+            df_block[cols_final_block],
             column_config={
                 "importe": st.column_config.NumberColumn("Deuda Riesgosa", format="$%d"),
                 "dias_vencido": st.column_config.NumberColumn("Días Mora", format="%d ⚠️"),
