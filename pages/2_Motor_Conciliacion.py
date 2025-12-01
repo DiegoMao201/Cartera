@@ -1,6 +1,6 @@
 # ======================================================================================
 # ARCHIVO: pages/2_Motor_Conciliacion.py
-# (Versión v8.0 - Limpieza Robusta de Moneda Colombiana + Inteligencia Financiera)
+# (Versión v9.0 - "El Auditor": Conciliación Factura a Factura + Excel Premium)
 # ======================================================================================
 
 import streamlit as st
@@ -9,15 +9,16 @@ import dropbox
 from io import StringIO, BytesIO
 import re
 import unicodedata
-from datetime import datetime, timedelta
+from datetime import datetime
 from fuzzywuzzy import fuzz, process
 import gspread
 from gspread_dataframe import set_with_dataframe
 from oauth2client.service_account import ServiceAccountCredentials
 import xlsxwriter
+import itertools
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Motor Conciliación Pereira", page_icon="🧠", layout="wide")
+st.set_page_config(page_title="Motor Conciliación Pro v9", page_icon="🕵️‍♂️", layout="wide")
 
 # ======================================================================================
 # --- 1. CONEXIONES Y UTILIDADES ---
@@ -41,7 +42,7 @@ def connect_to_google_sheets():
         scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
         creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
         return gspread.authorize(creds)
-    except Exception as e:
+    except Exception:
         return None
 
 def download_from_dropbox(dbx, path):
@@ -49,7 +50,7 @@ def download_from_dropbox(dbx, path):
         _, res = dbx.files_download(path)
         return res.content
     except Exception as e:
-        st.error(f"Error descargando {path} de Dropbox: {e}")
+        st.error(f"Error descargando {path}: {e}")
         return None
 
 def normalizar_texto_avanzado(texto):
@@ -60,7 +61,7 @@ def normalizar_texto_avanzado(texto):
     palabras_basura = [
         'PAGO', 'TRANSF', 'TRANSFERENCIA', 'CONSIGNACION', 'ABONO', 'CTA', 'NIT', 
         'REF', 'FACTURA', 'OFI', 'SUC', 'ACH', 'PSE', 'NOMINA', 'PROVEEDOR', 
-        'COMPRA', 'VENTA', 'VALOR', 'NETO', 'PLANILLA'
+        'COMPRA', 'VENTA', 'VALOR', 'NETO', 'PLANILLA', 'S A', 'SAS', 'LTDA'
     ]
     for p in palabras_basura:
         texto = re.sub(r'\b' + p + r'\b', '', texto)
@@ -68,440 +69,495 @@ def normalizar_texto_avanzado(texto):
 
 def extraer_posibles_nits(texto):
     if not isinstance(texto, str): return []
+    # Busca secuencias de 7 a 11 dígitos que suelen ser NITs
     return re.findall(r'\b\d{7,11}\b', texto)
-
-def extraer_dinero_de_texto(texto):
-    """
-    Busca números con formato de moneda en el texto si el valor es 0.
-    """
-    if not isinstance(texto, str): return 0.0
-    matches = re.findall(r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)', texto)
-    
-    valores_candidatos = []
-    for m in matches:
-        # Limpieza agresiva para convertir texto a float
-        clean_m = m.replace(',', '').replace('.', '')
-        try:
-            val = float(clean_m)
-            # Regla: Si > 1000, probablemente es dinero y no un código
-            if val > 1000: 
-                valores_candidatos.append(val)
-        except: pass
-    
-    if valores_candidatos:
-        return max(valores_candidatos)
-    return 0.0
 
 def limpiar_moneda_colombiana(val):
     """
-    NUEVA FUNCIÓN DE LIMPIEZA ROBUSTA
     Convierte formatos como '1.000.000,00' o '$ 500.000' a float puro.
-    Asume formato colombiano: Punto (.) para miles, Coma (,) para decimales.
+    Asume formato colombiano: Punto (.) miles, Coma (,) decimales.
     """
-    # 1. Si ya es número, devolverlo como float
     if isinstance(val, (int, float)):
         return float(val) if pd.notnull(val) else 0.0
     
-    # 2. Si es string, limpiar
     s = str(val).strip()
     if not s or s.lower() == 'nan': return 0.0
 
-    # Quitar símbolos de moneda y espacios
     s = s.replace('$', '').replace('USD', '').replace('COP', '').strip()
-    
-    # Lógica específica para formato "1.234.567,00"
-    # Paso A: Eliminar los puntos de miles (1.234 -> 1234)
-    s = s.replace('.', '')
-    
-    # Paso B: Reemplazar la coma decimal por punto (1234,56 -> 1234.56)
-    s = s.replace(',', '.')
+    # 1.234.567,00 -> 1234567.00
+    s = s.replace('.', '') # Quitar miles
+    s = s.replace(',', '.') # Convertir decimal
     
     try:
         return float(s)
     except ValueError:
         return 0.0
 
+def extraer_dinero_de_texto(texto):
+    if not isinstance(texto, str): return 0.0
+    matches = re.findall(r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)', texto)
+    valores = []
+    for m in matches:
+        clean_m = m.replace(',', '').replace('.', '')
+        try:
+            val = float(clean_m)
+            if val > 1000: valores.append(val)
+        except: pass
+    return max(valores) if valores else 0.0
+
 # ======================================================================================
-# --- 2. EXCEL DE LUJO ---
+# --- 2. EXCEL DE ALTO IMPACTO (FORMATO V9) ---
 # ======================================================================================
 
-def generar_excel_bonito(df):
+def generar_excel_profesional(df, resumen_kpis):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Conciliacion_Pereira')
+        
+        # --- HOJA 1: RESUMEN GERENCIAL ---
         workbook = writer.book
-        worksheet = writer.sheets['Conciliacion_Pereira']
+        sheet_resumen = workbook.add_worksheet("Dashboard")
+        sheet_resumen.hide_gridlines(2)
         
-        # Formatos
-        header_format = workbook.add_format({
-            'bold': True, 'text_wrap': True, 'valign': 'top',
-            'fg_color': '#1F497D', 'font_color': 'white', 'border': 1
-        })
-        money_format = workbook.add_format({'num_format': '$ #,##0', 'border': 1})
-        date_format = workbook.add_format({'num_format': 'dd/mm/yyyy', 'border': 1})
+        # Estilos Dashboard
+        style_title = workbook.add_format({'bold': True, 'font_size': 16, 'font_color': '#1F497D'})
+        style_kpi_label = workbook.add_format({'bold': True, 'bg_color': '#E7E6E6', 'border': 1})
+        style_kpi_value = workbook.add_format({'bold': True, 'num_format': '#,##0', 'border': 1, 'align': 'center'})
         
-        # Colores Semáforo
-        green_format = workbook.add_format({'bg_color': '#C6EFCE', 'font_color': '#006100', 'border': 1}) # Conciliado
-        blue_format = workbook.add_format({'bg_color': '#BDD7EE', 'font_color': '#1F497D', 'border': 1}) # Descuento
-        orange_format = workbook.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C5700', 'border': 1}) # Retencion/Abono
-        red_format = workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006', 'border': 1}) # Revisar
+        sheet_resumen.write('B2', "RESUMEN DE CONCILIACIÓN - PEREIRA", style_title)
+        
+        # Tabla KPIs
+        kpis = [
+            ("Total Movimientos", resumen_kpis['total_tx']),
+            ("Conciliados (Match Exacto)", resumen_kpis['exactos']),
+            ("Conciliados (Con Descuento)", resumen_kpis['descuentos']),
+            ("Conciliados (Impuestos)", resumen_kpis['impuestos']),
+            ("Parciales / Abonos", resumen_kpis['parciales']),
+            ("Sin Identificar", resumen_kpis['sin_id'])
+        ]
+        
+        row = 4
+        for label, val in kpis:
+            sheet_resumen.write(row, 1, label, style_kpi_label)
+            sheet_resumen.write(row, 2, val, style_kpi_value)
+            row += 1
 
-        # Anchos
+        # --- HOJA 2: DETALLE ---
+        df.to_excel(writer, index=False, sheet_name='Detalle_Conciliacion')
+        worksheet = writer.sheets['Detalle_Conciliacion']
+        
+        # Estilos Detalle
+        header_format = workbook.add_format({
+            'bold': True, 'text_wrap': True, 'valign': 'vcenter', 'align': 'center',
+            'fg_color': '#203764', 'font_color': 'white', 'border': 1
+        })
+        currency_fmt = workbook.add_format({'num_format': '$ #,##0.00', 'border': 1})
+        text_fmt = workbook.add_format({'text_wrap': False, 'border': 1})
+        
+        # Colores de Estado
+        fmt_green = workbook.add_format({'bg_color': '#C6EFCE', 'font_color': '#006100'})
+        fmt_blue = workbook.add_format({'bg_color': '#BDD7EE', 'font_color': '#1F497D'})
+        fmt_red = workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
+        fmt_yellow = workbook.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C5700'})
+
+        # Configurar columnas
         for col_num, value in enumerate(df.columns.values):
             worksheet.write(0, col_num, value, header_format)
-            width = 20
-            val_str = str(value).upper()
-            if "TEXTO" in val_str: width = 50
-            elif "CLIENTE" in val_str: width = 35
-            elif "FECHA" in val_str: width = 15
-            elif "VALOR" in val_str or "DEUDA" in val_str: width = 18
-            worksheet.set_column(col_num, col_num, width)
+            
+            # Anchos automáticos inteligentes
+            col_name = str(value).upper()
+            width = 15
+            if "CLIENTE" in col_name or "RAZON" in col_name: width = 35
+            elif "DETALLE" in col_name or "NOTAS" in col_name: width = 50
+            elif "FACTURAS" in col_name: width = 30
+            elif "VALOR" in col_name or "SALDO" in col_name: width = 18
+            
+            worksheet.set_column(col_num, col_num, width, text_fmt)
+            
+            # Aplicar formato moneda a columnas de dinero
+            if any(x in col_name for x in ['VALOR', 'DEUDA', 'DIFERENCIA', 'AHORRO', 'IMPUESTO', 'SALDO']):
+                worksheet.set_column(col_num, col_num, width, currency_fmt)
 
-        # Formatos Condicionales
-        col_estado_idx = df.columns.get_loc('Estado') if 'Estado' in df.columns else -1
-        nrow = len(df) + 1
+        # Formato Condicional en columna ESTADO
+        try:
+            col_idx = df.columns.get_loc('Estado')
+            col_letter = chr(65 + col_idx)
+            last_row = len(df) + 1
+            
+            rng = f"{col_letter}2:{col_letter}{last_row}"
+            
+            worksheet.conditional_format(rng, {'type': 'text', 'criteria': 'containing', 'value': 'EXACTO', 'format': fmt_green})
+            worksheet.conditional_format(rng, {'type': 'text', 'criteria': 'containing', 'value': 'DESCUENTO', 'format': fmt_blue})
+            worksheet.conditional_format(rng, {'type': 'text', 'criteria': 'containing', 'value': 'REVISAR', 'format': fmt_red})
+            worksheet.conditional_format(rng, {'type': 'text', 'criteria': 'containing', 'value': 'ABONO', 'format': fmt_yellow})
+        except: pass
+
+        worksheet.freeze_panes(1, 0)
         
-        if col_estado_idx != -1:
-            col_letter = chr(65 + col_estado_idx) # Asumiendo columnas < 26 (A-Z)
-            # Verde: Total
-            worksheet.conditional_format(1, 0, nrow, len(df.columns)-1, {
-                'type': 'formula', 'criteria': f'=ISNUMBER(SEARCH("TOTAL", ${col_letter}2))', 'format': green_format
-            })
-            # Azul: Descuento
-            worksheet.conditional_format(1, 0, nrow, len(df.columns)-1, {
-                'type': 'formula', 'criteria': f'=ISNUMBER(SEARCH("DESCUENTO", ${col_letter}2))', 'format': blue_format
-            })
-            # Naranja: Retenciones/Abono
-            worksheet.conditional_format(1, 0, nrow, len(df.columns)-1, {
-                'type': 'formula', 'criteria': f'=OR(ISNUMBER(SEARCH("RETENCION", ${col_letter}2)), ISNUMBER(SEARCH("ABONO", ${col_letter}2)))',
-                'format': orange_format
-            })
-            # Rojo: Revisar
-            worksheet.conditional_format(1, 0, nrow, len(df.columns)-1, {
-                'type': 'formula', 'criteria': f'=ISNUMBER(SEARCH("REVISAR", ${col_letter}2))', 'format': red_format
-            })
-
-        # Aplicar formato moneda
-        cols_moneda = ['Valor_Banco_Calc', 'Deuda_Total_Cartera', 'Diferencia', 'Ahorro_Descuento_3%', 'Impuesto_Estimado']
-        for col_name in cols_moneda:
-            if col_name in df.columns:
-                idx = df.columns.get_loc(col_name)
-                worksheet.set_column(idx, idx, 18, money_format)
-
-        worksheet.autofilter(0, 0, nrow, len(df.columns)-1)
-
     return output.getvalue()
 
 # ======================================================================================
-# --- 3. CARGA DE ARCHIVOS ---
+# --- 3. CARGA DE DATOS ---
 # ======================================================================================
 
 @st.cache_data(ttl=600)
-def cargar_cartera():
+def cargar_cartera_detalle():
+    """Carga y procesa el detalle de facturas pendientes"""
     dbx = get_dbx_client("dropbox")
-    if not dbx: 
-        st.warning("⚠️ Sin conexión a Dropbox.")
-        return pd.DataFrame()
-        
+    if not dbx: return pd.DataFrame()
+    
     content = download_from_dropbox(dbx, '/data/cartera_detalle.csv')
     if not content: return pd.DataFrame()
 
     try:
         df = pd.read_csv(StringIO(content.decode('latin-1')), sep='|', header=None)
-        df = df.iloc[:, :18]
+        # Ajustar a columnas reales de tu archivo
+        df = df.iloc[:, :18] 
         df.columns = [
             'Serie', 'Numero', 'FechaDoc', 'FechaVenc', 'CodCliente', 'NombreCliente', 
             'Nit', 'Poblacion', 'Provincia', 'Tel1', 'Tel2', 'Vendedor', 
             'Autoriza', 'Email', 'Importe', 'Descuento', 'Cupo', 'DiasVenc'
         ]
         
+        # Limpieza
         df['Importe'] = pd.to_numeric(df['Importe'], errors='coerce').fillna(0)
         df['nit_norm'] = df['Nit'].astype(str).str.replace(r'[^0-9]', '', regex=True)
         df['nombre_norm'] = df['NombreCliente'].apply(normalizar_texto_avanzado)
         df['FechaDoc'] = pd.to_datetime(df['FechaDoc'], errors='coerce')
         
-        return df[df['Importe'] > 0].copy()
+        # Solo facturas con saldo positivo
+        return df[df['Importe'] > 100].copy()
     except Exception as e:
-        st.error(f"Error leyendo cartera: {e}")
+        st.error(f"Error estructura cartera: {e}")
         return pd.DataFrame()
 
-def cargar_planilla_pereira_desde_upload(uploaded_file):
+def procesar_planilla_bancos(uploaded_file):
     try:
-        # Detectar encabezado
-        df_preview = pd.read_excel(uploaded_file, nrows=15, header=None)
+        # Previsualizar para encontrar encabezado
+        df_temp = pd.read_excel(uploaded_file, nrows=15, header=None)
         header_idx = 0
-        found = False
-        
-        for idx, row in df_preview.iterrows():
-            row_str = row.astype(str).str.upper().values
-            if 'FECHA' in row_str and 'VALOR' in row_str:
+        for idx, row in df_temp.iterrows():
+            if 'FECHA' in row.astype(str).str.upper().values and 'VALOR' in row.astype(str).str.upper().values:
                 header_idx = idx
-                found = True
                 break
         
-        if not found:
-            st.error("❌ No encontré columnas FECHA/VALOR en las primeras 15 filas.")
-            return pd.DataFrame()
-
-        uploaded_file.seek(0) 
-        # Leemos todo como string primero para evitar que Pandas "adivine" mal los números europeos
+        uploaded_file.seek(0)
         df = pd.read_excel(uploaded_file, header=header_idx)
         df.columns = [str(c).strip().upper() for c in df.columns]
         
-        # 1. Limpieza de FECHA
+        # Limpieza Fechas
         df['FECHA'] = pd.to_datetime(df['FECHA'], errors='coerce')
         df = df.dropna(subset=['FECHA'])
         
-        # 2. Limpieza de VALOR (Aplicando la nueva función robusta)
+        # Limpieza Valor
         if 'VALOR' in df.columns:
-            # Primero forzamos a string para que nuestra funcion limpie bien los puntos y comas
-            df['VALOR_TEMP'] = df['VALOR'].astype(str).apply(limpiar_moneda_colombiana)
+            df['Valor_Banco'] = df['VALOR'].apply(limpiar_moneda_colombiana)
         else:
-            df['VALOR_TEMP'] = 0.0
+            df['Valor_Banco'] = 0.0
 
-        # 3. Preparar Texto para Análisis
-        cols_clave = ['SUCURSAL BANCO', 'TIPO DE TRANSACCION', 'CUENTA', 'EMPRESA', 'DESTINO', 'DETALLE', 'NOTAS']
-        df['texto_analisis'] = ''
-        for col in cols_clave:
-            if col in df.columns:
-                df['texto_analisis'] += df[col].fillna('').astype(str) + ' '
-        df['texto_norm'] = df['texto_analisis'].apply(normalizar_texto_avanzado)
-
-        # 4. Rescate de valores (Si la limpieza dio 0, buscar en texto)
-        def definir_valor_final(row):
-            val_limpio = row['VALOR_TEMP']
-            if val_limpio == 0:
-                # Intentar rescatar del texto
-                return extraer_dinero_de_texto(row['texto_analisis'])
-            return val_limpio
-
-        df['Valor_Banco_Calc'] = df.apply(definir_valor_final, axis=1)
-        df['Fue_Rescatado_Texto'] = (df['VALOR_TEMP'] == 0) & (df['Valor_Banco_Calc'] > 0)
-
-        # ID Único
-        def safe_id(row):
-            f_str = row['FECHA'].strftime('%Y%m%d') if pd.notnull(row['FECHA']) else "0000"
-            return f"MOV-{f_str}-{int(row['Valor_Banco_Calc'])}-{row.name}"
-
-        df['id_unico'] = df.apply(safe_id, axis=1)
+        # Crear texto de búsqueda
+        cols_txt = [c for c in df.columns if c not in ['FECHA', 'VALOR', 'Valor_Banco']]
+        df['Texto_Completo'] = df[cols_txt].fillna('').astype(str).agg(' '.join, axis=1)
+        df['Texto_Norm'] = df['Texto_Completo'].apply(normalizar_texto_avanzado)
+        
+        # Rescate de dinero si columna valor es 0
+        mask_zero = df['Valor_Banco'] == 0
+        df.loc[mask_zero, 'Valor_Banco'] = df.loc[mask_zero, 'Texto_Completo'].apply(extraer_dinero_de_texto)
+        df['Rescatado'] = mask_zero & (df['Valor_Banco'] > 0)
         
         return df
-
     except Exception as e:
-        st.error(f"Error procesando Excel: {e}")
+        st.error(f"Error leyendo Excel: {e}")
         return pd.DataFrame()
 
 # ======================================================================================
-# --- 4. MOTOR INTELIGENTE ---
+# --- 4. ALGORITMO "EL AUDITOR" (MATCHING LOGIC) ---
 # ======================================================================================
 
-def ejecutar_motor_inteligente(df_bancos, df_cartera, df_kb):
-    st.info("🧠 Cerebro Activado: Cruzando datos con limpieza monetaria avanzada...")
+def analizar_cliente(nombre_banco, valor_pago, facturas_cliente):
+    """
+    Analiza un pago contra las facturas abiertas de un cliente específico.
+    Retorna un diccionario con el resultado del análisis.
+    """
+    res = {
+        'Estado': '⚠️ SIN COINCIDENCIA CLARA',
+        'Facturas_Conciliadas': '',
+        'Detalle_Operacion': '',
+        'Diferencia': 0,
+        'Tipo_Ajuste': 'Ninguno',
+        'Ahorro_Dcto': 0,
+        'Impuesto_Est': 0
+    }
     
-    mapa_nit_nombre = df_cartera.groupby('nit_norm')['NombreCliente'].first().to_dict()
+    if facturas_cliente.empty:
+        res['Detalle_Operacion'] = "Cliente identificado pero sin cartera pendiente."
+        res['Diferencia'] = valor_pago * -1 # Saldo a favor
+        return res
+
+    facturas = facturas_cliente[['Numero', 'Importe', 'FechaDoc']].sort_values('FechaDoc').to_dict('records')
+    total_deuda = sum(f['Importe'] for f in facturas)
+    
+    # --- ESCENARIO 1: PAGO TOTAL DEUDA ---
+    if abs(valor_pago - total_deuda) < 1000:
+        res['Estado'] = '✅ MATCH EXACTO (TOTAL)'
+        res['Facturas_Conciliadas'] = 'TODAS'
+        res['Detalle_Operacion'] = f"Pago cubre las {len(facturas)} facturas pendientes."
+        return res
+        
+    # --- ESCENARIO 2: BUSQUEDA COMBINATORIA (Pago de facturas especificas) ---
+    # Intentamos encontrar si el pago suma exactamente a 1, 2 o 3 facturas.
+    # Limitamos a combinaciones de 3 para rendimiento.
+    found_combo = False
+    
+    for r in range(1, 4): 
+        if r > len(facturas): break
+        for combo in itertools.combinations(facturas, r):
+            suma_combo = sum(c['Importe'] for c in combo)
+            numeros_combo = ", ".join([str(c['Numero']) for c in combo])
+            
+            # A. Match Exacto
+            if abs(valor_pago - suma_combo) < 500:
+                res['Estado'] = '✅ MATCH FACTURAS ESPECÍFICAS'
+                res['Facturas_Conciliadas'] = numeros_combo
+                res['Detalle_Operacion'] = f"Suma exacta de {r} factura(s)."
+                found_combo = True
+                break
+                
+            # B. Match con Descuento (3% aprox)
+            suma_dcto = suma_combo * 0.97
+            if abs(valor_pago - suma_dcto) < 2000:
+                res['Estado'] = '💎 CONCILIADO CON DESCUENTO'
+                res['Facturas_Conciliadas'] = numeros_combo
+                res['Tipo_Ajuste'] = 'Descuento Pronto Pago'
+                res['Ahorro_Dcto'] = suma_combo - valor_pago
+                res['Detalle_Operacion'] = f"Pago con 3% Dcto sobre facturas: {numeros_combo}"
+                found_combo = True
+                break
+        if found_combo: break
+    
+    if found_combo: return res
+
+    # --- ESCENARIO 3: LOGICA FIFO (Abono a la deuda mas vieja) ---
+    # Si no cuadró ninguna combinación, asumimos que paga desde la más vieja
+    acumulado = 0
+    facturas_cubiertas = []
+    
+    for f in facturas:
+        if acumulado + f['Importe'] <= valor_pago + 1000: # Tolerancia pequeña
+            acumulado += f['Importe']
+            facturas_cubiertas.append(str(f['Numero']))
+        else:
+            break
+            
+    saldo_restante = total_deuda - valor_pago
+    
+    if facturas_cubiertas:
+        res['Estado'] = '⚠️ ABONO PARCIAL (FIFO)'
+        res['Facturas_Conciliadas'] = ", ".join(facturas_cubiertas)
+        res['Diferencia'] = saldo_restante
+        res['Detalle_Operacion'] = f"Cubre facturas antiguas. Queda debiendo ${saldo_restante:,.0f}"
+    else:
+        # Chequeo impuestos sobre el total
+        base_est = total_deuda / 1.19
+        rete_fuente = base_est * 0.025
+        rete_iva = (base_est * 0.19) * 0.15
+        pago_con_imptos = total_deuda - rete_fuente - rete_iva
+        
+        if abs(valor_pago - pago_con_imptos) < 5000:
+            res['Estado'] = '🏢 CONCILIADO (IMPUESTOS)'
+            res['Impuesto_Est'] = rete_fuente + rete_iva
+            res['Detalle_Operacion'] = "Coincide con total menos ReteFuente y ReteIVA."
+        else:
+            res['Estado'] = '❌ REVISAR MANUALMENTE'
+            res['Diferencia'] = saldo_restante
+            res['Detalle_Operacion'] = f"Monto no cuadra con facturas. Deuda Total: ${total_deuda:,.0f}"
+
+    return res
+
+def correr_motor_inteligente(df_bancos, df_cartera, df_kb):
+    
+
+[Image of data reconciliation process]
+
+    st.info("🔎 Iniciando auditoría detallada...")
+    
+    # Preparar mapas de búsqueda
+    mapa_nit = df_cartera.groupby('nit_norm')['NombreCliente'].first().to_dict()
     lista_nombres = df_cartera['nombre_norm'].unique().tolist()
     
-    memoria_inteligente = {}
+    # Cargar base de conocimiento
+    memoria = {}
     if not df_kb.empty:
-        if len(df_kb.columns) >= 2:
-            for _, row in df_kb.iterrows():
-                try:
-                    k = normalizar_texto_avanzado(str(row.iloc[0]))
-                    v = str(row.iloc[1]).strip()
-                    if k and v: memoria_inteligente[k] = v
-                except: pass
+        for _, row in df_kb.iterrows():
+            try: memoria[str(row[0]).strip().upper()] = str(row[1]).strip()
+            except: pass
 
     resultados = []
-    hoy = datetime.now()
     bar = st.progress(0)
-    total_filas = len(df_bancos)
     
     for i, row in df_bancos.iterrows():
-        bar.progress((i+1)/total_filas)
+        bar.progress((i+1)/len(df_bancos))
         
-        txt_banco = row['texto_norm']
-        txt_crudo = row['texto_analisis']
-        valor_banco = row['Valor_Banco_Calc']
+        item = row.to_dict()
+        txt = row['Texto_Norm']
+        val = row['Valor_Banco']
         
-        res = {
-            'Estado': 'PENDIENTE', 
-            'Cliente_Identificado': 'NO IDENTIFICADO', 
-            'NIT_Encontrado': '',
-            'Tipo_Hallazgo': '',
-            'Deuda_Total_Cartera': 0,
-            'Diferencia': 0,
-            'Ahorro_Descuento_3%': 0,
-            'Impuesto_Estimado': 0,
-            'Notas_Robot': ''
-        }
+        nit_found = None
+        nombre_cliente = "NO IDENTIFICADO"
         
-        if row['Fue_Rescatado_Texto']:
-            res['Notas_Robot'] += "⚠️ Dinero leído del texto (celda valor vacía o 0). "
-
-        match_found = False
-        nit_candidato = None
-
-        # 1. Memoria
-        if not match_found:
-            for k_mem in memoria_inteligente:
-                if k_mem in txt_banco and len(k_mem) > 5:
-                    nit_candidato = memoria_inteligente[k_mem]
-                    res['Tipo_Hallazgo'] = '🧠 Memoria Histórica'
-                    match_found = True
+        # 1. Identificación
+        # A. Memoria
+        for k, v in memoria.items():
+            if k in txt:
+                nit_found = v
+                break
+        
+        # B. NIT en texto
+        if not nit_found:
+            posibles = extraer_posibles_nits(row['Texto_Completo'])
+            for p in posibles:
+                if p in mapa_nit:
+                    nit_found = p
                     break
         
-        # 2. NIT
-        if not match_found:
-            posibles_nits = extraer_posibles_nits(txt_crudo)
-            for pn in posibles_nits:
-                if pn in mapa_nit_nombre:
-                    nit_candidato = pn
-                    res['Tipo_Hallazgo'] = f'🔍 NIT Detectado ({pn})'
-                    match_found = True
-                    break
-        
-        # 3. Fuzzy
-        if not match_found and len(txt_banco) > 5:
-            match_name, score = process.extractOne(txt_banco, lista_nombres, scorer=fuzz.token_set_ratio)
+        # C. Fuzzy Name
+        if not nit_found and len(txt) > 5:
+            match, score = process.extractOne(txt, lista_nombres, scorer=fuzz.token_set_ratio)
             if score >= 88:
-                nit_candidato = df_cartera[df_cartera['nombre_norm'] == match_name]['nit_norm'].iloc[0]
-                res['Tipo_Hallazgo'] = f'🤖 Nombre Similar ({score}%)'
-                match_found = True
+                nit_found = df_cartera[df_cartera['nombre_norm'] == match]['nit_norm'].iloc[0]
 
-        # Análisis Financiero
-        if match_found and nit_candidato:
-            nombre_real = mapa_nit_nombre.get(nit_candidato, "Desconocido")
-            res['NIT_Encontrado'] = nit_candidato
-            res['Cliente_Identificado'] = nombre_real
+        # 2. Análisis Financiero
+        if nit_found:
+            nombre_cliente = mapa_nit.get(nit_found, "Cliente")
+            facturas_open = df_cartera[df_cartera['nit_norm'] == nit_found]
             
-            facturas_cliente = df_cartera[df_cartera['nit_norm'] == nit_candidato]
-            deuda_total = facturas_cliente['Importe'].sum()
-            res['Deuda_Total_Cartera'] = deuda_total
+            analisis = analizar_cliente(nombre_cliente, val, facturas_open)
             
-            diferencia = deuda_total - valor_banco
-            res['Diferencia'] = diferencia
+            item.update(analisis)
+            item['Cliente_Identificado'] = nombre_cliente
+            item['NIT'] = nit_found
+        else:
+            item['Estado'] = '❓ NO IDENTIFICADO'
+            item['Cliente_Identificado'] = ''
+            item['Detalle_Operacion'] = 'Falta información para cruzar.'
             
-            # Tolerancia para pagos exactos
-            if abs(diferencia) < 2000:
-                res['Estado'] = '✅ CONCILIADO - PAGO TOTAL'
-            
-            elif valor_banco < deuda_total:
-                # Chequeo de Descuento (3%)
-                deuda_con_dcto = deuda_total * 0.97
-                diff_dcto = abs(deuda_con_dcto - valor_banco)
-                
-                if diff_dcto < 5000:
-                    res['Estado'] = '💎 CONCILIADO - CON DESCUENTO 3%'
-                    res['Ahorro_Descuento_3%'] = deuda_total * 0.03
-                    res['Notas_Robot'] += "Descuento pronto pago aplicado. "
-                else:
-                     # Chequeo Impuestos
-                     base_estimada = deuda_total / 1.19
-                     rete_iva_est = base_estimada * 0.19 * 0.15
-                     rete_fuente_est = base_estimada * 0.025
-                     
-                     pago_esperado_full = deuda_total - rete_fuente_est - rete_iva_est
-                     pago_esperado_rf = deuda_total - rete_fuente_est
-                     
-                     tolerance = 5000
-                     
-                     if abs(pago_esperado_full - valor_banco) < tolerance:
-                         res['Estado'] = '🏢 CONCILIADO - CON RETENCIONES (G.C.)'
-                         res['Impuesto_Estimado'] = rete_fuente_est + rete_iva_est
-                         res['Notas_Robot'] += "ReteIVA + ReteFuente detectados. "
-                     elif abs(pago_esperado_rf - valor_banco) < tolerance:
-                         res['Estado'] = '🏢 CONCILIADO - CON RETEFUENTE'
-                         res['Impuesto_Estimado'] = rete_fuente_est
-                         res['Notas_Robot'] += "ReteFuente (2.5%) detectada. "
-                     else:
-                         res['Estado'] = '⚠️ ABONO PARCIAL O DIFERENCIA'
-
-            elif valor_banco > deuda_total:
-                res['Estado'] = '❌ REVISAR - PAGO MAYOR A DEUDA'
-
-        row_dict = row.to_dict()
-        row_dict.update(res)
-        resultados.append(row_dict)
+        resultados.append(item)
         
     return pd.DataFrame(resultados)
 
 # ======================================================================================
-# --- 5. INTERFAZ ---
+# --- 5. INTERFAZ GRÁFICA ---
 # ======================================================================================
 
 def main():
-    st.title("🏦 Super Motor - Limpieza y Conciliación")
-    st.markdown("Versión v8.0: Limpieza de moneda colombiana (. para miles, , para decimales).")
+    st.title("🏦 Conciliador Financiero v9.0")
+    st.markdown("**El Auditor Digital:** Identificación de facturas específicas, descuentos e impuestos.")
     
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        uploaded_file = st.file_uploader("Planilla Banco (Cualquier formato de número)", type=["xlsx", "xls"])
-    with col2:
-        if st.button("☁️ Sincronizar Cartera", type="secondary"):
-            with st.spinner("Conectando..."):
-                df_c = cargar_cartera()
+    # --- BARRA LATERAL ---
+    with st.sidebar:
+        st.header("Configuración")
+        uploaded_file = st.file_uploader("📂 Cargar Planilla Banco (.xlsx)", type=["xlsx"])
+        
+        if st.button("🔄 Sincronizar Cartera Dropbox"):
+            with st.spinner("Descargando..."):
+                df_c = cargar_cartera_detalle()
                 if not df_c.empty:
-                    st.session_state['df_cartera'] = df_c
-                    st.success(f"Cartera: {len(df_c)} registros.")
-                else: st.error("Error Dropbox.")
+                    st.session_state['cartera'] = df_c
+                    st.success(f"Cartera: {len(df_c)} facturas activas.")
+                else:
+                    st.error("Falló conexión Dropbox")
 
-    if 'df_cartera' in st.session_state:
-        st.caption(f"Cartera activa: {len(st.session_state['df_cartera'])} facturas.")
+        st.divider()
+        if 'cartera' in st.session_state:
+            st.info(f"Facturas en memoria: {len(st.session_state['cartera'])}")
+            st.dataframe(st.session_state['cartera'].head(3), use_container_width=True, hide_index=True)
+        else:
+            st.warning("⚠️ Carga la cartera primero")
 
-    st.divider()
-
-    if uploaded_file and 'df_cartera' in st.session_state:
-        if st.button("🚀 INICIAR PROCESO", type="primary", use_container_width=True):
+    # --- PANEL PRINCIPAL ---
+    if uploaded_file and 'cartera' in st.session_state:
+        if st.button("🚀 EJECUTAR CONCILIACIÓN", type="primary", use_container_width=True):
             
-            with st.status("Procesando...", expanded=True) as status:
-                st.write("🧹 Limpiando formatos de moneda (colombianos/europeos)...")
-                df_bancos = cargar_planilla_pereira_desde_upload(uploaded_file)
-                
-                if df_bancos.empty:
-                    st.error("Archivo no válido.")
-                    status.update(label="Error", state="error")
-                    return
+            # 1. Leer Banco
+            df_bancos = procesar_planilla_bancos(uploaded_file)
+            if df_bancos.empty:
+                st.error("El archivo de banco no parece válido o está vacío.")
+                return
 
-                g_client = connect_to_google_sheets()
-                df_kb = pd.DataFrame()
-                if g_client:
-                    try:
-                        sh = g_client.open_by_url(st.secrets["google_sheets"]["sheet_url"])
-                        df_kb = pd.DataFrame(sh.worksheet("Knowledge_Base").get_all_records())
-                    except: pass
+            # 2. Leer KB (Google Sheets)
+            df_kb = pd.DataFrame()
+            g_client = connect_to_google_sheets()
+            if g_client:
+                try:
+                    sh = g_client.open_by_url(st.secrets["google_sheets"]["sheet_url"])
+                    df_kb = pd.DataFrame(sh.worksheet("Knowledge_Base").get_all_records())
+                except: pass
 
-                st.write("🤖 Calculando coincidencias...")
-                df_resultado = ejecutar_motor_inteligente(df_bancos, st.session_state['df_cartera'], df_kb)
-                status.update(label="¡Listo!", state="complete", expanded=False)
-
-            # Métricas y Tabla
-            c_tot = len(df_resultado[df_resultado['Estado'].str.contains("TOTAL")])
-            c_imp = len(df_resultado[df_resultado['Estado'].str.contains("RETENCIONES") | df_resultado['Estado'].str.contains("RETEFUENTE")])
+            # 3. Correr Motor
+            df_res = correr_motor_inteligente(df_bancos, st.session_state['cartera'], df_kb)
             
-            c1, c2 = st.columns(2)
-            c1.metric("Pagos Totales", c_tot)
-            c2.metric("Con Impuestos", c_imp)
+            # 4. Estadísticas
+            kpis = {
+                'total_tx': len(df_res),
+                'exactos': len(df_res[df_res['Estado'].str.contains('EXACTO')]),
+                'descuentos': len(df_res[df_res['Estado'].str.contains('DESCUENTO')]),
+                'impuestos': len(df_res[df_res['Estado'].str.contains('IMPUESTOS')]),
+                'parciales': len(df_res[df_res['Estado'].str.contains('PARCIAL') | df_res['Estado'].str.contains('ABONO')]),
+                'sin_id': len(df_res[df_res['Estado'].str.contains('NO IDENTIFICADO')])
+            }
             
-            st.dataframe(df_resultado[['FECHA', 'Valor_Banco_Calc', 'Cliente_Identificado', 'Estado', 'Impuesto_Estimado']], use_container_width=True)
+            # Mostrar Métricas
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Conciliación Perfecta", kpis['exactos'] + kpis['descuentos'])
+            col2.metric("Con Impuestos", kpis['impuestos'])
+            col3.metric("Abonos/Parciales", kpis['parciales'])
+            col4.metric("Por Revisar", kpis['sin_id'])
+            
+            st.divider()
+            
+            # Tabla Interactiva
+            st.subheader("📋 Vista Previa de Resultados")
+            cols_show = ['FECHA', 'Valor_Banco', 'Cliente_Identificado', 'Estado', 'Facturas_Conciliadas', 'Detalle_Operacion']
+            
+            def color_estado(val):
+                color = 'black'
+                if '✅' in val: color = 'green'
+                elif '💎' in val: color = 'blue'
+                elif '❌' in val: color = 'red'
+                elif '⚠️' in val: color = 'orange'
+                return f'color: {color}'
 
-            # Descarga y Guardado
-            c_d, c_s = st.columns(2)
-            with c_d:
-                excel_data = generar_excel_bonito(df_resultado)
-                st.download_button("📥 Bajar Excel Resultados", excel_data, "Conciliacion_Pereira_v8.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
+            st.dataframe(
+                df_res[cols_show].style.map(color_estado, subset=['Estado']),
+                use_container_width=True,
+                height=400
+            )
+
+            # 5. Descargar Excel
+            excel_data = generar_excel_profesional(df_res, kpis)
             
-            with c_s:
-                if g_client:
+            c_down, c_save = st.columns(2)
+            with c_down:
+                st.download_button(
+                    label="💾 Descargar Reporte Conciliación (.xlsx)",
+                    data=excel_data,
+                    file_name=f"Conciliacion_Auditor_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary"
+                )
+            
+            with c_save:
+                if g_client and st.button("☁️ Guardar en Nube (Google Drive)"):
                     try:
                         sh = g_client.open_by_url(st.secrets["google_sheets"]["sheet_url"])
                         ws = sh.worksheet(st.secrets["google_sheets"]["tab_bancos_master"])
                         ws.clear()
-                        df_save = df_resultado.copy()
+                        # Formato string para fechas
+                        df_save = df_res.copy().fillna('')
                         for c in df_save.select_dtypes(['datetime']): df_save[c] = df_save[c].astype(str)
-                        df_save = df_save.fillna('')
                         set_with_dataframe(ws, df_save)
-                        st.success("Guardado en Nube.")
-                    except: pass
+                        st.success("¡Datos sincronizados con éxito!")
+                    except Exception as e:
+                        st.error(f"Error subiendo a nube: {e}")
 
 if __name__ == "__main__":
     main()
