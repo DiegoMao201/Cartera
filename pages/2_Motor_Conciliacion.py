@@ -1,6 +1,6 @@
 # ======================================================================================
 # ARCHIVO: pages/2_Motor_Conciliacion.py
-# (Versión ENTERPRISE - v4.0 - El Sabueso de Abonos)
+# (Versión v5.0 - Carga Manual de Planilla Pereira + Corrección NaT)
 # ======================================================================================
 
 import streamlit as st
@@ -14,89 +14,37 @@ from fuzzywuzzy import fuzz, process
 import gspread
 from gspread_dataframe import set_with_dataframe
 from oauth2client.service_account import ServiceAccountCredentials
-import logging
 import openpyxl 
-import time
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(
-    page_title="Motor de Conciliación Avanzado",
-    page_icon="🕵️‍♂️",
-    layout="wide"
-)
-
-# --- ESTILOS CSS ---
-PALETA = {
-    "azul_banco": "#003865",
-    "gris_fondo": "#F0F2F6",
-    "amarillo_alerta": "#FFC300"
-}
-st.markdown(f"""
-<style>
-    .stApp {{ background-color: {PALETA['gris_fondo']}; }}
-    .stMetric {{ background-color: white; border-left: 5px solid {PALETA['azul_banco']}; }}
-    div[data-testid="stExpander"] details summary {{ font-weight: bold; font-size: 1.1em; }}
-</style>
-""", unsafe_allow_html=True)
+st.set_page_config(page_title="Motor Conciliación Pereira", page_icon="🏦", layout="wide")
 
 # ======================================================================================
-# --- 1. UTILIDADES Y CONEXIONES (INFRAESTRUCTURA) ---
+# --- 1. CONEXIONES Y UTILIDADES ---
 # ======================================================================================
-
-@st.cache_data
-def df_to_excel(df):
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Conciliacion_Master')
-    return output.getvalue()
-
-def normalizar_texto_avanzado(texto):
-    """Limpieza profunda para el motor de inteligencia (Sabueso)."""
-    if not isinstance(texto, str): return ""
-    texto = texto.upper().strip()
-    # Normalización unicode
-    texto = ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn')
-    # Dejamos solo letras y números (quitamos puntuación que estorba al regex)
-    texto = re.sub(r'[^A-Z0-9\s]', ' ', texto) 
-    # Palabras irrelevantes para el match de nombre (Stop Words)
-    palabras_basura = [
-        'PAGO', 'TRANSF', 'TRANSFERENCIA', 'CONSIGNACION', 'ABONO', 'CTA', 'AHORROS', 
-        'CORRIENTE', 'SUC', 'VIRTUAL', 'APP', 'NEQUI', 'DAVIPLATA', 'ACH', 'PSE', 'NIT', 
-        'REF', 'FACTURA', 'VALOR', 'SALDO'
-    ]
-    for p in palabras_basura:
-        texto = re.sub(r'\b' + p + r'\b', '', texto)
-    return ' '.join(texto.split())
-
-def extraer_posibles_nits(texto):
-    """Busca secuencias numéricas que parecen NITs (7 a 11 dígitos)."""
-    if not isinstance(texto, str): return []
-    # Regex: \b indica límite de palabra, \d{7,11} busca entre 7 y 11 dígitos seguidos
-    return re.findall(r'\b\d{7,11}\b', texto)
-
-# --- CONEXIONES ---
 
 @st.cache_resource
 def get_dbx_client(secrets_key):
+    """Conexión a Dropbox solo para CARTERA (que dijiste que sí está ahí)."""
     try:
+        if secrets_key not in st.secrets: return None
         creds = st.secrets[secrets_key]
         return dropbox.Dropbox(
             app_key=creds["app_key"],
             app_secret=creds["app_secret"],
             oauth2_refresh_token=creds["refresh_token"]
         )
-    except Exception as e:
-        st.error(f"Error Dropbox ({secrets_key}): {e}")
-        return None
+    except: return None
 
 @st.cache_resource
 def connect_to_google_sheets():
+    """Conexión a G-Sheets para guardar el resultado maestro."""
     try:
         scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
         creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
         return gspread.authorize(creds)
     except Exception as e:
-        st.error(f"Error G-Sheets: {e}")
+        st.error(f"Error conectando a Google Sheets: {e}")
         return None
 
 def download_from_dropbox(dbx, path):
@@ -104,111 +52,127 @@ def download_from_dropbox(dbx, path):
         _, res = dbx.files_download(path)
         return res.content
     except Exception as e:
-        st.error(f"Error descargando {path}: {e}")
+        st.error(f"Error descargando {path} de Dropbox: {e}")
         return None
 
-def get_worksheet(client, url, tab_name):
-    try:
-        return client.open_by_url(url).worksheet(tab_name)
-    except Exception as e:
-        st.error(f"No se encontró la pestaña '{tab_name}' en el Sheet. {e}")
-        return None
+def df_to_excel(df):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Conciliacion')
+    return output.getvalue()
+
+def normalizar_texto_avanzado(texto):
+    if not isinstance(texto, str): return ""
+    texto = texto.upper().strip()
+    texto = ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn')
+    texto = re.sub(r'[^A-Z0-9\s]', ' ', texto) 
+    palabras_basura = ['PAGO', 'TRANSF', 'TRANSFERENCIA', 'CONSIGNACION', 'ABONO', 'CTA', 'NIT', 'REF', 'FACTURA']
+    for p in palabras_basura:
+        texto = re.sub(r'\b' + p + r'\b', '', texto)
+    return ' '.join(texto.split())
+
+def extraer_posibles_nits(texto):
+    if not isinstance(texto, str): return []
+    return re.findall(r'\b\d{7,11}\b', texto)
 
 # ======================================================================================
-# --- 2. CARGA DE DATOS (ETL - LECTURA INTELIGENTE) ---
+# --- 2. CARGA DE ARCHIVOS (AQUÍ ESTÁ LA MAGIA) ---
 # ======================================================================================
 
 @st.cache_data(ttl=600)
 def cargar_cartera():
-    """Carga cartera y calcula deuda total por cliente."""
+    """Carga la cartera desde Dropbox (Asumiendo que esta sí está configurada)."""
     dbx = get_dbx_client("dropbox")
+    if not dbx: 
+        st.warning("⚠️ No hay conexión a Dropbox configurada para Cartera.")
+        return pd.DataFrame()
+        
     content = download_from_dropbox(dbx, '/data/cartera_detalle.csv')
     if not content: return pd.DataFrame()
 
     try:
         df = pd.read_csv(StringIO(content.decode('latin-1')), sep='|', header=None)
-        # Asignar nombres según estructura conocida
-        if len(df.columns) >= 17:
-            df = df.iloc[:, :18] # Asegurar columnas
-            df.columns = [
-                'Serie', 'Numero', 'FechaDoc', 'FechaVenc', 'CodCliente', 'NombreCliente', 
-                'Nit', 'Poblacion', 'Provincia', 'Tel1', 'Tel2', 'Vendedor', 
-                'Autoriza', 'Email', 'Importe', 'Descuento', 'Cupo', 'DiasVenc'
-            ]
+        # Ajustamos a las primeras 18 columnas estándar
+        df = df.iloc[:, :18]
+        df.columns = [
+            'Serie', 'Numero', 'FechaDoc', 'FechaVenc', 'CodCliente', 'NombreCliente', 
+            'Nit', 'Poblacion', 'Provincia', 'Tel1', 'Tel2', 'Vendedor', 
+            'Autoriza', 'Email', 'Importe', 'Descuento', 'Cupo', 'DiasVenc'
+        ]
         
-        # Limpieza
         df['Importe'] = pd.to_numeric(df['Importe'], errors='coerce').fillna(0)
         df['Numero'] = pd.to_numeric(df['Numero'], errors='coerce').fillna(0)
-        # Ajuste signos negativos
         df.loc[df['Numero'] < 0, 'Importe'] *= -1
         
-        # NIT Normalizado (Clave para cruce)
         df['nit_norm'] = df['Nit'].astype(str).str.replace(r'[^0-9]', '', regex=True)
-        # Nombre Normalizado
         df['nombre_norm'] = df['NombreCliente'].apply(normalizar_texto_avanzado)
         
-        # Filtrar solo deuda positiva
-        df = df[df['Importe'] > 0].copy()
-        
-        return df
+        return df[df['Importe'] > 0].copy()
     except Exception as e:
-        st.error(f"Error procesando cartera: {e}")
+        st.error(f"Error leyendo cartera: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=600)
-def cargar_bancos_blue_headers(path_archivo):
+def cargar_planilla_pereira_desde_upload(uploaded_file):
     """
-    Carga el archivo con estructura de IMAGEN 3/4 (Encabezados Azules).
-    Busca columnas clave: FECHA, CUENTA, EMPRESA, VALOR.
+    Lee el archivo 'PLANILLA BANCOS PEREIRA' que subes manualmente.
+    Maneja el error NaT y busca encabezados azules.
     """
-    dbx = get_dbx_client("dropbox")
-    content = download_from_dropbox(dbx, path_archivo)
-    if not content: return pd.DataFrame()
-
     try:
-        # Intentamos leer. A veces los headers no están en la fila 0.
-        # Leemos primeras filas para detectar donde empiezan los headers azules
-        df_preview = pd.read_excel(BytesIO(content), nrows=10, header=None)
+        # 1. Detectar encabezados automáticamente
+        # Leemos las primeras 10 filas para buscar dónde dice "FECHA" y "VALOR"
+        df_preview = pd.read_excel(uploaded_file, nrows=10, header=None)
+        header_idx = 0
+        found = False
         
-        header_row_idx = 0
         for idx, row in df_preview.iterrows():
-            row_str = row.astype(str).str.upper().values
-            if 'FECHA' in row_str and 'VALOR' in row_str:
-                header_row_idx = idx
+            row_vals = row.astype(str).str.upper().values
+            if 'FECHA' in row_vals and 'VALOR' in row_vals:
+                header_idx = idx
+                found = True
                 break
         
-        # Leemos de nuevo con el header correcto
-        df = pd.read_excel(BytesIO(content), header=header_row_idx)
-        
-        # Normalizar nombres de columnas (strip y upper)
-        df.columns = [str(c).strip().upper() for c in df.columns]
-        
-        # Validar columnas críticas
-        cols_requeridas = ['FECHA', 'VALOR']
-        if not all(col in df.columns for col in cols_requeridas):
-            st.error(f"El archivo no tiene columnas FECHA y VALOR. Columnas detectadas: {list(df.columns)}")
+        if not found:
+            st.error("❌ No encontré las columnas 'FECHA' y 'VALOR' en las primeras 10 filas.")
             return pd.DataFrame()
 
-        # Limpieza de datos
+        # 2. Leer archivo real desde la fila detectada
+        # Importante: Volvemos al inicio del archivo
+        uploaded_file.seek(0) 
+        df = pd.read_excel(uploaded_file, header=header_idx)
+        
+        # Normalizar columnas
+        df.columns = [str(c).strip().upper() for c in df.columns]
+        
+        # 3. CORRECCIÓN ERROR NaT (CRÍTICO)
+        # Convertimos fecha, forzando errores a NaT (Not a Time)
         df['FECHA'] = pd.to_datetime(df['FECHA'], errors='coerce')
+        # Convertimos valor
         df['VALOR'] = pd.to_numeric(df['VALOR'], errors='coerce').fillna(0)
         
-        # --- CREACIÓN DE LA SÚPER COLUMNA DE RASTREO (SABUESO) ---
-        # Concatenamos todas las columnas de texto que puedan tener pistas (Imagen 4 muestra CUENTA y EMPRESA)
-        cols_pistas = ['SUCURSAL BANCO', 'TIPO DE TRANSACCION', 'CUENTA', 'EMPRESA', 'DESTINO', 'BANCO REFRENCIA INTERNA']
+        # Eliminamos filas que sean basura (donde no hay fecha válida)
+        df = df.dropna(subset=['FECHA'])
         
-        df['texto_completo_pistas'] = ''
-        for col in cols_pistas:
+        # 4. Crear columna de análisis (SABUESO)
+        cols_clave = ['SUCURSAL BANCO', 'TIPO DE TRANSACCION', 'CUENTA', 'EMPRESA', 'DESTINO']
+        df['texto_analisis'] = ''
+        for col in cols_clave:
             if col in df.columns:
-                df['texto_completo_pistas'] += df[col].fillna('').astype(str) + ' '
+                df['texto_analisis'] += df[col].fillna('').astype(str) + ' '
+                
+        df['texto_norm'] = df['texto_analisis'].apply(normalizar_texto_avanzado)
+
+        # 5. Crear ID Seguro (Corrección del error strftime)
+        def safe_id(row):
+            try:
+                # Si la fecha es NaT, ponemos un placeholder
+                f_str = row['FECHA'].strftime('%Y%m%d') if pd.notnull(row['FECHA']) else "00000000"
+                return f"MOV-{f_str}-{int(row['VALOR'])}-{row.name}"
+            except:
+                return f"MOV-ERR-{row.name}"
+
+        df['id_unico'] = df.apply(safe_id, axis=1)
         
-        # Normalizamos para búsqueda
-        df['texto_analisis'] = df['texto_completo_pistas'].apply(normalizar_texto_avanzado)
-        
-        # ID Único para trazabilidad
-        df['id_unico'] = df.apply(lambda x: f"MOV-{x['FECHA'].strftime('%Y%m%d')}-{int(x['VALOR'])}-{x.name}", axis=1)
-        
-        # Inicializar estados
+        # Inicializar columnas de resultado
         df['Estado'] = 'Pendiente'
         df['Cliente_Identificado'] = ''
         df['NIT_Encontrado'] = ''
@@ -217,226 +181,174 @@ def cargar_bancos_blue_headers(path_archivo):
         return df
 
     except Exception as e:
-        st.error(f"Error crítico leyendo archivo de bancos: {e}")
+        st.error(f"Error leyendo el archivo Excel: {e}")
         return pd.DataFrame()
 
 # ======================================================================================
-# --- 3. EL CEREBRO DEL SABUESO (LOGICA DE CONCILIACIÓN) ---
+# --- 3. MOTOR INTELIGENTE (SABUESO) ---
 # ======================================================================================
 
-def motor_sabueso_conciliacion(df_bancos, df_cartera, df_kb):
-    """
-    Núcleo de inteligencia artificial para encontrar pagadores.
-    """
-    st.write("🕵️‍♂️ **Iniciando el Sabueso... Escaneando descripciones, cuentas y valores...**")
+def ejecutar_motor(df_bancos, df_cartera, df_kb):
+    st.info("🏃‍♂️ Ejecutando motor de identificación...")
     
-    # 1. PREPARACIÓN DE MAPAS (Para velocidad extrema)
-    # Mapa: NIT -> Nombre Cliente
-    mapa_nit_cliente = df_cartera.groupby('nit_norm')['NombreCliente'].first().to_dict()
-    # Mapa: NIT -> Deuda Total (Suma de Importes)
-    mapa_deuda_total = df_cartera.groupby('nit_norm')['Importe'].sum().to_dict()
-    # Lista de nombres para búsqueda difusa
-    lista_nombres_unicos = df_cartera['nombre_norm'].unique().tolist()
+    # Preparar mapas de búsqueda rápida
+    mapa_nit_nombre = df_cartera.groupby('nit_norm')['NombreCliente'].first().to_dict()
+    mapa_nit_deuda = df_cartera.groupby('nit_norm')['Importe'].sum().to_dict()
+    lista_nombres = df_cartera['nombre_norm'].unique().tolist()
     
-    # Mapa: Memoria del Robot (Base de Conocimiento G-Sheets)
-    memoria_robot = {}
+    # Memoria KB
+    memoria = {}
     if not df_kb.empty:
-        # Asumimos KB tiene: 'texto_clave', 'nit_asociado'
         for _, row in df_kb.iterrows():
-            k = str(row.get('texto_banco_norm', '')).strip()
-            v = str(row.get('nit_cliente', '')).strip()
-            if k and v: memoria_robot[k] = v
+            k = str(row.get('texto_banco_norm','')).strip()
+            v = str(row.get('nit_cliente','')).strip()
+            if k and v: memoria[k] = v
 
     resultados = []
     
-    # Barra de progreso visual
-    progreso = st.progress(0)
-    total_filas = len(df_bancos)
-
-    # 2. ITERACIÓN (Fila por fila del banco)
-    for idx, row in df_bancos.iterrows():
-        progreso.progress((idx + 1) / total_filas)
+    bar = st.progress(0)
+    total = len(df_bancos)
+    
+    for i, row in df_bancos.iterrows():
+        bar.progress((i+1)/total)
         
-        # Datos actuales
-        texto_analisis = row['texto_analisis']
-        valor_pago = row['VALOR']
-        posibles_nits = extraer_posibles_nits(row['texto_completo_pistas'])
-        
-        info_match = {
-            'Estado': 'Pendiente',
-            'Cliente_Identificado': '',
+        res = {
+            'Estado': 'Pendiente', 
+            'Cliente_Identificado': '', 
             'NIT_Encontrado': '',
             'Tipo_Hallazgo': '',
-            'Diferencia_Valor': 0
+            'Diferencia_Deuda': 0
         }
         
-        match_found = False
-
-        # --- NIVEL 0: MEMORIA DEL ROBOT (APRENDIZAJE PREVIO) ---
-        # Buscamos si alguna palabra clave o cuenta ya está en memoria
-        # Esto cubre casos como "CUENTA 91200..." -> "VICTORIA PLAZA"
-        for clave_memoria in memoria_robot:
-            if clave_memoria in texto_analisis:
-                nit_mem = memoria_robot[clave_memoria]
-                if nit_mem in mapa_nit_cliente:
-                    info_match['Cliente_Identificado'] = mapa_nit_cliente[nit_mem]
-                    info_match['NIT_Encontrado'] = nit_mem
-                    info_match['Tipo_Hallazgo'] = "0. Memoria (Aprendizaje)"
-                    match_found = True
+        txt = row['texto_norm']
+        val = row['VALOR']
+        match = False
+        
+        # 1. Memoria
+        for k_mem in memoria:
+            if k_mem in txt:
+                nit = memoria[k_mem]
+                if nit in mapa_nit_nombre:
+                    res['NIT_Encontrado'] = nit
+                    res['Cliente_Identificado'] = mapa_nit_nombre[nit]
+                    res['Tipo_Hallazgo'] = '0. Memoria'
+                    match = True
                     break
         
-        # --- NIVEL 1: BÚSQUEDA DE NITS OCULTOS (REGEX) ---
-        if not match_found:
-            for nit_candidato in posibles_nits:
-                if nit_candidato in mapa_nit_cliente:
-                    info_match['Cliente_Identificado'] = mapa_nit_cliente[nit_candidato]
-                    info_match['NIT_Encontrado'] = nit_candidato
-                    info_match['Tipo_Hallazgo'] = f"1. NIT Detectado ({nit_candidato})"
-                    match_found = True
+        # 2. NIT en Texto
+        if not match:
+            nits_txt = extraer_posibles_nits(row['texto_analisis'])
+            for n in nits_txt:
+                if n in mapa_nit_nombre:
+                    res['NIT_Encontrado'] = n
+                    res['Cliente_Identificado'] = mapa_nit_nombre[n]
+                    res['Tipo_Hallazgo'] = f'1. NIT Detectado ({n})'
+                    match = True
                     break
         
-        # --- NIVEL 2: BÚSQUEDA POR NOMBRE (FUZZY) ---
-        # Solo si el texto es lo suficientemente largo
-        if not match_found and len(texto_analisis) > 5:
-            match_nombre, score = process.extractOne(texto_analisis, lista_nombres_unicos, scorer=fuzz.partial_ratio)
-            if score >= 85: # Umbral alto para seguridad
-                # Recuperar NIT del nombre
-                nit_fuzzy = df_cartera[df_cartera['nombre_norm'] == match_nombre]['nit_norm'].iloc[0]
-                nombre_real = mapa_nit_cliente.get(nit_fuzzy, match_nombre)
-                
-                info_match['Cliente_Identificado'] = nombre_real
-                info_match['NIT_Encontrado'] = nit_fuzzy
-                info_match['Tipo_Hallazgo'] = f"2. Nombre Similar ({score}%)"
-                match_found = True
-
-        # --- NIVEL 3: ANÁLISIS FINANCIERO (ABONO VS PAGO TOTAL) ---
-        if match_found:
-            nit_final = info_match['NIT_Encontrado']
-            deuda_cliente = mapa_deuda_total.get(nit_final, 0)
-            diff = deuda_cliente - valor_pago
-            info_match['Diferencia_Valor'] = diff
+        # 3. Nombre Fuzzy
+        if not match and len(txt) > 4:
+            found_name, score = process.extractOne(txt, lista_nombres, scorer=fuzz.partial_ratio)
+            if score >= 85:
+                nit = df_cartera[df_cartera['nombre_norm'] == found_name]['nit_norm'].iloc[0]
+                res['NIT_Encontrado'] = nit
+                res['Cliente_Identificado'] = mapa_nit_nombre.get(nit, found_name)
+                res['Tipo_Hallazgo'] = f'2. Nombre Similar ({score}%)'
+                match = True
+        
+        # 4. Clasificación Financiera
+        if match:
+            nit = res['NIT_Encontrado']
+            deuda = mapa_nit_deuda.get(nit, 0)
+            diff = deuda - val
+            res['Diferencia_Deuda'] = diff
             
-            # Lógica de Negocio:
-            if abs(diff) < 2000: # Margen de error pequeño ($2000 pesos)
-                info_match['Estado'] = "CONCILIADO - PAGO TOTAL"
-            elif valor_pago < deuda_cliente:
-                info_match['Estado'] = "CONCILIADO - ABONO A CARTERA"
-            elif valor_pago > deuda_cliente:
-                info_match['Estado'] = "REVISAR - PAGO MAYOR A DEUDA"
+            if abs(diff) < 2000:
+                res['Estado'] = 'CONCILIADO - PAGO TOTAL'
+            elif val < deuda:
+                res['Estado'] = 'CONCILIADO - ABONO'
             else:
-                info_match['Estado'] = "IDENTIFICADO"
+                res['Estado'] = 'REVISAR - PAGO MAYOR A DEUDA'
         
-        # Guardamos resultado
-        row_res = row.to_dict()
-        row_res.update(info_match)
-        resultados.append(row_res)
-
+        # Unir datos
+        full_row = row.to_dict()
+        full_row.update(res)
+        resultados.append(full_row)
+        
     return pd.DataFrame(resultados)
 
 # ======================================================================================
-# --- 4. INTERFAZ GRÁFICA (FRONTEND STREAMLIT) ---
+# --- 4. INTERFAZ PRINCIPAL ---
 # ======================================================================================
 
-def main_app():
-    st.title("🏦 Sistema Maestro de Conciliación Bancaria")
-    st.markdown("""
-    Este sistema utiliza **Inteligencia de Datos** para leer extractos bancarios crudos, 
-    buscar NITs escondidos en columnas de texto, y cruzar con cartera para identificar 
-    Pagos Totales y Abonos.
-    """)
+def main():
+    st.title("🏦 Conciliación Bancaria - Planilla Pereira")
     
-    # Tabs principales
-    tab_admin, tab_usuario, tab_resultados = st.tabs(["⚙️ Panel Admin (Batch)", "👤 Asignación Manual", "📊 Reportes"])
+    # PESTAÑA ÚNICA Y CLARA
+    st.markdown("### Paso 1: Carga de Archivos")
     
-    # --- TAB 1: ADMIN (BATCH RUN) ---
-    with tab_admin:
-        st.header("Ejecución del Motor (Batch)")
-        st.info("Este proceso lee 'planilla_bancos.xlsx' (Encabezados Azules) y 'cartera_detalle.csv' de Dropbox.")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("1. Archivo del Banco (Crudo)")
+        uploaded_file = st.file_uploader("Arrastra aquí 'PLANILLA BANCOS PEREIRA.xlsx'", type=["xlsx"])
+    
+    with col2:
+        st.subheader("2. Cartera (Desde Dropbox)")
+        if st.button("🔄 Cargar Cartera"):
+            with st.spinner("Descargando cartera..."):
+                df_c = cargar_cartera()
+                if not df_c.empty:
+                    st.session_state['df_cartera'] = df_c
+                    st.success(f"Cartera cargada: {len(df_c)} facturas.")
+                else:
+                    st.error("No se pudo cargar la cartera.")
+    
+    # VALIDACIÓN DE ESTADO
+    if uploaded_file and 'df_cartera' in st.session_state:
+        st.divider()
+        st.markdown("### Paso 2: Ejecución")
         
-        if st.button("🚀 INICIAR CONCILIACIÓN AUTOMÁTICA", type="primary"):
+        if st.button("🚀 EJECUTAR MOTOR (SABUESO)", type="primary"):
+            # 1. Leer Banco
+            df_bancos = cargar_planilla_pereira_desde_upload(uploaded_file)
             
-            # 1. Cargar Datos
-            with st.spinner("Leyendo Cartera y Extractos Bancarios..."):
-                df_cartera = cargar_cartera()
-                path_bancos = st.secrets["dropbox"]["path_bancos"] # Asegúrate que esto apunte al archivo azul
-                df_bancos = cargar_bancos_blue_headers(path_bancos)
-            
-            if df_cartera.empty or df_bancos.empty:
-                st.error("Fallo en la carga de archivos. Revisa logs.")
-                st.stop()
+            if not df_bancos.empty:
+                st.info(f"Leídos {len(df_bancos)} movimientos del banco.")
                 
-            st.success(f"Datos cargados: {len(df_bancos)} movimientos bancarios, {len(df_cartera)} facturas en cartera.")
-
-            # 2. Cargar Conocimiento (G-Sheets)
-            g_client = connect_to_google_sheets()
-            ws_kb = get_worksheet(g_client, st.secrets["google_sheets"]["sheet_url"], st.secrets["google_sheets"]["tab_knowledge_base"])
-            df_kb = pd.DataFrame(ws_kb.get_all_records()) if ws_kb else pd.DataFrame()
-
-            # 3. Ejecutar Sabueso
-            df_resultado = motor_sabueso_conciliacion(df_bancos, df_cartera, df_kb)
-            
-            # 4. Guardar en G-Sheet Master
-            with st.spinner("Guardando resultados en la Nube (Bancos_Master)..."):
-                ws_master = get_worksheet(g_client, st.secrets["google_sheets"]["sheet_url"], st.secrets["google_sheets"]["tab_bancos_master"])
-                if ws_master:
-                    ws_master.clear()
-                    # Convertir fechas a string para GSheets
-                    df_save = df_resultado.copy()
-                    for c in df_save.select_dtypes(include=['datetime']):
-                        df_save[c] = df_save[c].astype(str)
-                    df_save = df_save.fillna('')
-                    set_with_dataframe(ws_master, df_save)
-                    st.balloons()
-                    st.success("¡Conciliación Finalizada y Guardada!")
-
-    # --- TAB 2: USUARIO (MANUAL) ---
-    with tab_usuario:
-        st.header("Asignación de Pendientes")
-        
-        if st.button("🔄 Cargar Pendientes"):
-            g_client = connect_to_google_sheets()
-            ws_master = get_worksheet(g_client, st.secrets["google_sheets"]["sheet_url"], st.secrets["google_sheets"]["tab_bancos_master"])
-            if ws_master:
-                df_master = pd.DataFrame(ws_master.get_all_records())
-                # Filtrar pendientes
-                df_pendientes = df_master[df_master['Estado'] == 'Pendiente']
-                st.session_state['pendientes'] = df_pendientes
-                st.session_state['data_loaded'] = True
-        
-        if st.session_state.get('data_loaded'):
-            df_p = st.session_state['pendientes']
-            st.metric("Movimientos Pendientes", len(df_p))
-            
-            if not df_p.empty:
-                pago_sel = st.selectbox("Seleccionar Movimiento", df_p['descripcion_banco'] + " - $" + df_p['VALOR'].astype(str))
-                # (Aquí iría la lógica de asignación manual con escritura en KB - igual que en v3)
-                st.info("Funcionalidad de asignación manual lista para conectar.")
-
-    # --- TAB 3: REPORTES (TU IMAGEN 2) ---
-    with tab_resultados:
-        st.header("Planilla Bancos Consolidada")
-        st.write("Descarga el archivo idéntico a tu formato deseado (Imagen 2).")
-        
-        # Botón para descargar lo que hay en G-Sheet Master formateado
-        if st.button("📥 Generar Excel Consolidado"):
-            g_client = connect_to_google_sheets()
-            ws_master = get_worksheet(g_client, st.secrets["google_sheets"]["sheet_url"], st.secrets["google_sheets"]["tab_bancos_master"])
-            if ws_master:
-                df_final = pd.DataFrame(ws_master.get_all_records())
+                # 2. Leer KB (Opcional)
+                g_client = connect_to_google_sheets()
+                df_kb = pd.DataFrame()
+                if g_client:
+                    try:
+                        ws = g_client.open_by_url(st.secrets["google_sheets"]["sheet_url"]).worksheet(st.secrets["google_sheets"]["tab_knowledge_base"])
+                        df_kb = pd.DataFrame(ws.get_all_records())
+                    except: pass
                 
-                # Filtrar y ordenar columnas para que se vea como Imagen 2
-                cols_deseadas = ['FECHA', 'Cliente_Identificado', 'Tipo_Hallazgo', 'Estado', 'VALOR', 'texto_completo_pistas']
-                # Asegurar que existan
-                cols_existentes = [c for c in cols_deseadas if c in df_final.columns]
+                # 3. Motor
+                df_resultado = ejecutar_motor(df_bancos, st.session_state['df_cartera'], df_kb)
                 
-                excel_bytes = df_to_excel(df_final[cols_existentes])
+                # 4. Mostrar Resultados
+                st.success("¡Conciliación Terminada!")
+                st.dataframe(df_resultado[['FECHA', 'VALOR', 'descripcion_banco', 'Cliente_Identificado', 'Estado', 'Tipo_Hallazgo']])
                 
-                st.download_button(
-                    label="Descargar Planilla Pereira.xlsx",
-                    data=excel_bytes,
-                    file_name="Planilla_Bancos_Pereira_Consolidada.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                # 5. Guardar Master
+                if g_client:
+                    try:
+                        ws_master = g_client.open_by_url(st.secrets["google_sheets"]["sheet_url"]).worksheet(st.secrets["google_sheets"]["tab_bancos_master"])
+                        ws_master.clear()
+                        # Limpieza para GSheets
+                        df_save = df_resultado.copy()
+                        for c in df_save.select_dtypes(['datetime']): df_save[c] = df_save[c].astype(str)
+                        df_save = df_save.fillna('')
+                        set_with_dataframe(ws_master, df_save)
+                        st.toast("Guardado en Google Sheets 'Bancos_Master'")
+                    except Exception as e:
+                        st.warning(f"No se pudo guardar en GSheets: {e}")
+                
+                # 6. Descargar
+                excel = df_to_excel(df_resultado)
+                st.download_button("📥 Descargar Planilla Consolidada", excel, "Planilla_Pereira_Identificada.xlsx")
 
-if __name__ == '__main__':
-    main_app()
+if __name__ == "__main__":
+    main()
