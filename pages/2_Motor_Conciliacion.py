@@ -330,7 +330,7 @@ def main():
                 
                 # 4. Mostrar Resultados
                 st.success("¡Conciliación Terminada!")
-                st.dataframe(df_resultado[['FECHA', 'VALOR', 'descripcion_banco', 'Cliente_Identificado', 'Estado', 'Tipo_Hallazgo']])
+                st.dataframe(df_resultado[['FECHA', 'VALOR', 'texto_analisis', 'Cliente_Identificado', 'Estado', 'Tipo_Hallazgo']])
                 
                 # 5. Guardar Master
                 if g_client:
