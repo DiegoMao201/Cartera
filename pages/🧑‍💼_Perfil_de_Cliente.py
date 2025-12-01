@@ -1,7 +1,8 @@
 # ======================================================================================
-# ARCHIVO: pages/1_Cobranza_Estrategica.py
-# DESCRIPCIÓN: Centro de Comando para Gestión de Cobranza Inteligente y Prioritaria
+# ARCHIVO: pages/1_🚀_Estrategia_Cobranza.py
+# VERSIÓN: FINAL CORREGIDA (Sin errores de duplicados ni imports)
 # ======================================================================================
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -9,363 +10,368 @@ import plotly.graph_objects as go
 from io import BytesIO, StringIO
 import dropbox
 import glob
+import unicodedata
+import re
+from datetime import datetime
+from urllib.parse import quote  # <--- IMPORTANTE: Necesario para los links de WhatsApp
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
-from openpyxl.formatting.rule import DataBarRule, IconSetRule, ColorScaleRule
 from openpyxl.worksheet.table import Table, TableStyleInfo
-import unicodedata
-import re
+from openpyxl.formatting.rule import ColorScaleRule, CellIsRule
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(
-    page_title="Gestión Estratégica de Cobranza",
-    page_icon="👮‍♂️",
-    layout="wide"
-)
+st.set_page_config(page_title="War Room Cobranza", page_icon="🚀", layout="wide")
 
-# --- PALETA DE COLORES (Coherente con Principal) ---
-COLORS = {
-    "nav": "#003865",
-    "action": "#D32F2F",    # Rojo Urgente
-    "warning": "#F57C00",   # Naranja Alerta
-    "safe": "#388E3C",      # Verde Seguro
-    "neutral": "#F0F2F6",
-    "text": "#31333F"
-}
-
-st.markdown(f"""
+# --- ESTILOS CSS ---
+st.markdown("""
 <style>
-    .stMetric {{ background-color: #FFFFFF; border-radius: 8px; padding: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); border-left: 5px solid {COLORS['nav']}; }}
-    h1, h2, h3 {{ color: {COLORS['nav']}; }}
-    .big-number {{ font-size: 24px; font-weight: bold; color: {COLORS['action']}; }}
-    .action-card {{ background-color: #FFF3E0; padding: 20px; border-radius: 10px; border: 1px solid {COLORS['warning']}; margin-bottom: 20px; }}
-    .priority-high {{ color: #D32F2F; font-weight: bold; }}
+    .stApp { background-color: #F8F9FA; }
+    div.stMetric { background-color: #FFFFFF; border: 1px solid #E0E0E0; border-radius: 8px; padding: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+    .big-font { font-size: 18px !important; font-weight: bold; color: #333; }
+    .action-call { background-color: #FFEBEE; color: #C62828; padding: 4px 8px; border-radius: 4px; font-weight: bold; }
+    .action-email { background-color: #E3F2FD; color: #1565C0; padding: 4px 8px; border-radius: 4px; font-weight: bold; }
+    .button-wa { text-decoration: none; background-color: #25D366; color: white; padding: 8px 15px; border-radius: 5px; font-weight: bold; display: inline-block; }
 </style>
 """, unsafe_allow_html=True)
 
 # ======================================================================================
-# --- LÓGICA DE CARGA DE DATOS (Reutilizada y Optimizada) ---
+# --- 1. LÓGICA DE CARGA DE DATOS (ROBUSTA Y SIN ERRORES) ---
 # ======================================================================================
+
+def normalizar_nombre(nombre: str) -> str:
+    if not isinstance(nombre, str): return ""
+    nombre = nombre.upper().strip().replace('.', '')
+    nombre = ''.join(c for c in unicodedata.normalize('NFD', nombre) if unicodedata.category(c) != 'Mn')
+    return ' '.join(nombre.split())
 
 @st.cache_data(ttl=600)
-def cargar_datos_inteligentes():
-    # 1. Intentar Cargar Dropbox
-    df_dropbox = pd.DataFrame()
+def cargar_datos_maestros():
+    """Carga datos de Dropbox y Locales, limpiando duplicados para evitar errores."""
+    df_final = pd.DataFrame()
+    
+    # 1. Intentar Dropbox
     try:
-        APP_KEY = st.secrets["dropbox"]["app_key"]
-        APP_SECRET = st.secrets["dropbox"]["app_secret"]
-        REFRESH_TOKEN = st.secrets["dropbox"]["refresh_token"]
-        with dropbox.Dropbox(app_key=APP_KEY, app_secret=APP_SECRET, oauth2_refresh_token=REFRESH_TOKEN) as dbx:
-            _, res = dbx.files_download(path='/data/cartera_detalle.csv')
-            df_dropbox = pd.read_csv(StringIO(res.content.decode('latin-1')), header=None, sep='|', engine='python')
-            df_dropbox.columns = [
-                'Serie', 'Numero', 'Fecha Documento', 'Fecha Vencimiento', 'Cod Cliente',
-                'NombreCliente', 'Nit', 'Poblacion', 'Provincia', 'Telefono1', 'Telefono2',
-                'NomVendedor', 'Entidad Autoriza', 'E-Mail', 'Importe', 'Descuento',
-                'Cupo Aprobado', 'Dias Vencido'
-            ]
-    except Exception:
-        pass # Fallo silencioso, intentamos locales
+        if "dropbox" in st.secrets:
+            APP_KEY = st.secrets["dropbox"]["app_key"]
+            APP_SECRET = st.secrets["dropbox"]["app_secret"]
+            REFRESH_TOKEN = st.secrets["dropbox"]["refresh_token"]
+            
+            with dropbox.Dropbox(app_key=APP_KEY, app_secret=APP_SECRET, oauth2_refresh_token=REFRESH_TOKEN) as dbx:
+                # Descarga el archivo
+                _, res = dbx.files_download(path='/data/cartera_detalle.csv')
+                csv_content = res.content.decode('latin-1')
+                
+                # Nombres de columnas fijos para evitar confusiones
+                nombres_cols = ['Serie', 'Numero', 'Fecha Documento', 'Fecha Vencimiento', 'Cod Cliente',
+                                'NombreCliente', 'Nit', 'Poblacion', 'Provincia', 'Telefono1', 'Telefono2',
+                                'NomVendedor', 'Entidad Autoriza', 'E-Mail', 'Importe', 'Descuento',
+                                'Cupo Aprobado', 'Dias Vencido']
+                
+                df_dropbox = pd.read_csv(StringIO(csv_content), header=None, names=nombres_cols, sep='|', engine='python')
+                df_final = pd.concat([df_final, df_dropbox])
+    except Exception as e:
+        # Si falla Dropbox, no detenemos el código, seguimos con locales
+        pass 
 
-    # 2. Intentar Cargar Locales
-    df_historico = pd.DataFrame()
+    # 2. Intentar Archivos Locales (Excel)
     archivos = glob.glob("Cartera_*.xlsx")
-    if archivos:
-        lista = []
-        for f in archivos:
-            try:
-                temp = pd.read_excel(f)
-                if not temp.empty and "Total" in str(temp.iloc[-1, 0]): temp = temp.iloc[:-1]
-                lista.append(temp)
-            except: pass
-        if lista: df_historico = pd.concat(lista, ignore_index=True)
+    for archivo in archivos:
+        try:
+            df_hist = pd.read_excel(archivo)
+            if not df_hist.empty:
+                # Eliminar fila de totales si existe
+                if "Total" in str(df_hist.iloc[-1, 0]): 
+                    df_hist = df_hist.iloc[:-1]
+                df_final = pd.concat([df_final, df_hist])
+        except Exception: 
+            pass
 
-    # 3. Consolidar
-    df = pd.concat([df_dropbox, df_historico], ignore_index=True)
+    if df_final.empty:
+        return pd.DataFrame()
+
+    # --- FASE DE LIMPIEZA CRÍTICA (Evita el TypeError) ---
+    
+    # 1. Normalizar nombres de columnas a minúsculas y sin espacios
+    df_final = df_final.rename(columns=lambda x: normalizar_nombre(x).lower().replace(' ', '_'))
+    
+    # 2. ELIMINAR COLUMNAS DUPLICADAS (Esta es la corrección clave)
+    # Si existen dos columnas llamadas 'importe', esto deja solo la primera.
+    df_final = df_final.loc[:, ~df_final.columns.duplicated()]
+    
+    # 3. Conversión de tipos segura
+    if 'importe' in df_final.columns:
+        df_final['importe'] = pd.to_numeric(df_final['importe'], errors='coerce').fillna(0)
+    else:
+        # Si no hay columna importe, creamos una vacía para que no falle
+        df_final['importe'] = 0
+
+    if 'dias_vencido' in df_final.columns:
+        df_final['dias_vencido'] = pd.to_numeric(df_final['dias_vencido'], errors='coerce').fillna(0)
+        
+    if 'fecha_vencimiento' in df_final.columns:
+        df_final['fecha_vencimiento'] = pd.to_datetime(df_final['fecha_vencimiento'], errors='coerce')
+    
+    # Filtro de notas crédito si existe la columna serie
+    if 'serie' in df_final.columns:
+        df_final = df_final[~df_final['serie'].astype(str).str.contains('W|X', case=False, na=False)]
+    
+    return df_final
+
+# ======================================================================================
+# --- 2. CEREBRO: MATRIZ DE RIESGO ---
+# ======================================================================================
+
+def aplicar_inteligencia_cobranza(df):
+    """Clasifica la cartera y asigna prioridades."""
     if df.empty: return pd.DataFrame()
 
-    # 4. Limpieza Rápida
-    df = df.loc[:, ~df.columns.duplicated()]
-    df.columns = [x.lower().replace(' ', '_') for x in df.columns]
-    df['importe'] = pd.to_numeric(df['importe'], errors='coerce').fillna(0)
-    df['dias_vencido'] = pd.to_numeric(df['dias_vencido'], errors='coerce').fillna(0)
-    df = df[~df['serie'].astype(str).str.contains('W|X', case=False, na=False)]
+    df = df.copy()
+    # Solo deuda positiva
+    df = df[df['importe'] > 0]
     
-    # Manejo de notas crédito
-    df.loc[df['numero'] < 0, 'importe'] = df.loc[df['numero'] < 0, 'importe'].abs() * -1
-    
-    return df
+    # Verificar columnas necesarias
+    cols_necesarias = ['nombrecliente', 'nit', 'nomvendedor', 'telefono1', 'e_mail']
+    for col in cols_necesarias:
+        if col not in df.columns:
+            df[col] = "Desconocido" # Rellenar si falta alguna columna
 
-# ======================================================================================
-# --- MOTOR DE INTELIGENCIA DE COBRANZA ---
-# ======================================================================================
-
-def segmentar_cartera(df):
-    """Aplica reglas de negocio para clasificar la deuda y sugerir acciones."""
-    df_calc = df.copy()
+    # Agrupar por Cliente
+    cliente_kpis = df.groupby(['nombrecliente', 'nit', 'nomvendedor', 'telefono1', 'e_mail']).agg({
+        'importe': 'sum',
+        'dias_vencido': 'max',  # Peor vencimiento
+        'numero': 'count'       # Cantidad facturas
+    }).reset_index()
     
-    # Solo nos interesa lo vencido para gestión activa, aunque mostramos todo
-    df_calc['es_vencido'] = df_calc['dias_vencido'] > 0
-    
-    def clasificar_riesgo(row):
-        dias = row['dias_vencido']
-        if dias <= 0: return "🟢 Al Día"
-        elif dias <= 30: return "🟡 Preventiva (0-30)"
-        elif dias <= 60: return "🟠 Administrativa (31-60)"
-        elif dias <= 120: return "🔴 Pre-Jurídica (61-120)"
-        else: return "⚫ Jurídica / Castigo (>120)"
-
-    def sugerir_accion(row):
+    # Reglas de Negocio
+    def determinar_accion(row):
         dias = row['dias_vencido']
         monto = row['importe']
         
-        if dias <= 0: return "Fidelización / Venta Cruzada"
-        if dias <= 15: return "Recordatorio Amable (WhatsApp)"
-        if dias <= 30: return "Llamada de Servicio + Confirmar Pago"
-        if dias <= 60: return "🚫 BLOQUEO DE CUPO + Llamada Firme"
-        if dias <= 90: return "⚠️ Carta Pre-Jurídica + Visita Comercial"
-        if dias <= 120: return "⚖️ Conciliación Urgente / Acuerdo de Pago"
-        
-        # Casos Extremos
-        if dias > 120 and monto > 1000000: return "💀 Traslado a Abogados / Cobro Jurídico"
-        if dias > 360: return "🗑️ Evaluar Castigo de Cartera"
-        return "Gestión Administrativa"
+        if dias > 90:
+            return "🔴 JURÍDICO / PRE-JURÍDICO"
+        elif dias > 60:
+            return "🟠 CONCILIACIÓN URGENTE"
+        elif dias > 30:
+            if monto > 5000000: return "🟡 GESTIÓN TELEFÓNICA (Prioridad)"
+            else: return "🟡 GESTIÓN ADMINISTRATIVA"
+        elif dias > 0:
+            return "🟢 RECORDATORIO AMABLE"
+        else:
+            return "🔵 AL DÍA / PREVENTIVO"
 
     def calcular_prioridad(row):
-        # Fórmula de Prioridad (0 a 100)
-        # Peso Días: 60%, Peso Monto: 40% (Normalizado logarítmicamente aprox)
+        # Score 0-100
         if row['dias_vencido'] <= 0: return 0
-        
-        score_dias = min(row['dias_vencido'], 180) / 180 * 60
-        score_monto = min(row['importe'], 10000000) / 10000000 * 40 
-        return score_dias + score_monto
+        score_dias = min(row['dias_vencido'], 120) / 1.2
+        score_monto = min(row['importe'] / 10000000, 1) * 100
+        return round((score_dias * 0.6) + (score_monto * 0.4), 1)
 
-    df_calc['Etapa'] = df_calc.apply(clasificar_riesgo, axis=1)
-    df_calc['Accion_Sugerida'] = df_calc.apply(sugerir_accion, axis=1)
-    df_calc['Score_Prioridad'] = df_calc.apply(calcular_prioridad, axis=1)
+    cliente_kpis['Accion_Sugerida'] = cliente_kpis.apply(determinar_accion, axis=1)
+    cliente_kpis['Score_Riesgo'] = cliente_kpis.apply(calcular_prioridad, axis=1)
     
-    return df_calc
+    return cliente_kpis.sort_values(by='Score_Riesgo', ascending=False)
 
-def generar_super_excel(df_filtrado):
-    """Genera un Excel visualmente rico con formato condicional y tablas."""
+# ======================================================================================
+# --- 3. EXCEL AVANZADO ---
+# ======================================================================================
+
+def generar_excel_estrategico(df_estrategico):
     output = BytesIO()
     wb = Workbook()
     ws = wb.active
-    ws.title = "Plan de Choque"
-
-    # Preparar datos para exportar
-    cols_export = [
-        'nombrecliente', 'nit', 'nomvendedor', 'telefono1', 
-        'Etapa', 'Accion_Sugerida', 'dias_vencido', 'Score_Prioridad', 'importe'
-    ]
+    ws.title = "Matriz de Cobro"
     
-    # Encabezados personalizados
-    headers = [
-        "Cliente", "NIT", "Vendedor Responsable", "Teléfono", 
-        "Etapa de Cobro", "ACCIÓN RECOMENDADA", "Días Vencido", "Nivel Prioridad (0-100)", "Deuda Total"
-    ]
-
-    # Escribir Encabezados
+    headers = ["Prioridad", "Cliente", "NIT", "Vendedor", "Teléfono", "Deuda Total", "Días Vencido (Max)", "# Facturas", "Acción Sugerida", "Score Riesgo"]
     ws.append(headers)
     
-    # Escribir Datos
-    # Agrupamos por factura o cliente? El usuario pidió gestión, mejor agrupar por Cliente
-    df_agrupado = df_filtrado.groupby(
-        ['nombrecliente', 'nit', 'nomvendedor', 'telefono1', 'Etapa', 'Accion_Sugerida']
-    ).agg({
-        'dias_vencido': 'max',
-        'Score_Prioridad': 'max',
-        'importe': 'sum'
-    }).reset_index().sort_values(by='Score_Prioridad', ascending=False)
-
-    for r in df_agrupado[cols_export].itertuples(index=False):
-        ws.append(list(r))
-
-    # --- FORMATO EXTRAORDINARIO ---
+    header_fill = PatternFill(start_color="1F2937", end_color="1F2937", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True)
     
-    # 1. Crear Tabla
-    max_row = ws.max_row
-    max_col = ws.max_column
-    tab = Table(displayName="TablaGestion", ref=f"A1:{get_column_letter(max_col)}{max_row}")
-    style = TableStyleInfo(name="TableStyleMedium9", showFirstColumn=False, showLastColumn=False, showRowStripes=True, showColumnStripes=False)
-    tab.tableStyleInfo = style
-    ws.add_table(tab)
+    for col_num, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_num)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center")
+        ws.column_dimensions[get_column_letter(col_num)].width = 20
+    ws.column_dimensions['B'].width = 40
 
-    # 2. Anchos de Columna
-    ws.column_dimensions['A'].width = 35 # Cliente
-    ws.column_dimensions['B'].width = 15 # NIT
-    ws.column_dimensions['C'].width = 25 # Vendedor
-    ws.column_dimensions['D'].width = 15 # Tel
-    ws.column_dimensions['E'].width = 20 # Etapa
-    ws.column_dimensions['F'].width = 35 # Accion
-    ws.column_dimensions['G'].width = 12 # Dias
-    ws.column_dimensions['H'].width = 15 # Score
-    ws.column_dimensions['I'].width = 18 # Importe
-
-    # 3. Formato Condicional: Barras de Datos para "Importe" (Columna I - 9)
-    data_bar_rule = DataBarRule(start_type='min', end_type='max', color="638EC6", showValue=True, minLength=None, maxLength=None)
-    ws.conditional_formatting.add(f"I2:I{max_row}", data_bar_rule)
+    for index, row in df_estrategico.iterrows():
+        ws.append([
+            index + 1,
+            str(row['nombrecliente']),
+            str(row['nit']),
+            str(row['nomvendedor']),
+            str(row['telefono1']),
+            row['importe'],
+            row['dias_vencido'],
+            row['numero'],
+            row['Accion_Sugerida'],
+            row['Score_Riesgo']
+        ])
     
-    # 4. Formato Condicional: Escala de Color para "Score Prioridad" (Columna H - 8)
-    color_scale_rule = ColorScaleRule(start_type='min', start_color='63BE7B', mid_type='percentile', mid_value=50, mid_color='FFEB84', end_type='max', end_color='F8696B')
-    ws.conditional_formatting.add(f"H2:H{max_row}", color_scale_rule)
-
-    # 5. Formato Condicional: Semáforo para Días Vencido (Columna G - 7)
-    icon_set_rule = IconSetRule(icon_style='3TrafficLights1', type='num', values=[0, 30, 60], showValue=None, percent=None, reverse=False)
-    ws.conditional_formatting.add(f"G2:G{max_row}", icon_set_rule)
-
-    # 6. Formato de Moneda
-    for cell in ws['I']:
-        cell.number_format = '"$"#,##0'
+    # Crear Tabla
+    filas = len(df_estrategico) + 1
+    if filas > 1:
+        tab = Table(displayName="TablaCobranza", ref=f"A1:J{filas}")
+        tab.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
+        ws.add_table(tab)
         
+        # Formatos
+        for r in range(2, filas + 1):
+            ws[f'F{r}'].number_format = '"$"#,##0' # Moneda
+        
+        # Escala de Color (Verde a Rojo en Días Vencido)
+        ws.conditional_formatting.add(f"G2:G{filas}", 
+            ColorScaleRule(start_type="num", start_value=0, start_color="63BE7B",
+                           mid_type="num", mid_value=45, mid_color="FFEB84",
+                           end_type="num", end_value=90, end_color="F8696B"))
+
     wb.save(output)
     return output.getvalue()
 
 # ======================================================================================
-# --- INTERFAZ DE USUARIO ---
+# --- 4. INTERFAZ GRÁFICA (MAIN) ---
 # ======================================================================================
 
 def main():
-    st.title("👮‍♂️ Centro de Comando: Cobranza Estratégica")
-    st.markdown("Identifica, prioriza y ejecuta acciones de recuperación de cartera de alto impacto.")
+    st.title("🚀 Central de Estrategia de Cobranza")
+    st.markdown("Analítica avanzada para la recuperación de cartera.")
+    
+    if st.button("🔄 Recargar Datos"):
+        st.cache_data.clear()
+        st.rerun()
 
-    if 'authentication_status' not in st.session_state or not st.session_state['authentication_status']:
-        st.error("⚠️ Por favor inicia sesión en la página principal primero.")
-        st.stop()
-
-    df_raw = cargar_datos_inteligentes()
+    # Cargar datos
+    df_raw = cargar_datos_maestros()
+    
     if df_raw.empty:
-        st.warning("No hay datos disponibles. Ve al Tablero Principal y recarga los datos.")
+        st.warning("No se encontraron datos. Verifique que los archivos estén cargados o la conexión a Dropbox.")
+        st.stop()
+        
+    # Procesar inteligencia
+    df_inteligente = aplicar_inteligencia_cobranza(df_raw)
+    
+    if df_inteligente.empty:
+        st.success("¡Excelente! No hay cartera vencida o datos pendientes por gestionar.")
         st.stop()
 
-    # --- PROCESAMIENTO ---
-    df_proc = segmentar_cartera(df_raw)
-    
-    # Filtros Globales (Sidebar)
-    with st.sidebar:
-        st.header("🎯 Filtros de Enfoque")
-        vendedor_filtro = st.selectbox("Vendedor", ["Todos"] + sorted(df_proc['nomvendedor'].dropna().unique().tolist()))
-        
-        if vendedor_filtro != "Todos":
-            df_proc = df_proc[df_proc['nomvendedor'] == vendedor_filtro]
-            
-        solo_vencido = st.checkbox("Ver SOLO Cartera Vencida", value=True)
-        if solo_vencido:
-            df_proc = df_proc[df_proc['dias_vencido'] > 0]
-
-    # --- KPI HEADER ---
+    # --- KPIs ---
     col1, col2, col3, col4 = st.columns(4)
+    total_riesgo = df_inteligente[df_inteligente['dias_vencido'] > 0]['importe'].sum()
+    critico_juridico = df_inteligente[df_inteligente['dias_vencido'] > 90]['importe'].sum()
+    clientes_gestion = df_inteligente[df_inteligente['dias_vencido'] > 0].shape[0]
     
-    total_gestion = df_proc['importe'].sum()
-    critico_df = df_proc[df_proc['Etapa'].str.contains('Pre-Jurídica|Jurídica')]
-    total_critico = critico_df['importe'].sum()
-    clientes_criticos = critico_df['nombrecliente'].nunique()
-    
-    col1.metric("Cartera a Gestionar (Filtro)", f"${total_gestion:,.0f}")
-    col2.metric("🚨 En Riesgo Alto (>60 días)", f"${total_critico:,.0f}", delta_color="inverse", delta="Prioridad Máxima")
-    col3.metric("Clientes en Riesgo Alto", f"{clientes_criticos}")
-    
-    # Mejor vendedor (el que menos debe) vs Peor (más debe) - Informativo
-    if not df_proc.empty:
-        grouped_v = df_proc.groupby('nomvendedor')['importe'].sum().sort_values()
-        col4.metric("Mayor Concentración", grouped_v.index[-1] if not grouped_v.empty else "N/A", f"${grouped_v.iloc[-1]:,.0f}")
+    # Obtener el top cliente de forma segura
+    top_deudor = "N/A"
+    if not df_inteligente.empty:
+        top_deudor = df_inteligente.iloc[0]['nombrecliente']
+
+    col1.metric("🔥 Total en Riesgo", f"${total_riesgo:,.0f}")
+    col2.metric("⚖️ Crítico (>90 días)", f"${critico_juridico:,.0f}")
+    col3.metric("👥 Clientes a Gestionar", f"{clientes_gestion}")
+    col4.metric("🚨 Prioridad #1", f"{str(top_deudor)[:15]}...")
 
     st.markdown("---")
 
-    # --- SECCIÓN 1: EL EMBUDO DE COBRANZA (Visualización Macro) ---
-    c1, c2 = st.columns([2, 1])
+    # --- GRÁFICOS ---
+    col_matrix, col_vendor = st.columns([2, 1])
     
-    with c1:
-        st.subheader("📡 Radar de Cartera por Etapas")
-        df_funnel = df_proc.groupby('Etapa')['importe'].sum().reset_index()
-        # Ordenar etapas lógicamente
-        orden_etapas = ["🟢 Al Día", "🟡 Preventiva (0-30)", "🟠 Administrativa (31-60)", "🔴 Pre-Jurídica (61-120)", "⚫ Jurídica / Castigo (>120)"]
-        df_funnel['Etapa'] = pd.Categorical(df_funnel['Etapa'], categories=orden_etapas, ordered=True)
-        df_funnel = df_funnel.sort_values('Etapa')
+    with col_matrix:
+        st.subheader("🎯 Matriz de Priorización")
+        st.info("Arriba a la derecha: **Mayor Deuda + Más Antigüedad** (Atacar Primero)")
         
-        fig = px.funnel(df_funnel, x='importe', y='Etapa', color='Etapa', 
-                        title="Flujo de Dinero Estancado por Etapa",
-                        color_discrete_map={
-                            "🟢 Al Día": COLORS['safe'], 
-                            "🟡 Preventiva (0-30)": "#FFD54F",
-                            "🟠 Administrativa (31-60)": COLORS['warning'],
-                            "🔴 Pre-Jurídica (61-120)": COLORS['action'],
-                            "⚫ Jurídica / Castigo (>120)": "#212121"
-                        })
-        st.plotly_chart(fig, use_container_width=True)
+        df_chart = df_inteligente[df_inteligente['dias_vencido'] > 0]
+        if not df_chart.empty:
+            fig = px.scatter(
+                df_chart,
+                x="dias_vencido",
+                y="importe",
+                size="importe",
+                color="Accion_Sugerida",
+                hover_name="nombrecliente",
+                title="Mapa de Calor de Riesgo",
+                labels={"dias_vencido": "Días de Mora", "importe": "Valor Deuda"},
+                color_discrete_map={
+                    "🔴 JURÍDICO / PRE-JURÍDICO": "#D32F2F",
+                    "🟠 CONCILIACIÓN URGENTE": "#F57C00",
+                    "🟡 GESTIÓN TELEFÓNICA (Prioridad)": "#FBC02D",
+                    "🟡 GESTIÓN ADMINISTRATIVA": "#FFEB3B",
+                    "🟢 RECORDATORIO AMABLE": "#388E3C"
+                }
+            )
+            fig.add_vline(x=90, line_dash="dash", line_color="red")
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Sin datos para graficar.")
 
-    with c2:
-        st.subheader("💾 Exportar Plan de Choque")
-        st.info("Descarga el 'Super Excel' con semáforos y prioridades listas para imprimir y trabajar.")
-        
-        excel_data = generar_super_excel(df_proc)
-        st.download_button(
-            label="📥 DESCARGAR EXCEL MAESTRO",
-            data=excel_data,
-            file_name="Plan_Maestro_Cobranza.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            help="Genera un archivo .xlsx con formato condicional avanzado.",
-            use_container_width=True,
-            type="primary"
-        )
-        st.markdown("### Resumen Rápido")
-        st.write(df_funnel[['Etapa', 'importe']].style.format({'importe': '${:,.0f}'}))
+    with col_vendor:
+        st.subheader("🕵️‍♂️ Foco por Vendedor")
+        df_vend = df_inteligente[df_inteligente['dias_vencido'] > 30].groupby('nomvendedor')['importe'].sum().reset_index().sort_values('importe', ascending=False)
+        if not df_vend.empty:
+            fig_bar = px.bar(df_vend, x='importe', y='nomvendedor', orientation='h', title="Cartera >30 Días", text_auto='.2s')
+            fig_bar.update_layout(height=400)
+            st.plotly_chart(fig_bar, use_container_width=True)
+        else:
+            st.info("No hay cartera mayor a 30 días.")
 
-    # --- SECCIÓN 2: MATRIZ DE ACCIÓN "A QUIÉN COBRAR YA" ---
-    st.markdown("---")
-    st.header("🔥 TOP PRIORIDAD: Gestión Inmediata")
-    st.markdown("Estos clientes requieren acción **HOY**. Están ordenados por un algoritmo de *Score de Prioridad* (Monto + Antigüedad).")
-
-    # Crear tabla bonita agrupada por cliente
-    top_clientes = df_proc.groupby(['nombrecliente', 'Accion_Sugerida', 'nomvendedor']).agg({
-        'importe': 'sum',
-        'dias_vencido': 'max',
-        'Score_Prioridad': 'max',
-        'telefono1': 'first' # Tomamos el primer telefono encontrado
-    }).reset_index().sort_values(by='Score_Prioridad', ascending=False).head(15)
-    
-    # Mostramos la tabla con columnas formateadas
-    st.dataframe(
-        top_clientes.style.format({'importe': '${:,.0f}', 'Score_Prioridad': '{:.1f}'})
-        .background_gradient(subset=['Score_Prioridad'], cmap='Reds')
-        .bar(subset=['importe'], color='#d65f5f'),
-        use_container_width=True,
-        column_config={
-            "nombrecliente": "Cliente",
-            "Accion_Sugerida": "⚡ ACCIÓN REQUERIDA",
-            "nomvendedor": "Vendedor",
-            "importe": "Deuda Total",
-            "dias_vencido": "Días Max.",
-            "telefono1": "Contacto"
-        }
+    # --- DESCARGA EXCEL ---
+    st.markdown("### 📥 Herramientas")
+    excel_data = generar_excel_estrategico(df_inteligente)
+    st.download_button(
+        label="📥 DESCARGAR MATRIZ DE GESTIÓN (.xlsx)",
+        data=excel_data,
+        file_name=f"Estrategia_Cobranza_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary",
+        use_container_width=True
     )
 
-    # --- SECCIÓN 3: GESTIÓN POR VENDEDOR (¿A quién presionar?) ---
+    # --- LISTADO TÁCTICO ---
     st.markdown("---")
-    st.header("🕵️‍♂️ Gestión Comercial: ¿Qué vendedor necesita apoyo?")
+    st.subheader("📝 Gestión Táctica")
     
-    col_v1, col_v2 = st.columns(2)
+    filtro = st.multiselect("Filtrar Acción:", df_inteligente['Accion_Sugerida'].unique(), default=df_inteligente['Accion_Sugerida'].unique())
+    df_show = df_inteligente[df_inteligente['Accion_Sugerida'].isin(filtro)].copy()
     
-    with col_v1:
-        st.markdown("##### Deuda Vencida por Vendedor (Treemap)")
-        # Agrupar vendedores y etapas
-        df_vend = df_proc[df_proc['dias_vencido'] > 0].groupby(['nomvendedor', 'Etapa'])['importe'].sum().reset_index()
-        fig_tree = px.treemap(df_vend, path=['nomvendedor', 'Etapa'], values='importe',
-                              color='importe', color_continuous_scale='RdBu_r',
-                              title="Tamaño de Bloques de Deuda por Vendedor")
-        st.plotly_chart(fig_tree, use_container_width=True)
-        
-    with col_v2:
-        st.markdown("##### Casos de Conciliación (Deudas Antiguas)")
-        # Filtro: Más de 90 días vencido
-        conciliacion = df_proc[df_proc['dias_vencido'] > 90].groupby(['nombrecliente', 'nomvendedor']).agg({'importe':'sum', 'dias_vencido':'max'}).reset_index().sort_values('dias_vencido', ascending=False)
-        
-        if not conciliacion.empty:
-            st.warning(f"Hay **{len(conciliacion)} clientes** con facturas de más de 90 días. Candidatos a cobro jurídico.")
-            st.dataframe(conciliacion.head(10).style.format({'importe': '${:,.0f}'}), use_container_width=True, hide_index=True)
-        else:
-            st.success("¡Excelente! No hay cartera mayor a 90 días para conciliar.")
+    st.dataframe(
+        df_show[['Score_Riesgo', 'nombrecliente', 'nit', 'Accion_Sugerida', 'dias_vencido', 'importe', 'nomvendedor', 'telefono1']],
+        column_config={
+            "Score_Riesgo": st.column_config.ProgressColumn("Riesgo", min_value=0, max_value=100, format="%d"),
+            "importe": st.column_config.NumberColumn("Deuda Total", format="$%d"),
+            "dias_vencido": st.column_config.NumberColumn("Días Mora", format="%d días"),
+            "telefono1": st.column_config.TextColumn("Teléfono")
+        },
+        use_container_width=True,
+        hide_index=True,
+        height=500
+    )
 
-if __name__ == '__main__':
+    # --- ACCIÓN RÁPIDA (WHATSAPP) ---
+    if not df_show.empty:
+        st.markdown("### ⚡ Gestión Rápida (Top 1 de la lista filtrada)")
+        cliente = df_show.iloc[0]
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            tel_raw = str(cliente['telefono1']).replace('.0', '')
+            tel_clean = re.sub(r'\D', '', tel_raw) # Solo números
+            
+            msg = f"Hola {cliente['nombrecliente']}, le escribimos de Ferreinox. Notamos un saldo pendiente de ${cliente['importe']:,.0f}. Agradecemos gestionar su pago."
+            
+            if len(tel_clean) >= 10:
+                link_wa = f"https://wa.me/57{tel_clean}?text={quote(msg)}"
+                st.markdown(f"""
+                <a href="{link_wa}" target="_blank" class="button-wa">
+                📱 Enviar WhatsApp a {cliente['nombrecliente']}
+                </a>
+                """, unsafe_allow_html=True)
+            else:
+                st.warning(f"Teléfono no válido para WhatsApp: {tel_raw}")
+        
+        with c2:
+            st.info(f"📧 **Correo:** {cliente['e_mail']}")
+
+if __name__ == "__main__":
     main()
