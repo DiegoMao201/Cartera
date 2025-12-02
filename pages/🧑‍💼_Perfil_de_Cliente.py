@@ -34,10 +34,10 @@ st.set_page_config(
 )
 
 # Paleta de Colores y CSS Corporativo (Unificada)
-COLOR_PRIMARIO = "#003865"       # Azul oscuro corporativo
-COLOR_ACCION = "#FFC300"         # Amarillo para acciones y énfasis
-COLOR_FONDO = "#f0f2f6"          # Gris claro de fondo
-COLOR_TARJETA = "#FFFFFF"        # Fondo de tarjetas y métricas
+COLOR_PRIMARIO = "#003865"        # Azul oscuro corporativo
+COLOR_ACCION = "#FFC300"          # Amarillo para acciones y énfasis
+COLOR_FONDO = "#f0f2f6"           # Gris claro de fondo
+COLOR_TARJETA = "#FFFFFF"         # Fondo de tarjetas y métricas
 COLOR_ALERTA_CRITICA = "#D32F2F" # Rojo para alertas
 
 st.markdown(f"""
@@ -168,6 +168,8 @@ def cargar_datos_automaticos_dropbox():
     """
     try:
         # Credenciales
+        # **Nota de seguridad:** Las credenciales deben estar configuradas en un archivo `secrets.toml`
+        # en el entorno de despliegue de Streamlit (ej. Streamlit Cloud).
         APP_KEY = st.secrets["dropbox"]["app_key"]
         APP_SECRET = st.secrets["dropbox"]["app_secret"]
         REFRESH_TOKEN = st.secrets["dropbox"]["refresh_token"]
@@ -200,6 +202,8 @@ def cargar_datos_automaticos_dropbox():
     except KeyError as ke:
         return None, f"Error: La clave de Dropbox no se encontró en `secrets.toml`: {ke}"
     except Exception as e:
+        # Aquí capturamos cualquier otro error, como el de conexión a Dropbox, lectura de CSV, etc.
+        st.error(f"Error detallado: {e}")
         return None, f"Error al cargar datos desde Dropbox: {e}"
 
 # ======================================================================================
@@ -299,6 +303,8 @@ class PDF(FPDF):
         self.set_text_color(0, 51, 102) # Color Primario
         # Intenta usar logo si existe
         try:
+             # st.image solo funciona en Streamlit, fpdf requiere el archivo local.
+             # Si no está disponible localmente, simplemente se imprime el nombre.
              self.image("LOGO FERREINOX SAS BIC 2024.png", 10, 8, 80) 
         except RuntimeError: 
             self.cell(80, 10, 'FERREINOX SAS BIC', 0, 0, 'L')
@@ -449,6 +455,7 @@ def crear_excel_gerencial(df, total, vencido, pct_mora, clientes_mora, csi, anti
 # ======================================================================================
 def enviar_correo(destinatario, asunto, cuerpo_html, pdf_bytes):
     """Función para enviar correo con el PDF adjunto, usando yagmail y st.secrets."""
+    tmp_path = ''
     try:
         email_user = st.secrets["email_credentials"]["sender_email"]
         email_pass = st.secrets["email_credentials"]["sender_password"]
@@ -467,7 +474,6 @@ def enviar_correo(destinatario, asunto, cuerpo_html, pdf_bytes):
 
     try:
         # Guardar PDF temporalmente
-        tmp_path = ''
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(pdf_bytes)
             tmp_path = tmp.name
@@ -532,7 +538,7 @@ def plantilla_correo_al_dia(cliente, total_cartera):
         width: 100% !important;
         }}</style></head><body style="word-spacing:normal;background-color:#f3f4f6;"><div style="background-color:#f3f4f6;"><div class="email-container" style="background:#FFFFFF;background-color:#FFFFFF;margin:0px auto;border-radius:24px;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#FFFFFF;background-color:#FFFFFF;width:100%;border-radius:24px;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:0;text-align:center;"><div style="background:#1e3a8a;background-color:#1e3a8a;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#1e3a8a;background-color:#1e3a8a;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:30px 30px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="vertical-align:top;" width="100%"><tbody><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:28px;font-weight:700;line-height:1.6;text-align:center;color:#ffffff;">Estado de Cuenta Actualizado</div></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#ffffff;background-color:#ffffff;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;background-color:#ffffff;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:40px 40px 20px 40px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="vertical-align:top;" width="100%"><tbody><tr><td align="left" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:18px;font-weight:500;line-height:1.6;text-align:left;color:#374151;">Hola, <span class="greeting-strong">{cliente}</span> ✨</div></td></tr><tr><td align="left" style="font-size:0px;padding:10px 25px;padding-bottom:20px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;line-height:1.6;text-align:left;color:#6b7280;">Recibe un cordial saludo del equipo de <strong>Ferreinox SAS BIC</strong>.</div></td></tr><tr><td align="center" style="font-size:0px;padding:10px 0;word-break:break-word;"><p style="border-top:solid 2px #3b82f6;font-size:1px;margin:0px auto;width:100%;"></p></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#ffffff;background-color:#ffffff;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;background-color:#ffffff;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:10px 40px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="background-color:#10b981;border-radius:20px;vertical-align:top;" width="100%"><tbody><tr><td align="center" style="font-size:0px;padding:25px 0 10px 0;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:48px;line-height:1.6;text-align:center;color:#374151;">🎉</div></td></tr><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:24px;font-weight:700;line-height:1.6;text-align:center;color:#ffffff;">¡Felicitaciones!</div></td></tr><tr><td align="center" style="font-size:0px;padding:5px 25px 30px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;line-height:1.6;text-align:center;color:#ffffff;">Tu cuenta no presenta saldos vencidos.<br>Agradecemos enormemente tu puntualidad y excelente gestión de pagos.</div></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#ffffff;background-color:#ffffff;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;background-color:#ffffff;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:20px 40px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%"><tbody><tr><td style="background-color:#f8fafc;border-left:5px solid #3b82f6;border-radius:16px;vertical-align:top;padding:20px;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%"><tbody><tr><td align="left" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;font-weight:500;line-height:1.6;text-align:left;color:#475569;">📄 Para tu control y referencia, hemos adjuntado tu estado de cuenta completo en formato PDF a este correo electrónico.</div></td></tr></tbody></table></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#1f2937;background-color:#1f2937;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#1f2937;background-color:#1f2937;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:30px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="vertical-align:top;" width="100%"><tbody><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:18px;font-weight:600;line-height:1.6;text-align:center;color:#ffffff;">Área de Cartera y Recaudos</div></td></tr><tr><td align="center" style="font-size:0px;padding:10px 25px;padding-bottom:20px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;line-height:1.6;text-align:center;color:#e5e7eb;"><strong>Líneas de Atención WhatsApp</strong></div></td></tr><tr><td align="center" vertical-align="middle" class="whatsapp-button" style="font-size:0px;padding:10px 25px;word-break:break-word;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:separate;line-height:100%;"><tr><td align="center" bgcolor="#25d366" role="presentation" style="border:none;border-radius:12px;cursor:auto;mso-padding-alt:10px 25px;background:#25d366;" valign="middle"><a href="https://wa.me/573165219904" style="display:inline-block;background:#25d366;color:#ffffff;font-family:Inter, -apple-system, sans-serif;font-size:13px;font-weight:500;line-height:120%;margin:0;text-decoration:none;text-transform:none;padding:10px 25px;mso-padding-alt:0px;border-radius:12px;" target="_blank">📱 Armenia: 316 5219904</a></td></tr></table></td></tr><tr><td align="center" vertical-align="middle" class="whatsapp-button" style="font-size:0px;padding:10px 25px;padding-top:12px;word-break:break-word;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:separate;line-height:100%;"><tr><td align="center" bgcolor="#25d366" role="presentation" style="border:none;border-radius:12px;cursor:auto;mso-padding-alt:10px 25px;background:#25d366;" valign="middle"><a href="https://wa.me/573108501359" style="display:inline-block;background:#25d366;color:#ffffff;font-family:Inter, -apple-system, sans-serif;font-size:13px;font-weight:500;line-height:120%;margin:0;text-decoration:none;text-transform:none;padding:10px 25px;mso-padding-alt:0px;border-radius:12px;" target="_blank">📱 Manizales: 310 8501359</a></td></tr></table></td></tr><tr><td align="center" vertical-align="middle" class="whatsapp-button" style="font-size:0px;padding:10px 25px;padding-top:12px;word-break:break-word;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:separate;line-height:100%;"><tr><td align="center" bgcolor="#25d366" role="presentation" style="border:none;border-radius:12px;cursor:auto;mso-padding-alt:10px 25px;background:#25d366;" valign="middle"><a href="https://wa.me/573142087169" style="display:inline-block;background:#25d366;color:#ffffff;font-family:Inter, -apple-system, sans-serif;font-size:13px;font-weight:500;line-height:120%;margin:0;text-decoration:none;text-transform:none;padding:10px 25px;mso-padding-alt:0px;border-radius:12px;" target="_blank">📱 Pereira: 314 2087169</a></td></tr></table></td></tr><tr><td align="center" style="font-size:0px;padding:30px 0 20px 0;word-break:break-word;"><p style="border-top:solid 1px #4b5563;font-size:1px;margin:0px auto;width:100%;"></p></td></tr><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:14px;line-height:1.6;text-align:center;color:#9ca3af;">© 2025 Ferreinox SAS BIC - Todos los derechos reservados</div></td></tr></tbody></table></div></td></tr></tbody></table></div></td></tr></tbody></table></div></div></body></html>
     """
-    
+        
 # ======================================================================================
 # 5. DASHBOARD PRINCIPAL (MAIN)
 # ======================================================================================
@@ -553,25 +559,28 @@ def main():
             vendedores_secrets = st.secrets["vendedores"]
         except Exception as e:
             st.error(f"Error al cargar las contraseñas desde `secrets.toml`: {e}. Por favor, verifique su configuración.")
-            st.stop()
-            
+            # st.stop() # No detener, solo mostrar error de config
+
         password = st.text_input("Introduce la contraseña:", type="password", key="password_input")
         if st.button("Ingresar"):
             
-            if password == str(general_password):
+            if 'general_password' in locals() and password == str(general_password):
                 st.session_state['authentication_status'] = True
                 st.session_state['acceso_general'] = True
                 st.session_state['vendedor_autenticado'] = "GERENTE_GENERAL"
                 st.rerun()
             else:
-                for vendedor_key, pass_vendedor in vendedores_secrets.items():
-                    if password == str(pass_vendedor):
-                        st.session_state['authentication_status'] = True
-                        st.session_state['acceso_general'] = False
-                        st.session_state['vendedor_autenticado'] = vendedor_key
-                        st.rerun()
-                        break
-                if not st.session_state['authentication_status']:
+                authenticated = False
+                if 'vendedores_secrets' in locals():
+                    for vendedor_key, pass_vendedor in vendedores_secrets.items():
+                        if password == str(pass_vendedor):
+                            st.session_state['authentication_status'] = True
+                            st.session_state['acceso_general'] = False
+                            st.session_state['vendedor_autenticado'] = vendedor_key
+                            authenticated = True
+                            st.rerun()
+                            break
+                if not authenticated:
                     st.error("Contraseña incorrecta. Intente de nuevo.")
         st.stop()
         
@@ -600,15 +609,18 @@ def main():
     df, status_carga = cargar_datos_automaticos_dropbox()
     st.caption(status_carga)
 
+    # --- CORRECCIÓN DEL ERROR: Envuelve todo el código restante en esta comprobación ---
     if df is None:
         st.error("🚨 No se pudieron cargar datos funcionales. Revise las credenciales de Dropbox y el formato del archivo.")
-        st.stop()
-        
+        # Aquí permitimos que la app se detenga suavemente sin causar el TypeError.
+        st.stop() 
+
     # --- FILTROS DINÁMICOS ---
     st.sidebar.header("🔍 Filtros Operativos")
     
     # 1. Filtro Vendedor (General puede ver todos)
     if st.session_state['acceso_general']:
+        # **Línea Corregida:** df ya está comprobado que NO es None
         vendedores_disponibles = ["TODOS"] + sorted(df['nomvendedor'].unique().tolist())
         filtro_vendedor = st.sidebar.selectbox("Filtrar por Vendedor:", vendedores_disponibles)
         if filtro_vendedor != "TODOS":
@@ -671,6 +683,7 @@ def main():
         # Agrupar por Cliente para gestión (solo clientes con saldo > 0)
         df_agrupado = df_view[df_view['importe'] > 0].groupby('nombrecliente').agg(
             saldo=('importe', 'sum'),
+            # Usar df_view.loc[x.index, ...] para que la máscara de días vencidos funcione correctamente
             saldo_vencido=('importe', lambda x: x[df_view.loc[x.index, 'dias_vencido'] > 0].sum()),
             dias_max=('dias_vencido', 'max'),
             telefono=('telefono1', 'first'),
@@ -715,7 +728,8 @@ def main():
                 pdf_bytes = crear_pdf(detalle_facturas, saldo_vencido_cli)
                 
                 # --- BOTÓN WHATSAPP ---
-                link_wa = generar_link_wa(telefono_cli, cliente_sel, saldo_vencido_cli, data_cli['dias_max'], data_cli['nit'], int(data_cli['cod_cliente']) if pd.notna(data_cli['cod_cliente']) else 'N/A')
+                cod_cli_val = int(data_cli['cod_cliente']) if pd.notna(data_cli['cod_cliente']) else 'N/A'
+                link_wa = generar_link_wa(telefono_cli, cliente_sel, saldo_vencido_cli, data_cli['dias_max'], data_cli['nit'], cod_cli_val)
                 if link_wa and len(re.sub(r'\D', '', link_wa)) >= 10:
                     st.markdown(f"""<a href="{link_wa}" target="_blank" class="wa-link">📱 ABRIR WHATSAPP CON GUION</a>""", unsafe_allow_html=True)
                 else:
@@ -736,7 +750,7 @@ def main():
                     if saldo_vencido_cli > 0:
                         asunto_msg = f"Recordatorio URGENTE de Saldo Pendiente - {cliente_sel}"
                         portal_link_email = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
-                        cuerpo_html = plantilla_correo_vencido(cliente_sel, saldo_vencido_cli, data_cli['dias_max'], data_cli['nit'], int(data_cli['cod_cliente']) if pd.notna(data_cli['cod_cliente']) else 'N/A', portal_link_email)
+                        cuerpo_html = plantilla_correo_vencido(cliente_sel, saldo_vencido_cli, data_cli['dias_max'], data_cli['nit'], cod_cli_val, portal_link_email)
                     else:
                         asunto_msg = f"Tu Estado de Cuenta Actualizado - {cliente_sel} (Cta al Día)"
                         cuerpo_html = plantilla_correo_al_dia(cliente_sel, data_cli['saldo'])
@@ -796,13 +810,15 @@ def main():
         clientes_mora_vendedor = vencidos_df.groupby('nomvendedor_norm')['nombrecliente'].nunique().reset_index().rename(columns={'nombrecliente': 'Clientes_Mora'})
         
         # CSI por Vendedor
-        csi_vendedor = vencidos_df.groupby('nomvendedor_norm').apply(
-            lambda x: (x['importe'] * x['dias_vencido']).sum() / df_view[df_view['nomvendedor_norm'] == x.name]['importe'].sum() if df_view[df_view['nomvendedor_norm'] == x.name]['importe'].sum() > 0 else 0, 
-            include_groups=False
-        ).reset_index(name='CSI')
-        
+        # La función lambda debe ser ajustada para el nuevo API de groupby.apply
+        csi_vendedor = resumen_vendedor.apply(
+            lambda row: (df_view[(df_view['nomvendedor_norm'] == row['nomvendedor_norm']) & (df_view['dias_vencido'] > 0)]['importe'] * df_view[(df_view['nomvendedor_norm'] == row['nomvendedor_norm']) & (df_view['dias_vencido'] > 0)]['dias_vencido']).sum() / row['Cartera_Total'] if row['Cartera_Total'] > 0 else 0,
+            axis=1
+        ).to_frame(name='CSI')
+
+        # Fusionar los DataFrames
         resumen_vendedor = resumen_vendedor.merge(clientes_mora_vendedor, on='nomvendedor_norm', how='left').fillna(0)
-        resumen_vendedor = resumen_vendedor.merge(csi_vendedor, on='nomvendedor_norm', how='left').fillna(0)
+        resumen_vendedor = resumen_vendedor.merge(csi_vendedor, left_index=True, right_index=True, how='left').fillna(0)
         
         # Formato profesional para la tabla
         styled_df = resumen_vendedor.drop(columns=['nomvendedor_norm']).rename(columns={'nomvendedor': 'Vendedor'}).style.format({
