@@ -426,7 +426,7 @@ def crear_excel_gerencial(df, total, vencido, pct_mora, clientes_mora, csi, anti
     ws['A6'].font = Font(size=12, bold=True)
     
     # Columnas a incluir en el reporte
-    cols = ['nombrecliente', 'nit', 'numero', 'nomvendedor', 'cod_cliente', 'Rango', 'zona', 'dias_vencido', 'importe', 'telefono1', 'e_mail']
+    cols = ['nombrecliente', 'nit', 'numero', 'nomvendedor', 'cod_cliente', 'Rango', 'zona', 'dias_vencido', 'importe', 'telefono1', 'e-mail']
     df_detalle = df[cols].sort_values(by='dias_vencido', ascending=False).reset_index(drop=True)
 
     # Headers de la tabla (fila 7)
