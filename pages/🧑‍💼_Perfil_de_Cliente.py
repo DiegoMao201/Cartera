@@ -671,7 +671,7 @@ def main():
             saldo_vencido=('importe', lambda x: x[df_view.loc[x.index, 'dias_vencido'] > 0].sum() if 'dias_vencido' in df_view.columns else x.sum()),
             dias_max=('dias_vencido', 'max'),
             telefono=('telefono1', 'first'),
-            email=('e_mail', 'first'),
+            email=('e-mail', 'first'),
             vendedor=('nomvendedor', 'first'),
             nit=('nit', 'first'),
             cod_cliente=('cod_cliente', 'first')
@@ -836,7 +836,7 @@ def main():
         
         st.subheader("🔎 Datos Crudos Filtrados")
         # Mostrar el dataframe completo con las columnas clave
-        cols_mostrar = ['nombrecliente', 'nit', 'numero', 'fecha_documento', 'fecha_vencimiento', 'dias_vencido', 'importe', 'Rango', 'nomvendedor', 'zona', 'telefono1', 'e_mail']
+        cols_mostrar = ['nombrecliente', 'nit', 'numero', 'fecha_documento', 'fecha_vencimiento', 'dias_vencido', 'importe', 'Rango', 'nomvendedor', 'zona', 'telefono1', 'e-mail']
         st.dataframe(df_view[cols_mostrar].style.format({'importe': '${:,.0f}', 'dias_vencido': '{:,.0f}'}), use_container_width=True, hide_index=True)
 
 if __name__ == "__main__":
