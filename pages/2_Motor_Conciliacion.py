@@ -1,6 +1,6 @@
 # ======================================================================================
 # ARCHIVO: pages/2_Motor_Conciliacion.py
-# (Versión v16 - "Omnisciente Total": Fusión Dropbox + Google Sheets + IA + Reportes Pro)
+# (Versión v17 - "Omnisciente Adaptativo": Fusión Dropbox + GSheets + IA Entrenable)
 # ======================================================================================
 
 import streamlit as st
@@ -20,7 +20,7 @@ import hashlib
 from collections import defaultdict
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Motor Conciliación Pro v16", page_icon="👁️", layout="wide")
+st.set_page_config(page_title="Motor Conciliación Pro v17", page_icon="👁️", layout="wide")
 
 # ======================================================================================
 # --- 1. CONEXIONES Y UTILIDADES ---
@@ -61,10 +61,7 @@ def download_from_dropbox(dbx, path):
         return None
 
 def generar_id_unico(row, index):
-    """
-    Crea una huella digital única (MD5).
-    Incluye el 'index' para garantizar unicidad absoluta en transacciones idénticas del mismo día.
-    """
+    """Huella digital única para evitar duplicados"""
     try:
         fecha_str = str(row.get('FECHA', ''))
         val_str = str(row.get('Valor_Banco', 0))
@@ -75,7 +72,7 @@ def generar_id_unico(row, index):
         return f"ID_ERROR_{index}"
 
 def normalizar_texto_avanzado(texto):
-    """Limpieza profunda de texto para mejorar el Fuzzy Matching"""
+    """Limpieza profunda para IA y Fuzzy Matching"""
     if not isinstance(texto, str): return ""
     texto = texto.upper().strip()
     texto = ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn')
@@ -94,30 +91,22 @@ def normalizar_texto_avanzado(texto):
     return ' '.join(texto.split())
 
 def extraer_posibles_nits(texto):
-    """Extrae números que parezcan NITs"""
     if not isinstance(texto, str): return []
     clean_txt = texto.replace('.', '').replace('-', '')
     return re.findall(r'\b\d{7,11}\b', clean_txt)
 
 def limpiar_moneda_colombiana(val):
-    """Convierte texto financiero a float"""
     if isinstance(val, (int, float)):
         return float(val) if pd.notnull(val) else 0.0
-    
     s = str(val).strip()
     if not s or s.lower() == 'nan': return 0.0
-
     s = s.replace('$', '').replace('USD', '').replace('COP', '').strip()
-    s = s.replace('.', '') # Quitar miles
-    s = s.replace(',', '.') # Convertir decimal
-    
-    try:
-        return float(s)
-    except ValueError:
-        return 0.0
+    s = s.replace('.', '') 
+    s = s.replace(',', '.') 
+    try: return float(s)
+    except ValueError: return 0.0
 
 def extraer_dinero_de_texto(texto):
-    """Rescata montos numéricos de la descripción si la columna valor es 0"""
     if not isinstance(texto, str): return 0.0
     matches = re.findall(r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)', texto)
     valores = []
@@ -130,14 +119,14 @@ def extraer_dinero_de_texto(texto):
     return max(valores) if valores else 0.0
 
 # ======================================================================================
-# --- 2. GENERADOR DE EXCEL PROFESIONAL (Rescatado de v14) ---
+# --- 2. GENERADOR DE EXCEL PROFESIONAL ---
 # ======================================================================================
 
 def generar_excel_profesional(df, resumen_kpis):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         
-        # --- HOJA 1: RESUMEN GERENCIAL ---
+        # --- HOJA DASHBOARD ---
         workbook = writer.book
         sheet_resumen = workbook.add_worksheet("Dashboard")
         sheet_resumen.hide_gridlines(2)
@@ -154,7 +143,7 @@ def generar_excel_profesional(df, resumen_kpis):
             ("Conciliados (Con Descuento)", resumen_kpis.get('descuentos', 0)),
             ("Conciliados (Impuestos)", resumen_kpis.get('impuestos', 0)),
             ("Parciales / Abonos", resumen_kpis.get('parciales', 0)),
-            ("Histórico (Ya procesado)", resumen_kpis.get('historico', 0)),
+            ("Histórico / IA", resumen_kpis.get('historico', 0)),
             ("Sin Identificar", resumen_kpis.get('sin_id', 0))
         ]
         
@@ -164,7 +153,7 @@ def generar_excel_profesional(df, resumen_kpis):
             sheet_resumen.write(row, 2, val, style_kpi_value)
             row += 1
 
-        # --- HOJA 2: DETALLE ---
+        # --- HOJA DETALLE ---
         cols_export = [
             'FECHA', 'Valor_Banco', 'Texto_Completo', 'Cliente_Identificado', 
             'NIT', 'Estado', 'Facturas_Conciliadas', 'Detalle_Operacion', 
@@ -202,7 +191,6 @@ def generar_excel_profesional(df, resumen_kpis):
             if any(x in col_name for x in ['VALOR', 'DIFERENCIA']):
                 worksheet.set_column(col_num, col_num, width, currency_fmt)
 
-        # Formato Condicional
         try:
             col_idx = df_export.columns.get_loc('Estado')
             col_letter = chr(65 + col_idx)
@@ -221,12 +209,12 @@ def generar_excel_profesional(df, resumen_kpis):
     return output.getvalue()
 
 # ======================================================================================
-# --- 3. CARGA DE DATOS ---
+# --- 3. CARGA DE DATOS (AQUÍ ESTÁ LA SOLUCIÓN AL ERROR DE COLUMNAS) ---
 # ======================================================================================
 
 @st.cache_data(ttl=600)
 def cargar_cartera_dropbox():
-    """1. Carga Cartera (Facturas Abiertas) desde Dropbox"""
+    """Carga Facturas Abiertas desde Dropbox"""
     dbx = get_dbx_client("dropbox")
     if not dbx: return pd.DataFrame()
     
@@ -245,7 +233,6 @@ def cargar_cartera_dropbox():
         df['Importe'] = pd.to_numeric(df['Importe'], errors='coerce').fillna(0)
         df['nit_norm'] = df['Nit'].astype(str).str.replace(r'[^0-9]', '', regex=True)
         df['nombre_norm'] = df['NombreCliente'].apply(normalizar_texto_avanzado)
-        df['FechaDoc'] = pd.to_datetime(df['FechaDoc'], errors='coerce')
         
         return df[df['Importe'] > 100].copy()
     except Exception as e:
@@ -254,7 +241,10 @@ def cargar_cartera_dropbox():
 
 @st.cache_data(ttl=600)
 def cargar_historico_dropbox():
-    """2. Carga Historial Consolidado (Planilla Bancos) desde Dropbox"""
+    """
+    Carga Historial Consolidado adaptándose a tus columnas específicas:
+    FECHA, SUCURSAL BANCO, TIPO DE TRANSACCION, CUENTA, EMPRESA, VALOR...
+    """
     dbx = get_dbx_client("dropbox")
     if not dbx: return pd.DataFrame()
     
@@ -263,27 +253,55 @@ def cargar_historico_dropbox():
     
     try:
         df = pd.read_excel(BytesIO(content))
-        # Normalizar columnas
+        # Normalizar nombres de columnas a mayúsculas y sin espacios extra
         df.columns = [str(c).strip().upper() for c in df.columns]
         
-        col_cliente = next((c for c in df.columns if 'CLIENTE' in c or 'IDENTIFICADO' in c), None)
-        col_texto = next((c for c in df.columns if 'TEXTO' in c or 'DESCRIPCION' in c), None)
+        # --- LÓGICA DE MAPEO DE COLUMNAS PERSONALIZADA ---
         
-        if col_cliente and col_texto:
+        # 1. Identificar CLIENTE (Tu columna es 'EMPRESA')
+        col_cliente = 'EMPRESA' if 'EMPRESA' in df.columns else None
+        
+        # 2. Identificar DESCRIPCIÓN (Combinamos TIPO y REFERENCIA)
+        cols_texto = []
+        if 'TIPO DE TRANSACCION' in df.columns: cols_texto.append('TIPO DE TRANSACCION')
+        if 'BANCO REFRENCIA INTERNA' in df.columns: cols_texto.append('BANCO REFRENCIA INTERNA')
+        if 'DESTINO' in df.columns: cols_texto.append('DESTINO')
+        
+        # Si no encuentro tus columnas específicas, busco las genéricas
+        if not col_cliente:
+             col_cliente = next((c for c in df.columns if 'CLIENTE' in c or 'IDENTIFICADO' in c), None)
+        
+        # --- PROCESAMIENTO ---
+        
+        if col_cliente:
+            # Normalizamos el cliente histórico
             df['HISTORIA_CLIENTE'] = df[col_cliente].astype(str).str.strip()
-            df['HISTORIA_TEXTO'] = df[col_texto].apply(normalizar_texto_avanzado)
+            
+            # Construimos el Texto Histórico concatenando las columnas detectadas
+            if cols_texto:
+                df['HISTORIA_TEXTO_RAW'] = df[cols_texto].fillna('').astype(str).agg(' '.join, axis=1)
+            else:
+                # Fallback si no hay columnas específicas
+                col_gen = next((c for c in df.columns if 'TEXTO' in c or 'DESCRIPCION' in c), 'HISTORIA_CLIENTE')
+                df['HISTORIA_TEXTO_RAW'] = df[col_gen].astype(str)
+                
+            # Aplicamos normalización avanzada para que la IA entienda
+            df['HISTORIA_TEXTO'] = df['HISTORIA_TEXTO_RAW'].apply(normalizar_texto_avanzado)
+            
             return df
         else:
-            st.warning("El archivo Histórico en Dropbox no tiene columnas 'Cliente' o 'Texto' claras.")
+            st.warning("No se encontró la columna 'EMPRESA' ni similar en el Histórico.")
+            st.write("Columnas detectadas:", df.columns.tolist())
             return pd.DataFrame()
+            
     except Exception as e:
         st.error(f"Error leyendo Histórico Dropbox: {e}")
         return pd.DataFrame()
 
 def procesar_archivo_manual(uploaded_file):
-    """3. Procesa el archivo que subes MANUALMENTE (Día a día)"""
+    """Procesa el archivo del día a día"""
     try:
-        # Detectar cabecera
+        # Detectar cabecera dinámicamente
         df_temp = pd.read_excel(uploaded_file, nrows=15, header=None)
         header_idx = 0
         for idx, row in df_temp.iterrows():
@@ -296,7 +314,6 @@ def procesar_archivo_manual(uploaded_file):
         df = pd.read_excel(uploaded_file, header=header_idx)
         df.columns = [str(c).strip().upper() for c in df.columns]
         
-        # Estandarizar
         if 'FECHA' not in df.columns: 
              cols_fecha = [c for c in df.columns if 'FECHA' in c]
              if cols_fecha: df.rename(columns={cols_fecha[0]: 'FECHA'}, inplace=True)
@@ -323,7 +340,6 @@ def procesar_archivo_manual(uploaded_file):
         mask_zero = df['Valor_Banco'] == 0
         df.loc[mask_zero, 'Valor_Banco'] = df.loc[mask_zero, 'Texto_Completo'].apply(extraer_dinero_de_texto)
         
-        # ID para cruce con histórico
         df['ID_Unico'] = [generar_id_unico(row, idx) for idx, row in df.iterrows()]
         
         return df
@@ -336,7 +352,6 @@ def procesar_archivo_manual(uploaded_file):
 # ======================================================================================
 
 def analizar_deuda_cliente(nombre_cliente, nit_cliente, valor_pago, df_cartera):
-    """Motor financiero: Pago Exacto, Parcial, con Descuento o Impuestos."""
     res = {
         'Estado': '⚠️ SIN COINCIDENCIA DE VALOR',
         'Facturas_Conciliadas': '',
@@ -367,7 +382,7 @@ def analizar_deuda_cliente(nombre_cliente, nit_cliente, valor_pago, df_cartera):
         
     # 2. MATCH FACTURAS ESPECÍFICAS
     found = False
-    for r in range(1, 4): # Combinaciones de hasta 3 facturas
+    for r in range(1, 4):
         if found: break
         for combo in itertools.combinations(facturas_list, r):
             suma_combo = sum(c['Importe'] for c in combo)
@@ -413,7 +428,7 @@ def motor_omnisciente(df_manual, df_cartera, df_historico, df_kb):
     """
     EL CEREBRO. Cruza:
     1. Knowledge Base (Google Sheets)
-    2. Historial (Dropbox)
+    2. Historial (Dropbox - Ahora corregido)
     3. Cartera (NIT, Palabras Clave, Fuzzy)
     """
     st.info("🧠 Procesando: Memoria Histórica + Knowledge Base + Cartera...")
@@ -424,15 +439,16 @@ def motor_omnisciente(df_manual, df_cartera, df_historico, df_kb):
     # Cargar KB (Entrenamientos previos)
     if not df_kb.empty:
         for _, row in df_kb.iterrows():
-            try: memoria_unificada[str(row[0]).strip().upper()] = str(row[1]).strip()
+            try: memoria_unificada[str(row[0]).strip()] = str(row[1]).strip()
             except: pass
             
     # Cargar Historial (Dropbox)
     if not df_historico.empty:
         for _, row in df_historico.iterrows():
+            # Usamos las columnas normalizadas que creamos en cargar_historico_dropbox
             txt = str(row.get('HISTORIA_TEXTO', ''))
             cli = str(row.get('HISTORIA_CLIENTE', ''))
-            if len(txt) > 5 and cli != '' and cli != 'nan':
+            if len(txt) > 5 and cli != '' and cli.lower() != 'nan':
                 memoria_unificada[txt] = cli
 
     # 2. INDICE PALABRAS CLAVE (Cartera)
@@ -462,15 +478,16 @@ def motor_omnisciente(df_manual, df_cartera, df_historico, df_kb):
         nit_detectado = None
         metodo_deteccion = ""
         
-        # A. MEMORIA (Prioridad)
+        # A. MEMORIA (Prioridad Absoluta)
         if txt_norm in memoria_unificada:
             cliente_detectado = memoria_unificada[txt_norm]
             metodo_deteccion = "🧠 Memoria / KB"
+            # Buscar NIT en cartera si existe
             match_nit = df_cartera[df_cartera['NombreCliente'] == cliente_detectado]
             if not match_nit.empty:
                 nit_detectado = match_nit.iloc[0]['nit_norm']
         
-        # B. CARTERA
+        # B. CARTERA (Si no hay memoria)
         if not cliente_detectado:
             # B1. NIT en Texto
             nits_found = extraer_posibles_nits(row['Texto_Completo'])
@@ -481,7 +498,7 @@ def motor_omnisciente(df_manual, df_cartera, df_historico, df_kb):
                     metodo_deteccion = "🆔 NIT en Texto"
                     break
             
-            # B2. Palabra Clave ("ASUL")
+            # B2. Palabra Clave
             if not cliente_detectado:
                 for palabra in txt_norm.split():
                     if palabra in unique_keywords:
@@ -532,8 +549,8 @@ def motor_omnisciente(df_manual, df_cartera, df_historico, df_kb):
 # ======================================================================================
 
 def main():
-    st.title("👁️ Motor Omnisciente Total (v16)")
-    st.markdown("Fusión: Dropbox + Google Sheets + IA + Reportes Pro")
+    st.title("👁️ Motor Omnisciente Total (v17)")
+    st.markdown("Fusión: Dropbox + Google Sheets + IA + Columnas Personalizadas")
 
     # --- BARRA LATERAL ---
     with st.sidebar:
@@ -548,11 +565,11 @@ def main():
                 else: st.error("Error Cartera")
         
         if st.button("📚 Cargar Historial (Dropbox)"):
-            with st.spinner("Descargando Historial..."):
+            with st.spinner("Descargando Historial con tus columnas..."):
                 df_h = cargar_historico_dropbox()
                 if not df_h.empty:
                     st.session_state['historico'] = df_h
-                    st.success(f"Historial: {len(df_h)} regs")
+                    st.success(f"Historial Cargado: {len(df_h)} regs")
                 else: st.error("Error Historial")
                 
         if 'cartera' in st.session_state: st.info(f"📂 Cartera Activa: {len(st.session_state['cartera'])}")
@@ -571,15 +588,20 @@ def main():
                 st.error("Error leyendo archivo manual.")
                 return
             
-            # 2. Leer KB de Google Sheets (Si existe)
+            # 2. Leer KB de Google Sheets
             df_kb = pd.DataFrame()
             g_client = connect_to_google_sheets()
             if g_client:
                 try:
                     sh = g_client.open_by_url(st.secrets["google_sheets"]["sheet_url"])
-                    df_kb = get_as_dataframe(sh.worksheet("Knowledge_Base"))
+                    # Intentar leer KB, si no existe creamos vacío
+                    try:
+                        df_kb = get_as_dataframe(sh.worksheet("Knowledge_Base"), header=None)
+                    except:
+                        st.warning("Hoja 'Knowledge_Base' no encontrada, se creará al guardar.")
                     st.toast("Conectado a Google Sheets (KB)")
-                except: pass
+                except Exception as e:
+                    st.warning(f"No se pudo cargar KB de Google: {e}")
             
             # 3. Correr Motor
             df_res = motor_omnisciente(
@@ -645,11 +667,7 @@ def main():
                     try:
                         sh = g_client.open_by_url(st.secrets["google_sheets"]["sheet_url"])
                         
-                        # 1. Guardar Maestro
-                        # Nota: Podrías querer hacer un append en vez de sobrescribir, 
-                        # pero mantengo la lógica v14 de guardar el estado actual.
-                        # Para historial acumulado, deberíamos leer, append y guardar.
-                        # Por seguridad, aquí guardamos el resultado de la sesión.
+                        # 1. Guardar Maestro (Estado Actual)
                         ws_master = sh.worksheet(st.secrets["google_sheets"]["tab_bancos_master"])
                         df_final = st.session_state['resultado_final'].copy()
                         df_final = df_final.fillna('')
@@ -657,29 +675,37 @@ def main():
                         ws_master.clear()
                         set_with_dataframe(ws_master, df_final)
                         
-                        # 2. Entrenar IA (Guardar nuevos patrones en KB)
-                        nuevos = df_final[
+                        # 2. Entrenar IA (Crear/Actualizar Knowledge_Base)
+                        try:
+                            ws_kb = sh.worksheet("Knowledge_Base")
+                        except:
+                            ws_kb = sh.add_worksheet(title="Knowledge_Base", rows=1000, cols=2)
+
+                        # Filtramos lo que ya fue gestionado manualmente para "enseñarle" al robot
+                        nuevos_registros = df_final[
                             (df_final['Status_Gestion'] == 'REGISTRADA') & 
                             (df_final['Cliente_Identificado'] != '')
                         ]
-                        if not nuevos.empty:
-                            ws_kb = sh.worksheet("Knowledge_Base")
+                        
+                        if not nuevos_registros.empty:
                             data_kb = []
-                            for _, r in nuevos.iterrows():
-                                # Entrenar con Texto Normalizado del Manual -> Cliente Seleccionado
+                            for _, r in nuevos_registros.iterrows():
+                                # Texto normalizado del extracto -> Nombre Cliente
                                 txt_raw = str(r['Texto_Completo'])
                                 txt_norm = normalizar_texto_avanzado(txt_raw)
                                 cli = str(r['Cliente_Identificado']).strip()
-                                if len(txt_norm) > 5:
+                                
+                                if len(txt_norm) > 5 and cli:
                                     data_kb.append([txt_norm, cli])
                             
                             if data_kb:
+                                # Usamos append para que la BD crezca con el tiempo
                                 ws_kb.append_rows(data_kb)
-                                st.toast(f"🧠 IA aprendió {len(data_kb)} patrones nuevos.")
+                                st.toast(f"🧠 IA aprendió {len(data_kb)} nuevos patrones.")
                         
-                        st.success("✅ Guardado y Entrenado Exitosamente")
+                        st.success("✅ Guardado en la Nube y Entrenamiento Completado")
                     except Exception as e:
-                        st.error(f"Error guardando: {e}")
+                        st.error(f"Error guardando en Google Sheets: {e}")
 
 if __name__ == "__main__":
     main()
