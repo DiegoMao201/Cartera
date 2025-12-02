@@ -1,6 +1,6 @@
 # ======================================================================================
 # ARCHIVO: pages/2_Motor_Conciliacion.py
-# (Versión v14 - "El Omnisciente": Deep Token Search + Keyword Mapping)
+# (Versión v16 - "Omnisciente Total": Fusión Dropbox + Google Sheets + IA + Reportes Pro)
 # ======================================================================================
 
 import streamlit as st
@@ -20,7 +20,7 @@ import hashlib
 from collections import defaultdict
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Motor Conciliación Pro v14", page_icon="👁️", layout="wide")
+st.set_page_config(page_title="Motor Conciliación Pro v16", page_icon="👁️", layout="wide")
 
 # ======================================================================================
 # --- 1. CONEXIONES Y UTILIDADES ---
@@ -44,12 +44,15 @@ def connect_to_google_sheets():
     """Conexión persistente a Google Sheets"""
     try:
         scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
-        return gspread.authorize(creds)
+        if "gcp_service_account" in st.secrets:
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
+            return gspread.authorize(creds)
+        return None
     except Exception:
         return None
 
 def download_from_dropbox(dbx, path):
+    """Descarga binaria de un archivo en Dropbox"""
     try:
         _, res = dbx.files_download(path)
         return res.content
@@ -60,13 +63,16 @@ def download_from_dropbox(dbx, path):
 def generar_id_unico(row, index):
     """
     Crea una huella digital única (MD5).
-    Incluye el 'index' para garantizar unicidad absoluta.
+    Incluye el 'index' para garantizar unicidad absoluta en transacciones idénticas del mismo día.
     """
-    fecha_str = str(row['FECHA'])
-    val_str = str(row['Valor_Banco'])
-    txt_str = str(row['Texto_Completo']).strip()
-    raw_str = f"{index}_{fecha_str}{val_str}{txt_str}"
-    return hashlib.md5(raw_str.encode('utf-8')).hexdigest()
+    try:
+        fecha_str = str(row.get('FECHA', ''))
+        val_str = str(row.get('Valor_Banco', 0))
+        txt_str = str(row.get('Texto_Completo', '')).strip()
+        raw_str = f"{index}_{fecha_str}{val_str}{txt_str}"
+        return hashlib.md5(raw_str.encode('utf-8')).hexdigest()
+    except:
+        return f"ID_ERROR_{index}"
 
 def normalizar_texto_avanzado(texto):
     """Limpieza profunda de texto para mejorar el Fuzzy Matching"""
@@ -84,18 +90,17 @@ def normalizar_texto_avanzado(texto):
         'CONSORCIO', 'UNION', 'TEMPORAL', 'GRP', 'GROUP'
     ]
     for p in palabras_basura:
-        texto = re.sub(r'\b' + p + r'\b', ' ', texto) # Reemplazar por espacio para no pegar palabras
+        texto = re.sub(r'\b' + p + r'\b', ' ', texto)
     return ' '.join(texto.split())
 
 def extraer_posibles_nits(texto):
-    """Extrae números que parezcan NITs, incluyendo formatos con puntos"""
+    """Extrae números que parezcan NITs"""
     if not isinstance(texto, str): return []
-    # Busca nits limpios (890900123) o con puntos (890.900.123)
     clean_txt = texto.replace('.', '').replace('-', '')
     return re.findall(r'\b\d{7,11}\b', clean_txt)
 
 def limpiar_moneda_colombiana(val):
-    """Convierte texto financiero colombiano a float"""
+    """Convierte texto financiero a float"""
     if isinstance(val, (int, float)):
         return float(val) if pd.notnull(val) else 0.0
     
@@ -112,7 +117,7 @@ def limpiar_moneda_colombiana(val):
         return 0.0
 
 def extraer_dinero_de_texto(texto):
-    """Intenta rescatar montos numéricos de la descripción"""
+    """Rescata montos numéricos de la descripción si la columna valor es 0"""
     if not isinstance(texto, str): return 0.0
     matches = re.findall(r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)', texto)
     valores = []
@@ -125,7 +130,7 @@ def extraer_dinero_de_texto(texto):
     return max(valores) if valores else 0.0
 
 # ======================================================================================
-# --- 2. GENERADOR DE EXCEL PROFESIONAL ---
+# --- 2. GENERADOR DE EXCEL PROFESIONAL (Rescatado de v14) ---
 # ======================================================================================
 
 def generar_excel_profesional(df, resumen_kpis):
@@ -144,13 +149,13 @@ def generar_excel_profesional(df, resumen_kpis):
         sheet_resumen.write('B2', "RESUMEN DE CONCILIACIÓN - OMNISCIENTE", style_title)
         
         kpis = [
-            ("Total Movimientos", resumen_kpis['total_tx']),
-            ("Conciliados (Match Exacto)", resumen_kpis['exactos']),
-            ("Conciliados (Con Descuento)", resumen_kpis['descuentos']),
-            ("Conciliados (Impuestos)", resumen_kpis['impuestos']),
-            ("Parciales / Abonos", resumen_kpis['parciales']),
-            ("Histórico (Ya procesado)", resumen_kpis['historico']),
-            ("Sin Identificar", resumen_kpis['sin_id'])
+            ("Total Movimientos", resumen_kpis.get('total_tx', 0)),
+            ("Conciliados (Match Exacto)", resumen_kpis.get('exactos', 0)),
+            ("Conciliados (Con Descuento)", resumen_kpis.get('descuentos', 0)),
+            ("Conciliados (Impuestos)", resumen_kpis.get('impuestos', 0)),
+            ("Parciales / Abonos", resumen_kpis.get('parciales', 0)),
+            ("Histórico (Ya procesado)", resumen_kpis.get('historico', 0)),
+            ("Sin Identificar", resumen_kpis.get('sin_id', 0))
         ]
         
         row = 4
@@ -163,7 +168,7 @@ def generar_excel_profesional(df, resumen_kpis):
         cols_export = [
             'FECHA', 'Valor_Banco', 'Texto_Completo', 'Cliente_Identificado', 
             'NIT', 'Estado', 'Facturas_Conciliadas', 'Detalle_Operacion', 
-            'Diferencia', 'Tipo_Ajuste', 'Status_Gestion', 'Sugerencia_IA'
+            'Diferencia', 'Tipo_Ajuste', 'Status_Gestion', 'Sugerencia_IA', 'ID_Unico'
         ]
         for c in cols_export:
             if c not in df.columns: df[c] = ''
@@ -184,7 +189,7 @@ def generar_excel_profesional(df, resumen_kpis):
         fmt_blue = workbook.add_format({'bg_color': '#BDD7EE', 'font_color': '#1F497D'})
         fmt_red = workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
         fmt_yellow = workbook.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C5700'})
-        fmt_purple = workbook.add_format({'bg_color': '#E1D5E7', 'font_color': '#604A7B'}) # Nuevo para IA
+        fmt_purple = workbook.add_format({'bg_color': '#E1D5E7', 'font_color': '#604A7B'})
 
         for col_num, value in enumerate(df_export.columns.values):
             worksheet.write(0, col_num, value, header_format)
@@ -220,8 +225,8 @@ def generar_excel_profesional(df, resumen_kpis):
 # ======================================================================================
 
 @st.cache_data(ttl=600)
-def cargar_cartera_detalle():
-    """Carga Cartera desde Dropbox"""
+def cargar_cartera_dropbox():
+    """1. Carga Cartera (Facturas Abiertas) desde Dropbox"""
     dbx = get_dbx_client("dropbox")
     if not dbx: return pd.DataFrame()
     
@@ -242,15 +247,43 @@ def cargar_cartera_detalle():
         df['nombre_norm'] = df['NombreCliente'].apply(normalizar_texto_avanzado)
         df['FechaDoc'] = pd.to_datetime(df['FechaDoc'], errors='coerce')
         
-        # Generar lista de palabras clave únicas por cliente para la búsqueda profunda
         return df[df['Importe'] > 100].copy()
     except Exception as e:
         st.error(f"Error estructura cartera: {e}")
         return pd.DataFrame()
 
-def procesar_planilla_bancos(uploaded_file):
-    """Procesamiento inteligente del Excel Bancario"""
+@st.cache_data(ttl=600)
+def cargar_historico_dropbox():
+    """2. Carga Historial Consolidado (Planilla Bancos) desde Dropbox"""
+    dbx = get_dbx_client("dropbox")
+    if not dbx: return pd.DataFrame()
+    
+    content = download_from_dropbox(dbx, '/data/planilla_bancos.xlsx')
+    if not content: return pd.DataFrame()
+    
     try:
+        df = pd.read_excel(BytesIO(content))
+        # Normalizar columnas
+        df.columns = [str(c).strip().upper() for c in df.columns]
+        
+        col_cliente = next((c for c in df.columns if 'CLIENTE' in c or 'IDENTIFICADO' in c), None)
+        col_texto = next((c for c in df.columns if 'TEXTO' in c or 'DESCRIPCION' in c), None)
+        
+        if col_cliente and col_texto:
+            df['HISTORIA_CLIENTE'] = df[col_cliente].astype(str).str.strip()
+            df['HISTORIA_TEXTO'] = df[col_texto].apply(normalizar_texto_avanzado)
+            return df
+        else:
+            st.warning("El archivo Histórico en Dropbox no tiene columnas 'Cliente' o 'Texto' claras.")
+            return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error leyendo Histórico Dropbox: {e}")
+        return pd.DataFrame()
+
+def procesar_archivo_manual(uploaded_file):
+    """3. Procesa el archivo que subes MANUALMENTE (Día a día)"""
+    try:
+        # Detectar cabecera
         df_temp = pd.read_excel(uploaded_file, nrows=15, header=None)
         header_idx = 0
         for idx, row in df_temp.iterrows():
@@ -263,6 +296,7 @@ def procesar_planilla_bancos(uploaded_file):
         df = pd.read_excel(uploaded_file, header=header_idx)
         df.columns = [str(c).strip().upper() for c in df.columns]
         
+        # Estandarizar
         if 'FECHA' not in df.columns: 
              cols_fecha = [c for c in df.columns if 'FECHA' in c]
              if cols_fecha: df.rename(columns={cols_fecha[0]: 'FECHA'}, inplace=True)
@@ -279,479 +313,373 @@ def procesar_planilla_bancos(uploaded_file):
         else:
             df['Valor_Banco'] = 0.0
 
+        # Crear Texto Completo
         cols_exclude = ['FECHA', 'VALOR', 'Valor_Banco', 'SALDO', 'DEBITO']
         cols_txt = [c for c in df.columns if c not in cols_exclude]
         df['Texto_Completo'] = df[cols_txt].fillna('').astype(str).agg(' '.join, axis=1)
         df['Texto_Norm'] = df['Texto_Completo'].apply(normalizar_texto_avanzado)
         
+        # Rescatar valores cero
         mask_zero = df['Valor_Banco'] == 0
         df.loc[mask_zero, 'Valor_Banco'] = df.loc[mask_zero, 'Texto_Completo'].apply(extraer_dinero_de_texto)
         
-        df['ID_Transaccion'] = [generar_id_unico(row, idx) for idx, row in df.iterrows()]
+        # ID para cruce con histórico
+        df['ID_Unico'] = [generar_id_unico(row, idx) for idx, row in df.iterrows()]
         
         return df
     except Exception as e:
-        st.error(f"Error leyendo Excel: {e}")
+        st.error(f"Error procesando archivo manual: {e}")
         return pd.DataFrame()
 
 # ======================================================================================
-# --- 4. ALGORITMO OMNISCIENTE ---
+# --- 4. LÓGICA OMNISCIENTE ---
 # ======================================================================================
 
-def construir_indice_palabras_unicas(df_cartera):
-    """
-    Crea un mapa de palabras clave únicas.
-    Si la palabra "ASUL" aparece solo en un NIT, mapeamos ASUL -> NIT.
-    Esto permite encontrar al cliente incluso si el texto está sucio.
-    """
-    word_to_nits = defaultdict(set)
-    for idx, row in df_cartera.iterrows():
-        nit = row['nit_norm']
-        nombre = str(row['nombre_norm'])
-        # Tokenizar
-        words = nombre.split()
-        for w in words:
-            if len(w) > 3: # Ignorar palabras muy cortas
-                word_to_nits[w].add(nit)
-    
-    # Filtrar solo las palabras que apuntan a un único cliente (Determinísticas)
-    unique_keyword_map = {}
-    for w, nits in word_to_nits.items():
-        if len(nits) == 1:
-            unique_keyword_map[w] = list(nits)[0]
-            
-    return unique_keyword_map
-
-def analizar_cliente(nombre_banco, valor_pago, facturas_cliente):
+def analizar_deuda_cliente(nombre_cliente, nit_cliente, valor_pago, df_cartera):
+    """Motor financiero: Pago Exacto, Parcial, con Descuento o Impuestos."""
     res = {
-        'Estado': '⚠️ SIN COINCIDENCIA CLARA',
+        'Estado': '⚠️ SIN COINCIDENCIA DE VALOR',
         'Facturas_Conciliadas': '',
         'Detalle_Operacion': '',
         'Diferencia': 0,
         'Tipo_Ajuste': 'Ninguno',
-        'Ahorro_Dcto': 0,
         'Impuesto_Est': 0
     }
     
-    if facturas_cliente.empty:
-        res['Detalle_Operacion'] = "Cliente identificado pero sin cartera pendiente."
+    facturas = df_cartera[df_cartera['nit_norm'] == nit_cliente]
+    if facturas.empty:
+        facturas = df_cartera[df_cartera['NombreCliente'].str.contains(nombre_cliente, case=False, na=False)]
+    
+    if facturas.empty:
+        res['Detalle_Operacion'] = "Cliente identificado, pero sin cartera pendiente."
         res['Diferencia'] = valor_pago * -1
         return res
 
-    facturas = facturas_cliente[['Numero', 'Importe', 'FechaDoc']].sort_values('FechaDoc').to_dict('records')
-    total_deuda = sum(f['Importe'] for f in facturas)
+    facturas_list = facturas[['Numero', 'Importe']].to_dict('records')
+    total_deuda = sum(f['Importe'] for f in facturas_list)
     
-    # 1. MATCH EXACTO
+    # 1. MATCH EXACTO TOTAL
     if abs(valor_pago - total_deuda) < 1000:
         res['Estado'] = '✅ MATCH EXACTO (TOTAL)'
         res['Facturas_Conciliadas'] = 'TODAS'
         res['Detalle_Operacion'] = f"Pago total deuda."
         return res
         
-    # 2. MATCH COMBINATORIO
-    found_combo = False
-    for r in range(1, 5): # Aumentado a 5 facturas
-        if r > len(facturas): break
-        for combo in itertools.combinations(facturas, r):
+    # 2. MATCH FACTURAS ESPECÍFICAS
+    found = False
+    for r in range(1, 4): # Combinaciones de hasta 3 facturas
+        if found: break
+        for combo in itertools.combinations(facturas_list, r):
             suma_combo = sum(c['Importe'] for c in combo)
-            numeros_combo = ", ".join([str(c['Numero']) for c in combo])
+            numeros = ", ".join([str(c['Numero']) for c in combo])
             
-            # A. Exacto
             if abs(valor_pago - suma_combo) < 500:
-                res['Estado'] = '✅ MATCH FACTURAS ESPECÍFICAS'
-                res['Facturas_Conciliadas'] = numeros_combo
-                res['Detalle_Operacion'] = f"Suma exacta de {r} factura(s)."
-                found_combo = True
+                res['Estado'] = '✅ FACTURAS ESPECÍFICAS'
+                res['Facturas_Conciliadas'] = numeros
+                res['Detalle_Operacion'] = "Suma exacta de facturas."
+                found = True
                 break
-                
-            # B. Descuento (~3%)
-            suma_dcto = suma_combo * 0.97
-            if abs(valor_pago - suma_dcto) < 2000:
-                res['Estado'] = '💎 CONCILIADO CON DESCUENTO'
-                res['Facturas_Conciliadas'] = numeros_combo
-                res['Tipo_Ajuste'] = 'Descuento Pronto Pago'
-                res['Ahorro_Dcto'] = suma_combo - valor_pago
-                res['Detalle_Operacion'] = f"Pago con 3% Dcto."
-                found_combo = True
-                break
-        if found_combo: break
-    
-    if found_combo: return res
-
-    # 3. FIFO / IMPUESTOS
-    acumulado = 0
-    facturas_cubiertas = []
-    
-    for f in facturas:
-        if acumulado + f['Importe'] <= valor_pago + 1000:
-            acumulado += f['Importe']
-            facturas_cubiertas.append(str(f['Numero']))
-        else:
-            break
             
-    saldo_restante = total_deuda - valor_pago
-    
-    if facturas_cubiertas:
-        res['Estado'] = '⚠️ ABONO PARCIAL (FIFO)'
-        res['Facturas_Conciliadas'] = ", ".join(facturas_cubiertas)
-        res['Diferencia'] = saldo_restante
-        res['Detalle_Operacion'] = f"Abona a deuda. Resta ${saldo_restante:,.0f}"
-    else:
-        # Chequeo impuestos
-        base_est = total_deuda / 1.19
-        rete_fuente = base_est * 0.025
-        rete_iva = (base_est * 0.19) * 0.15
-        pago_con_imptos = total_deuda - rete_fuente - rete_iva
-        
-        if abs(valor_pago - pago_con_imptos) < 5000:
-            res['Estado'] = '🏢 CONCILIADO (IMPUESTOS)'
-            res['Impuesto_Est'] = rete_fuente + rete_iva
-            res['Detalle_Operacion'] = "Coincide menos retenciones."
-        else:
-            res['Estado'] = '❌ REVISAR MANUALMENTE'
-            res['Diferencia'] = saldo_restante
-            res['Detalle_Operacion'] = f"No cruza. Deuda Total: ${total_deuda:,.0f}"
+            if abs(valor_pago - (suma_combo * 0.97)) < 2000:
+                res['Estado'] = '💎 CONCILIADO C/DCTO'
+                res['Facturas_Conciliadas'] = numeros
+                res['Detalle_Operacion'] = "Pago con aprox 3% descuento."
+                res['Tipo_Ajuste'] = "Descuento Pronto Pago"
+                found = True
+                break
 
+    if found: return res
+
+    # 3. IMPUESTOS
+    base_est = total_deuda / 1.19
+    rete_fuente = base_est * 0.025
+    rete_iva = (base_est * 0.19) * 0.15
+    pago_imptos = total_deuda - rete_fuente - rete_iva
+    
+    if abs(valor_pago - pago_imptos) < 5000:
+        res['Estado'] = '🏢 CONCILIADO (IMPUESTOS)'
+        res['Impuesto_Est'] = rete_fuente + rete_iva
+        res['Detalle_Operacion'] = "Coincide menos retenciones."
+        return res
+
+    # 4. ABONO PARCIAL
+    res['Estado'] = '⚠️ ABONO / PARCIAL'
+    res['Diferencia'] = total_deuda - valor_pago
+    res['Detalle_Operacion'] = f"Abono a deuda. Resta ${total_deuda - valor_pago:,.0f}"
+    
     return res
 
-def buscar_match_global_por_monto(valor_pago, df_cartera_completa):
-    if valor_pago < 10000: return "" 
-    match_val = df_cartera_completa[
-        (df_cartera_completa['Importe'] >= valor_pago - 100) & 
-        (df_cartera_completa['Importe'] <= valor_pago + 100)
-    ]
-    if not match_val.empty:
-        mejor = match_val.iloc[0]
-        return f"💡 Monto coincide con '{mejor['NombreCliente']}' (Fac: {mejor['Numero']})"
-    return ""
-
-def correr_motor_supremo(df_bancos, df_cartera, df_kb, df_historial):
-    st.info("👁️ Iniciando Motor Omnisciente: Buscando 'ASUL' y patrones ocultos...")
+def motor_omnisciente(df_manual, df_cartera, df_historico, df_kb):
+    """
+    EL CEREBRO. Cruza:
+    1. Knowledge Base (Google Sheets)
+    2. Historial (Dropbox)
+    3. Cartera (NIT, Palabras Clave, Fuzzy)
+    """
+    st.info("🧠 Procesando: Memoria Histórica + Knowledge Base + Cartera...")
     
-    mapa_nit = df_cartera.groupby('nit_norm')['NombreCliente'].first().to_dict()
-    lista_nombres = df_cartera['nombre_norm'].unique().tolist()
+    # 1. MEMORIA UNIFICADA (Historial + KB)
+    memoria_unificada = {}
     
-    # INDICE DE PALABRAS CLAVE (La Magia para "ASUL")
-    indice_palabras = construir_indice_palabras_unicas(df_cartera)
-
-    # 1. Preparar Historial
-    mapa_historia = {}
-    if not df_historial.empty:
-        df_historial = df_historial.loc[:, ~df_historial.columns.str.contains('^Unnamed')]
-        if 'ID_Transaccion' in df_historial.columns:
-            df_historial['ID_Transaccion'] = df_historial['ID_Transaccion'].astype(str)
-            df_historial = df_historial.drop_duplicates(subset=['ID_Transaccion'])
-            mapa_historia = df_historial.set_index('ID_Transaccion').to_dict('index')
-
-    # 2. Preparar Knowledge Base
-    memoria = {}
+    # Cargar KB (Entrenamientos previos)
     if not df_kb.empty:
         for _, row in df_kb.iterrows():
-            try: memoria[str(row[0]).strip().upper()] = str(row[1]).strip()
+            try: memoria_unificada[str(row[0]).strip().upper()] = str(row[1]).strip()
             except: pass
+            
+    # Cargar Historial (Dropbox)
+    if not df_historico.empty:
+        for _, row in df_historico.iterrows():
+            txt = str(row.get('HISTORIA_TEXTO', ''))
+            cli = str(row.get('HISTORIA_CLIENTE', ''))
+            if len(txt) > 5 and cli != '' and cli != 'nan':
+                memoria_unificada[txt] = cli
 
-    resultados = []
-    bar = st.progress(0)
+    # 2. INDICE PALABRAS CLAVE (Cartera)
+    word_to_nits = defaultdict(set)
+    mapa_nit_nombre = df_cartera.groupby('nit_norm')['NombreCliente'].first().to_dict()
     
-    for i, row in df_bancos.iterrows():
-        bar.progress((i+1)/len(df_bancos))
+    for _, row in df_cartera.iterrows():
+        nombre_norm = str(row['nombre_norm'])
+        nit = row['nit_norm']
+        for w in nombre_norm.split():
+            if len(w) > 3: word_to_nits[w].add(nit)
+            
+    unique_keywords = {w: list(ns)[0] for w, ns in word_to_nits.items() if len(ns) == 1}
+
+    # 3. ITERACIÓN
+    resultados = []
+    progress_bar = st.progress(0)
+    
+    for idx, row in df_manual.iterrows():
+        progress_bar.progress((idx + 1) / len(df_manual))
+        
         item = row.to_dict()
-        
-        # --- A. CHECK HISTORIAL ---
-        current_id = str(item.get('ID_Transaccion', ''))
-        if current_id in mapa_historia:
-            hist_data = mapa_historia[current_id]
-            item['Status_Gestion'] = hist_data.get('Status_Gestion', 'REGISTRADA')
-            item['Cliente_Identificado'] = hist_data.get('Cliente_Identificado', '')
-            item['Estado'] = '🔒 HISTORIAL (YA REGISTRADO)'
-            item['Detalle_Operacion'] = 'Transacción procesada anteriormente.'
-            item['Facturas_Conciliadas'] = hist_data.get('Facturas_Conciliadas', '')
-            resultados.append(item)
-            continue
-        
-        # --- B. ANÁLISIS NUEVO ---
-        item['Status_Gestion'] = 'PENDIENTE'
-        item['Sugerencia_IA'] = ''
-        
-        txt_full = str(row['Texto_Completo']).upper()
         txt_norm = row['Texto_Norm']
-        val = row['Valor_Banco']
+        val_pago = row['Valor_Banco']
         
-        nit_found = None
-        origen_match = ""
+        cliente_detectado = None
+        nit_detectado = None
+        metodo_deteccion = ""
         
-        # B1. Memoria (Knowledge Base)
-        for k, v in memoria.items():
-            if k in txt_norm:
-                nit_found = v
-                origen_match = "IA (Memoria)"
-                break
+        # A. MEMORIA (Prioridad)
+        if txt_norm in memoria_unificada:
+            cliente_detectado = memoria_unificada[txt_norm]
+            metodo_deteccion = "🧠 Memoria / KB"
+            match_nit = df_cartera[df_cartera['NombreCliente'] == cliente_detectado]
+            if not match_nit.empty:
+                nit_detectado = match_nit.iloc[0]['nit_norm']
         
-        # B2. NIT Explicito (Regex)
-        if not nit_found:
-            posibles = extraer_posibles_nits(txt_full)
-            for p in posibles:
-                # Limpiar puntos para cruzar
-                p_clean = p.replace('.', '').replace('-', '')
-                if p_clean in mapa_nit:
-                    nit_found = p_clean
-                    origen_match = "NIT Encontrado"
+        # B. CARTERA
+        if not cliente_detectado:
+            # B1. NIT en Texto
+            nits_found = extraer_posibles_nits(row['Texto_Completo'])
+            for n in nits_found:
+                if n in mapa_nit_nombre:
+                    nit_detectado = n
+                    cliente_detectado = mapa_nit_nombre[n]
+                    metodo_deteccion = "🆔 NIT en Texto"
                     break
-        
-        # B3. KEYWORD MATCHING (Solución "ASUL")
-        # Rompe la frase en palabras y busca si alguna palabra es única de un cliente
-        if not nit_found:
-            palabras_banco = txt_norm.split()
-            for palabra in palabras_banco:
-                if len(palabra) > 3 and palabra in indice_palabras:
-                    nit_found = indice_palabras[palabra]
-                    origen_match = f"Palabra Clave '{palabra}'"
-                    break
-
-        # B4. Búsqueda de Nombre Contenido (String Containment)
-        # Si el nombre normalizado del cliente (ej: "ASUL") está dentro de la frase
-        if not nit_found:
-            for nombre_cli in lista_nombres:
-                # Solo si el nombre es lo suficientemente largo para evitar falsos positivos
-                if len(nombre_cli) > 4 and nombre_cli in txt_norm:
-                     nit_found = df_cartera[df_cartera['nombre_norm'] == nombre_cli]['nit_norm'].iloc[0]
-                     origen_match = "Nombre Contenido"
-                     break
-
-        # B5. Fuzzy Logic (Último recurso)
-        if not nit_found and len(txt_norm) > 5:
-            # Token Set Ratio es potente para desorden
-            match, score = process.extractOne(txt_norm, lista_nombres, scorer=fuzz.token_set_ratio)
-            if score >= 85: # Bajamos un poco umbral para ser más agresivos
-                nit_found = df_cartera[df_cartera['nombre_norm'] == match]['nit_norm'].iloc[0]
-                origen_match = f"Fuzzy Logic ({score}%)"
-
-        # --- C. MOTOR FINANCIERO ---
-        if nit_found:
-            nombre_cliente = mapa_nit.get(nit_found, "Cliente")
-            facturas_open = df_cartera[df_cartera['nit_norm'] == nit_found]
-            analisis = analizar_cliente(nombre_cliente, val, facturas_open)
             
+            # B2. Palabra Clave ("ASUL")
+            if not cliente_detectado:
+                for palabra in txt_norm.split():
+                    if palabra in unique_keywords:
+                        nit_detectado = unique_keywords[palabra]
+                        cliente_detectado = mapa_nit_nombre[nit_detectado]
+                        metodo_deteccion = f"🔑 Palabra Clave '{palabra}'"
+                        break
+            
+            # B3. Fuzzy
+            if not cliente_detectado:
+                posibles_nombres = df_cartera['nombre_norm'].unique()
+                match, score = process.extractOne(txt_norm, posibles_nombres, scorer=fuzz.token_set_ratio)
+                if score >= 85:
+                    cliente_detectado = df_cartera[df_cartera['nombre_norm'] == match]['NombreCliente'].iloc[0]
+                    nit_detectado = df_cartera[df_cartera['nombre_norm'] == match]['nit_norm'].iloc[0]
+                    metodo_deteccion = f"≈ Similitud ({score}%)"
+
+        # C. RESULTADO
+        item['Cliente_Identificado'] = cliente_detectado if cliente_detectado else ""
+        item['NIT'] = nit_detectado if nit_detectado else ""
+        item['Sugerencia_IA'] = metodo_deteccion
+        item['Status_Gestion'] = 'PENDIENTE'
+        
+        if cliente_detectado and nit_detectado:
+            analisis = analizar_deuda_cliente(cliente_detectado, nit_detectado, val_pago, df_cartera)
             item.update(analisis)
-            item['Cliente_Identificado'] = nombre_cliente
-            item['NIT'] = nit_found
-            item['Sugerencia_IA'] = f"Detectado por: {origen_match}"
-            
         else:
-            item['Estado'] = '❓ NO IDENTIFICADO'
-            item['Cliente_Identificado'] = ''
-            item['Detalle_Operacion'] = 'Falta información para cruzar.'
-            
-            # B6. Radar Global (Monto)
-            sugerencia = buscar_match_global_por_monto(val, df_cartera)
-            if sugerencia:
-                item['Sugerencia_IA'] = sugerencia
-                item['Estado'] = '💡 SUGERENCIA IA'
+            # Radar Monto
+            match_monto = df_cartera[
+                (df_cartera['Importe'] >= val_pago - 100) & 
+                (df_cartera['Importe'] <= val_pago + 100)
+            ]
+            if not match_monto.empty:
+                cand = match_monto.iloc[0]
+                item['Estado'] = '💡 SUGERENCIA MONTO'
+                item['Sugerencia_IA'] = f"Monto coincide con {cand['NombreCliente']}"
+                item['Detalle_Operacion'] = f"Posible Factura {cand['Numero']}"
+            else:
+                item['Estado'] = '❓ NO IDENTIFICADO'
+                item['Detalle_Operacion'] = "Sin coincidencias claras."
 
         resultados.append(item)
         
     return pd.DataFrame(resultados)
 
 # ======================================================================================
-# --- 5. INTERFAZ GRÁFICA MAESTRA ---
+# --- 5. INTERFAZ PRINCIPAL ---
 # ======================================================================================
 
 def main():
-    st.title("👁️ Motor Conciliación Omnisciente v14")
-    st.markdown("**Novedad:** Detecta palabras clave ocultas (ej. 'ASUL') dentro de descripciones complejas.")
-    
+    st.title("👁️ Motor Omnisciente Total (v16)")
+    st.markdown("Fusión: Dropbox + Google Sheets + IA + Reportes Pro")
+
     # --- BARRA LATERAL ---
     with st.sidebar:
-        st.header("1. Carga de Datos")
-        uploaded_file = st.file_uploader("📂 Planilla Banco (.xlsx)", type=["xlsx"])
+        st.header("1. Fuentes de Datos (Dropbox)")
         
-        if st.button("🔄 Sincronizar Cartera (Dropbox)"):
-            with st.spinner("Descargando cartera actualizada..."):
-                df_c = cargar_cartera_detalle()
+        if st.button("🔄 Cargar Cartera (Dropbox)"):
+            with st.spinner("Descargando..."):
+                df_c = cargar_cartera_dropbox()
                 if not df_c.empty:
                     st.session_state['cartera'] = df_c
-                    st.success(f"Cartera OK: {len(df_c)} facturas.")
-                else: st.error("Error conectando a Dropbox")
+                    st.success(f"Cartera: {len(df_c)} regs")
+                else: st.error("Error Cartera")
         
-        st.divider()
-        st.header("2. Filtros de Vista")
-        filtro_fecha = st.empty()
-        filtro_mes = st.empty()
-        filtro_estado = st.empty()
-        filtro_gestion = st.empty()
+        if st.button("📚 Cargar Historial (Dropbox)"):
+            with st.spinner("Descargando Historial..."):
+                df_h = cargar_historico_dropbox()
+                if not df_h.empty:
+                    st.session_state['historico'] = df_h
+                    st.success(f"Historial: {len(df_h)} regs")
+                else: st.error("Error Historial")
+                
+        if 'cartera' in st.session_state: st.info(f"📂 Cartera Activa: {len(st.session_state['cartera'])}")
+        if 'historico' in st.session_state: st.info(f"🧠 Memoria Activa: {len(st.session_state['historico'])}")
 
-    # --- PANEL PRINCIPAL ---
+    # --- PANEL CENTRAL ---
+    st.subheader("2. Operación Diaria")
+    uploaded_file = st.file_uploader("Sube el Archivo Manual Diario (.xlsx)", type=["xlsx"])
+
     if uploaded_file and 'cartera' in st.session_state:
-        
         if st.button("🚀 EJECUTAR ESCANEO PROFUNDO", type="primary", use_container_width=True):
-            # 1. Leer Banco
-            df_bancos = procesar_planilla_bancos(uploaded_file)
-            if df_bancos.empty:
-                st.error("Archivo de banco vacío o ilegible.")
-                return
-
-            # 2. Leer Nube
-            g_client = connect_to_google_sheets()
-            df_kb = pd.DataFrame()
-            df_hist = pd.DataFrame()
             
+            # 1. Leer Manual
+            df_manual = procesar_archivo_manual(uploaded_file)
+            if df_manual.empty:
+                st.error("Error leyendo archivo manual.")
+                return
+            
+            # 2. Leer KB de Google Sheets (Si existe)
+            df_kb = pd.DataFrame()
+            g_client = connect_to_google_sheets()
             if g_client:
                 try:
                     sh = g_client.open_by_url(st.secrets["google_sheets"]["sheet_url"])
-                    try: df_kb = get_as_dataframe(sh.worksheet("Knowledge_Base"))
-                    except: pass
-                    try: 
-                        ws_hist = sh.worksheet(st.secrets["google_sheets"]["tab_bancos_master"])
-                        df_hist = get_as_dataframe(ws_hist)
-                        df_hist = df_hist.dropna(how='all')
-                    except: pass
+                    df_kb = get_as_dataframe(sh.worksheet("Knowledge_Base"))
+                    st.toast("Conectado a Google Sheets (KB)")
                 except: pass
-
+            
             # 3. Correr Motor
-            df_res = correr_motor_supremo(df_bancos, st.session_state['cartera'], df_kb, df_hist)
-            st.session_state['resultados_supremo'] = df_res
-            st.rerun()
-
-        # --- PANTALLA DE RESULTADOS ---
-        if 'resultados_supremo' in st.session_state:
-            df = st.session_state['resultados_supremo'].copy()
-            
-            # KPIs
-            kpis = {
-                'total_tx': len(df),
-                'exactos': len(df[df['Estado'].str.contains('EXACTO', na=False)]),
-                'descuentos': len(df[df['Estado'].str.contains('DESCUENTO', na=False)]),
-                'impuestos': len(df[df['Estado'].str.contains('IMPUESTOS', na=False)]),
-                'parciales': len(df[df['Estado'].str.contains('PARCIAL|ABONO', regex=True, na=False)]),
-                'historico': len(df[df['Estado'].str.contains('HISTORIAL', na=False)]),
-                'sin_id': len(df[df['Estado'].str.contains('NO IDENTIFICADO|SUGERENCIA', regex=True, na=False)])
-            }
-            
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Conciliados Auto", kpis['exactos'] + kpis['descuentos'] + kpis['impuestos'])
-            c2.metric("Parciales/Abonos", kpis['parciales'])
-            c3.metric("Ya en Historial", kpis['historico'])
-            c4.metric("Por Gestionar", kpis['sin_id'])
-            
-            st.divider()
-            
-            # --- LÓGICA DE FILTROS ---
-            df['Mes'] = df['FECHA'].dt.strftime('%Y-%m')
-            
-            with filtro_fecha:
-                min_d = df['FECHA'].min().date()
-                max_d = df['FECHA'].max().date()
-                rango = st.date_input("📅 Rango", value=(min_d, max_d), min_value=min_d, max_value=max_d)
-            
-            with filtro_mes:
-                meses = sorted(df['Mes'].unique())
-                sel_mes = st.multiselect("🗓️ Mes", meses, default=meses)
-            
-            with filtro_estado:
-                estados = sorted(df['Estado'].unique())
-                sel_estado = st.multiselect("📊 Estado", estados, default=estados)
-                
-            with filtro_gestion:
-                gestiones = sorted(df['Status_Gestion'].unique())
-                sel_gestion = st.multiselect("📝 Gestión", gestiones, default=gestiones)
-                
-            # Aplicar Filtros
-            mask = (df['Mes'].isin(sel_mes)) & (df['Estado'].isin(sel_estado)) & (df['Status_Gestion'].isin(sel_gestion))
-            if isinstance(rango, tuple) and len(rango) == 2:
-                mask = mask & (df['FECHA'].dt.date >= rango[0]) & (df['FECHA'].dt.date <= rango[1])
-            
-            df_filtered = df[mask].copy()
-
-            # --- EDITOR DE DATOS ---
-            st.subheader(f"📋 Panel de Gestión ({len(df_filtered)} registros)")
-            
-            lista_clientes = sorted(st.session_state['cartera']['NombreCliente'].unique().tolist())
-            
-            col_config = {
-                "Status_Gestion": st.column_config.SelectboxColumn("Estado Gestión", options=['PENDIENTE', 'REGISTRADA'], required=True),
-                "Cliente_Identificado": st.column_config.SelectboxColumn("Cliente (Editar)", options=lista_clientes, width="large"),
-                "Sugerencia_IA": st.column_config.TextColumn("IA Detectó", disabled=True, width="medium"),
-                "Valor_Banco": st.column_config.NumberColumn("Valor", format="$ %d"),
-                "FECHA": st.column_config.DateColumn("Fecha", format="DD/MM/YYYY", disabled=True)
-            }
-            
-            cols_show = [
-                'Status_Gestion', 'FECHA', 'Valor_Banco', 'Cliente_Identificado', 
-                'Estado', 'Sugerencia_IA', 'Detalle_Operacion', 'Facturas_Conciliadas', 
-                'Texto_Completo', 'ID_Transaccion'
-            ]
-            
-            edited_df = st.data_editor(
-                df_filtered[cols_show],
-                column_config=col_config,
-                use_container_width=True,
-                height=500,
-                num_rows="fixed",
-                key="editor_supremo"
+            df_res = motor_omnisciente(
+                df_manual, 
+                st.session_state['cartera'], 
+                st.session_state.get('historico', pd.DataFrame()), 
+                df_kb
             )
-            
-            # --- ACCIONES FINALES ---
-            col_btn1, col_btn2 = st.columns([1, 1])
-            
-            # A. Descargar Excel
-            with col_btn1:
-                st.session_state['resultados_supremo'].update(edited_df)
-                df_final_export = st.session_state['resultados_supremo'].copy()
-                excel_data = generar_excel_profesional(df_final_export, kpis)
-                
-                st.download_button(
-                    label="💾 Descargar Reporte Profesional (.xlsx)",
-                    data=excel_data,
-                    file_name=f"Conciliacion_Omnisciente_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="secondary",
-                    use_container_width=True
-                )
+            st.session_state['resultado_final'] = df_res
 
-            # B. Guardar en Nube
-            with col_btn2:
-                if st.button("☁️ GUARDAR CAMBIOS Y ENTRENAR IA", type="primary", use_container_width=True):
+    # --- RESULTADOS ---
+    if 'resultado_final' in st.session_state:
+        df_res = st.session_state['resultado_final']
+        st.divider()
+        
+        # KPIs
+        kpis = {
+            'total_tx': len(df_res),
+            'exactos': len(df_res[df_res['Estado'].str.contains('EXACTO', na=False)]),
+            'descuentos': len(df_res[df_res['Estado'].str.contains('DCTO', na=False)]),
+            'impuestos': len(df_res[df_res['Estado'].str.contains('IMPUESTOS', na=False)]),
+            'parciales': len(df_res[df_res['Estado'].str.contains('PARCIAL', na=False)]),
+            'historico': len(df_res[df_res['Sugerencia_IA'].str.contains('Memoria', na=False)]),
+            'sin_id': len(df_res[df_res['Estado'].str.contains('NO IDENTIFICADO', na=False)])
+        }
+        
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Conciliados Auto", kpis['exactos'] + kpis['descuentos'] + kpis['impuestos'])
+        c2.metric("Parciales/Abonos", kpis['parciales'])
+        c3.metric("Por Memoria", kpis['historico'])
+        c4.metric("Pendientes", kpis['sin_id'])
+        
+        # Editor
+        lista_clientes = sorted(st.session_state['cartera']['NombreCliente'].unique().tolist())
+        col_config = {
+            "Status_Gestion": st.column_config.SelectboxColumn("Gestión", options=['PENDIENTE', 'REGISTRADA'], required=True),
+            "Cliente_Identificado": st.column_config.SelectboxColumn("Cliente", options=lista_clientes, width="large"),
+            "Valor_Banco": st.column_config.NumberColumn("Valor", format="$ %d")
+        }
+        cols_view = ['Status_Gestion', 'FECHA', 'Valor_Banco', 'Cliente_Identificado', 'Estado', 'Sugerencia_IA', 'Detalle_Operacion', 'ID_Unico']
+        
+        edited_df = st.data_editor(
+            df_res[cols_view], 
+            use_container_width=True, 
+            column_config=col_config, 
+            key="editor_final"
+        )
+        
+        # ACCIONES
+        c_down, c_save = st.columns(2)
+        
+        with c_down:
+            st.session_state['resultado_final'].update(edited_df)
+            excel_data = generar_excel_profesional(st.session_state['resultado_final'], kpis)
+            st.download_button("💾 Descargar Excel Profesional", data=excel_data, file_name="Conciliacion_Pro.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            
+        with c_save:
+            if st.button("☁️ GUARDAR Y ENTRENAR IA (Google Sheets)", type="primary", use_container_width=True):
+                g_client = connect_to_google_sheets()
+                if not g_client:
+                    st.error("No se pudo conectar a Google Sheets.")
+                else:
                     try:
-                        st.session_state['resultados_supremo'].update(edited_df)
-                        df_final = st.session_state['resultados_supremo'].copy()
+                        sh = g_client.open_by_url(st.secrets["google_sheets"]["sheet_url"])
                         
-                        g_client = connect_to_google_sheets()
-                        if g_client:
-                            sh = g_client.open_by_url(st.secrets["google_sheets"]["sheet_url"])
-                            ws = sh.worksheet(st.secrets["google_sheets"]["tab_bancos_master"])
+                        # 1. Guardar Maestro
+                        # Nota: Podrías querer hacer un append en vez de sobrescribir, 
+                        # pero mantengo la lógica v14 de guardar el estado actual.
+                        # Para historial acumulado, deberíamos leer, append y guardar.
+                        # Por seguridad, aquí guardamos el resultado de la sesión.
+                        ws_master = sh.worksheet(st.secrets["google_sheets"]["tab_bancos_master"])
+                        df_final = st.session_state['resultado_final'].copy()
+                        df_final = df_final.fillna('')
+                        df_final['FECHA'] = df_final['FECHA'].astype(str)
+                        ws_master.clear()
+                        set_with_dataframe(ws_master, df_final)
+                        
+                        # 2. Entrenar IA (Guardar nuevos patrones en KB)
+                        nuevos = df_final[
+                            (df_final['Status_Gestion'] == 'REGISTRADA') & 
+                            (df_final['Cliente_Identificado'] != '')
+                        ]
+                        if not nuevos.empty:
+                            ws_kb = sh.worksheet("Knowledge_Base")
+                            data_kb = []
+                            for _, r in nuevos.iterrows():
+                                # Entrenar con Texto Normalizado del Manual -> Cliente Seleccionado
+                                txt_raw = str(r['Texto_Completo'])
+                                txt_norm = normalizar_texto_avanzado(txt_raw)
+                                cli = str(r['Cliente_Identificado']).strip()
+                                if len(txt_norm) > 5:
+                                    data_kb.append([txt_norm, cli])
                             
-                            df_save = df_final.copy()
-                            df_save['FECHA'] = df_save['FECHA'].astype(str)
-                            df_save = df_save.fillna('')
-                            
-                            ws.clear()
-                            set_with_dataframe(ws, df_save)
-                            
-                            # Entrenar IA
-                            nuevos_manuales = df_final[
-                                (df_final['Status_Gestion'] == 'REGISTRADA') & 
-                                (df_final['Estado'].str.contains('NO IDENTIFICADO', na=False)) &
-                                (df_final['Cliente_Identificado'] != '')
-                            ]
-                            
-                            if not nuevos_manuales.empty:
-                                ws_kb = sh.worksheet("Knowledge_Base")
-                                data_kb = []
-                                for _, r in nuevos_manuales.iterrows():
-                                    # Entrenamos con la frase normalizada para mejorar futuros matches
-                                    key = str(r['Texto_Norm'])[:40].strip().upper()
-                                    val = str(r['Cliente_Identificado']).strip()
-                                    if len(key) > 5 and len(val) > 3:
-                                        data_kb.append([key, val])
-                                
-                                if data_kb:
-                                    ws_kb.append_rows(data_kb)
-                                    st.toast(f"🧠 La IA aprendió {len(data_kb)} nuevos patrones.")
-                            
-                            st.success("✅ ¡Datos sincronizados exitosamente!")
-                            
+                            if data_kb:
+                                ws_kb.append_rows(data_kb)
+                                st.toast(f"🧠 IA aprendió {len(data_kb)} patrones nuevos.")
+                        
+                        st.success("✅ Guardado y Entrenado Exitosamente")
                     except Exception as e:
-                        st.error(f"Error al guardar: {e}")
+                        st.error(f"Error guardando: {e}")
 
 if __name__ == "__main__":
     main()
