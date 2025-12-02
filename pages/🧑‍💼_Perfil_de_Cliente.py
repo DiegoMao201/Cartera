@@ -195,7 +195,7 @@ def main():
         st.image("https://cdn-icons-png.flaticon.com/512/2503/2503657.png", width=80)
         st.markdown("### 🔍 Filtros Globales")
         
-        vendedores = ["TODOS"] + sorted(list(df['vendedor'].unique()))
+        vendedores = ["TODOS"] + sorted(list(df['vendedor'].astype(str).unique()))
         filtro_vendedor = st.selectbox("Vendedor / Zona", vendedores)
         
         if filtro_vendedor != "TODOS":
