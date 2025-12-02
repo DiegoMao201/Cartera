@@ -35,10 +35,10 @@ st.set_page_config(
 )
 
 # Paleta de Colores y CSS Corporativo (Unificada)
-COLOR_PRIMARIO = "#003865"       # Azul oscuro corporativo
-COLOR_ACCION = "#FFC300"         # Amarillo para acciones y énfasis
-COLOR_FONDO = "#f0f2f6"          # Gris claro de fondo
-COLOR_TARJETA = "#FFFFFF"        # Fondo de tarjetas y métricas
+COLOR_PRIMARIO = "#003865"        # Azul oscuro corporativo
+COLOR_ACCION = "#FFC300"          # Amarillo para acciones y énfasis
+COLOR_FONDO = "#f0f2f6"           # Gris claro de fondo
+COLOR_TARJETA = "#FFFFFF"         # Fondo de tarjetas y métricas
 COLOR_ALERTA_CRITICA = "#D32F2F" # Rojo para alertas
 
 st.markdown(f"""
@@ -693,92 +693,90 @@ def main():
                 axis=1
             )
 
-            # Agrupar por Cliente para gestión (solo clientes con saldo > 0)
-            # Se usa 'importe_vencido' en lugar de la lambda compleja que causó el KeyError
-            df_agrupado = df_gestion.groupby('nombrecliente').agg(
-                saldo=('importe', 'sum'),
-                saldo_vencido=('importe_vencido', 'sum'), # COLUMNA CORREGIDA
-                dias_max=('dias_vencido', 'max'),
-                telefono=('telefono1', 'first'),
-                email=('e_mail', 'first'),
-                vendedor=('nomvendedor', 'first'),
-                nit=('nit', 'first'),
-                cod_cliente=('cod_cliente', 'first')
-            ).reset_index().sort_values('saldo_vencido', ascending=False)
+        # Agrupar por Cliente para gestión (solo clientes con saldo > 0)
+        # Se usa 'importe_vencido' en lugar de la lambda compleja que causó el KeyError
+        df_agrupado = df_gestion.groupby('nombrecliente').agg(
+            saldo=('importe', 'sum'),
+            saldo_vencido=('importe_vencido', 'sum'), # COLUMNA CORREGIDA
+            dias_max=('dias_vencido', 'max'),
+            telefono=('telefono1', 'first'),
+            email=('e_mail', 'first'),
+            vendedor=('nomvendedor', 'first'),
+            nit=('nit', 'first'),
+            cod_cliente=('cod_cliente', 'first')
+        ).reset_index().sort_values('saldo_vencido', ascending=False)
+        
+        clientes_a_mostrar = df_agrupado['nombrecliente'].tolist()
+        
+        # Selector de cliente
+        cliente_sel = st.selectbox("🔍 Selecciona Cliente a Gestionar (Priorizado por Deuda Vencida)", 
+                                 [""] + clientes_a_mostrar, 
+                                 format_func=lambda x: '--- Selecciona un cliente ---' if x == "" else x)
+        
+        if cliente_sel:
+            data_cli = df_agrupado[df_agrupado['nombrecliente'] == cliente_sel].iloc[0]
+            detalle_facturas = df_view[df_view['nombrecliente'] == cliente_sel].sort_values('dias_vencido', ascending=False)
             
-            clientes_a_mostrar = df_agrupado['nombrecliente'].tolist()
+            saldo_vencido_cli = data_cli['saldo_vencido']
             
-            # Selector de cliente
-            cliente_sel = st.selectbox("🔍 Selecciona Cliente a Gestionar (Priorizado por Deuda Vencida)", 
-                                     [""] + clientes_a_mostrar, 
-                                     format_func=lambda x: '--- Selecciona un cliente ---' if x == "" else x)
+            # Limpieza de datos
+            email_cli = data_cli['email'] if data_cli['email'] not in ['N/A', '', None] else 'Correo no disponible'
+            # Asumiendo que telefono es un string con posible punto decimal
+            telefono_raw = str(data_cli['telefono']).split('.')[0].strip()
+            telefono_cli = f"+57{re.sub(r'\D', '', telefono_raw)}" if len(re.sub(r'\D', '', telefono_raw)) == 10 else telefono_raw
             
-            if cliente_sel:
-                data_cli = df_agrupado[df_agrupado['nombrecliente'] == cliente_sel].iloc[0]
-                detalle_facturas = df_view[df_view['nombrecliente'] == cliente_sel].sort_values('dias_vencido', ascending=False)
+            c1, c2 = st.columns([1, 2])
+            
+            with c1:
+                st.markdown(f"#### Resumen de Cliente: **{cliente_sel}**")
+                st.info(f"**Deuda Total:** ${data_cli['saldo']:,.0f}")
+                st.markdown(f'<div style="background-color: #fee2e2; border-left: 5px solid {COLOR_ALERTA_CRITICA}; padding: 10px; border-radius: 5px;">'
+                            f'**Deuda Vencida:** ${saldo_vencido_cli:,.0f}'
+                            f'</div>', unsafe_allow_html=True)
+                st.error(f"**Días Máx Mora:** {int(data_cli['dias_max'])} días")
+                st.text(f"📞 {telefono_cli} | 📧 {email_cli}")
+                cod_cli_display = int(data_cli['cod_cliente']) if pd.notna(data_cli['cod_cliente']) else 'N/A'
+                st.text(f"ID: {data_cli['nit']} | Cód. Cliente: {cod_cli_display}")
                 
-                saldo_vencido_cli = data_cli['saldo_vencido']
+                # Generar PDF en memoria
+                pdf_bytes = crear_pdf(detalle_facturas, saldo_vencido_cli)
                 
-                # Limpieza de datos
-                email_cli = data_cli['email'] if data_cli['email'] not in ['N/A', '', None] else 'Correo no disponible'
-                # Asumiendo que telefono es un string con posible punto decimal
-                telefono_raw = str(data_cli['telefono']).split('.')[0].strip()
-                telefono_cli = f"+57{re.sub(r'\D', '', telefono_raw)}" if len(re.sub(r'\D', '', telefono_raw)) == 10 else telefono_raw
+                # --- BOTÓN WHATSAPP ---
+                cod_cli_val = int(data_cli['cod_cliente']) if pd.notna(data_cli['cod_cliente']) else 'N/A'
+                link_wa = generar_link_wa(telefono_cli, cliente_sel, saldo_vencido_cli, data_cli['dias_max'], data_cli['nit'], cod_cli_val)
+                if link_wa and len(re.sub(r'\D', '', link_wa)) >= 10:
+                    st.markdown(f"""<a href="{link_wa}" target="_blank" class="wa-link">📱 ABRIR WHATSAPP CON GUION</a>""", unsafe_allow_html=True)
+                else:
+                    st.error("Número de teléfono inválido para WhatsApp")
                 
-                c1, c2 = st.columns([1, 2])
-                
-                with c1:
-                    st.markdown(f"#### Resumen de Cliente: **{cliente_sel}**")
-                    st.info(f"**Deuda Total:** ${data_cli['saldo']:,.0f}")
-                    st.markdown(f'<div style="background-color: #fee2e2; border-left: 5px solid {COLOR_ALERTA_CRITICA}; padding: 10px; border-radius: 5px;">'
-                                f'**Deuda Vencida:** ${saldo_vencido_cli:,.0f}'
-                                f'</div>', unsafe_allow_html=True)
-                    st.error(f"**Días Máx Mora:** {int(data_cli['dias_max'])} días")
-                    st.text(f"📞 {telefono_cli} | 📧 {email_cli}")
-                    cod_cli_display = int(data_cli['cod_cliente']) if pd.notna(data_cli['cod_cliente']) else 'N/A'
-                    st.text(f"ID: {data_cli['nit']} | Cód. Cliente: {cod_cli_display}")
-                    
-                    # Generar PDF en memoria
-                    pdf_bytes = crear_pdf(detalle_facturas, saldo_vencido_cli)
-                    
-                    # --- BOTÓN WHATSAPP ---
-                    cod_cli_val = int(data_cli['cod_cliente']) if pd.notna(data_cli['cod_cliente']) else 'N/A'
-                    link_wa = generar_link_wa(telefono_cli, cliente_sel, saldo_vencido_cli, data_cli['dias_max'], data_cli['nit'], cod_cli_val)
-                    if link_wa and len(re.sub(r'\D', '', link_wa)) >= 10:
-                        st.markdown(f"""<a href="{link_wa}" target="_blank" class="wa-link">📱 ABRIR WHATSAPP CON GUION</a>""", unsafe_allow_html=True)
-                    else:
-                        st.error("Número de teléfono inválido para WhatsApp")
-                    
-                    st.download_button(label="📄 Descargar PDF Local", data=pdf_bytes, file_name=f"Estado_Cuenta_{normalizar_nombre(cliente_sel).replace(' ', '_')}.pdf", mime="application/pdf")
+                st.download_button(label="📄 Descargar PDF Local", data=pdf_bytes, file_name=f"Estado_Cuenta_{normalizar_nombre(cliente_sel).replace(' ', '_')}.pdf", mime="application/pdf")
 
-                with c2:
-                    st.write("#### 📄 Detalle de Facturas (Priorizadas por Mora)")
-                    # Vista previa de facturas
-                    st.dataframe(detalle_facturas[['numero', 'fecha_vencimiento', 'dias_vencido', 'importe', 'Rango']].style.format({'importe': '${:,.0f}', 'numero': '{:.0f}'}).background_gradient(subset=['dias_vencido'], cmap='YlOrRd'), height=250, use_container_width=True, hide_index=True)
+            with c2:
+                st.write("#### 📄 Detalle de Facturas (Priorizadas por Mora)")
+                # Vista previa de facturas
+                st.dataframe(detalle_facturas[['numero', 'fecha_vencimiento', 'dias_vencido', 'importe', 'Rango']].style.format({'importe': '${:,.0f}', 'numero': '{:.0f}'}).background_gradient(subset=['dias_vencido'], cmap='YlOrRd'), height=250, use_container_width=True, hide_index=True)
+                
+                # --- ENVÍO DE CORREO ---
+                st.write("#### 📧 Envío de Estado de Cuenta por Correo")
+                with st.form("form_email"):
+                    email_dest = st.text_input("Destinatario", value=email_cli, key="email_dest_input")
                     
-                    # --- ENVÍO DE CORREO ---
-                    st.write("#### 📧 Envío de Estado de Cuenta por Correo")
-                    with st.form("form_email"):
-                        email_dest = st.text_input("Destinatario", value=email_cli, key="email_dest_input")
+                    if saldo_vencido_cli > 0:
+                        asunto_msg = f"Recordatorio URGENTE de Saldo Pendiente - {cliente_sel}"
+                        portal_link_email = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
+                        cuerpo_html = plantilla_correo_vencido(cliente_sel, saldo_vencido_cli, data_cli['dias_max'], data_cli['nit'], cod_cli_val, portal_link_email)
+                    else:
+                        asunto_msg = f"Tu Estado de Cuenta Actualizado - {cliente_sel} (Cta al Día)"
+                        # Aseguramos que la función plantilla_correo_al_dia exista (se agregó arriba)
+                        cuerpo_html = plantilla_correo_al_dia(cliente_sel, data_cli['saldo'])
                         
-                        if saldo_vencido_cli > 0:
-                            asunto_msg = f"Recordatorio URGENTE de Saldo Pendiente - {cliente_sel}"
-                            portal_link_email = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
-                            cuerpo_html = plantilla_correo_vencido(cliente_sel, saldo_vencido_cli, data_cli['dias_max'], data_cli['nit'], cod_cli_val, portal_link_email)
+                    submit_email = st.form_submit_button("📧 ENVIAR CORREO CON PDF ADJUNTO", type="primary")
+                    
+                    if submit_email:
+                        if enviar_correo(email_dest, asunto_msg, cuerpo_html, pdf_bytes):
+                            st.success(f"✅ Correo enviado a {email_dest}")
                         else:
-                            asunto_msg = f"Tu Estado de Cuenta Actualizado - {cliente_sel} (Cta al Día)"
-                            # Aseguramos que la función plantilla_correo_al_dia exista (se agregó arriba)
-                            cuerpo_html = plantilla_correo_al_dia(cliente_sel, data_cli['saldo'])
-                            
-                        submit_email = st.form_submit_button("📧 ENVIAR CORREO CON PDF ADJUNTO", type="primary")
-                        
-                        if submit_email:
-                            if enviar_correo(email_dest, asunto_msg, cuerpo_html, pdf_bytes):
-                                st.success(f"✅ Correo enviado a {email_dest}")
-                            else:
-                                st.error("❌ Falló el envío. Revisa credenciales y logs.")
-        else:
-            st.info("Selecciona un cliente de la lista para gestionar su cartera y enviar documentos.")
+                            st.error("❌ Falló el envío. Revisa credenciales y logs.")
 
 
     # ==============================================================================
