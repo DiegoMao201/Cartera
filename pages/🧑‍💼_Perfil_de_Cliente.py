@@ -427,7 +427,7 @@ def crear_excel_gerencial(df, total, vencido, pct_mora, clientes_mora, csi, anti
     ws['A6'].font = Font(size=12, bold=True)
     
     # Columnas a incluir en el reporte
-    cols = ['nombrecliente', 'nit', 'numero', 'nomvendedor', 'cod_cliente', 'Rango', 'zona', 'dias_vencido', 'importe', 'telefono1', 'e_mail']
+    cols = ['nombrecliente', 'nit', 'numero', 'nomvendedor', 'cod_cliente', 'Rango', 'zona', 'dias_vencido', 'importe', 'telefono1', 'e-mail']
     df_detalle = df[cols].sort_values(by='dias_vencido', ascending=False).reset_index(drop=True)
 
     # Headers de la tabla (fila 7)
@@ -700,7 +700,7 @@ def main():
             saldo_vencido=('importe_vencido', 'sum'), # COLUMNA CORREGIDA
             dias_max=('dias_vencido', 'max'),
             telefono=('telefono1', 'first'),
-            email=('e_mail', 'first'),
+            email=('e-mail', 'first'),
             vendedor=('nomvendedor', 'first'),
             nit=('nit', 'first'),
             cod_cliente=('cod_cliente', 'first')
@@ -866,7 +866,7 @@ def main():
         
         st.subheader("🔎 Datos Crudos Filtrados")
         # Mostrar el dataframe completo con las columnas clave
-        cols_mostrar = ['nombrecliente', 'nit', 'numero', 'fecha_documento', 'fecha_vencimiento', 'dias_vencido', 'importe', 'Rango', 'nomvendedor', 'zona', 'telefono1', 'e_mail']
+        cols_mostrar = ['nombrecliente', 'nit', 'numero', 'fecha_documento', 'fecha_vencimiento', 'dias_vencido', 'importe', 'Rango', 'nomvendedor', 'zona', 'telefono1', 'e-mail']
         st.dataframe(df_view[cols_mostrar].style.format({'importe': '${:,.0f}', 'dias_vencido': '{:,.0f}'}), use_container_width=True, hide_index=True)
 
 if __name__ == "__main__":
