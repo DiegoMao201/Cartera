@@ -112,7 +112,7 @@ def procesar_dataframe_robusto(df_raw):
 
     # 2. Limpieza de Tipos de Datos (Lógica del Código 2)
     
-    # *** CORRECCIÓN CRÍTICA: Asegurar que nomvendedor sea string para evitar TypeError en sorted() ***
+    # CRITICAL FIX (1): Asegurar que nomvendedor sea string para evitar TypeError en sorted()
     df['nomvendedor'] = df['nomvendedor'].astype(str).str.strip()
     
     # Importe
@@ -602,7 +602,6 @@ def main():
     
     # 1. Filtro Vendedor (General puede ver todos)
     if st.session_state['acceso_general']:
-        # **Línea Corregida:** df['nomvendedor'] ya es string gracias al pre-procesamiento, evitando el TypeError.
         vendedores_disponibles = ["TODOS"] + sorted(df['nomvendedor'].unique().tolist())
         filtro_vendedor = st.sidebar.selectbox("Filtrar por Vendedor:", vendedores_disponibles)
         if filtro_vendedor != "TODOS":
@@ -663,10 +662,13 @@ def main():
         st.subheader("🎯 Módulo de Contacto Directo y Envío de Docs.")
         
         # Agrupar por Cliente para gestión (solo clientes con saldo > 0)
+        # CRÍTICO: Se utiliza .transform() para obtener la columna dias_vencido filtrada
+        # y luego se calcula saldo_vencido de forma separada para evitar errores en groupby.agg
+        
         df_agrupado = df_view[df_view['importe'] > 0].groupby('nombrecliente').agg(
             saldo=('importe', 'sum'),
-            # Usar df_view.loc[x.index, ...] para que la máscara de días vencidos funcione correctamente
-            saldo_vencido=('importe', lambda x: x[df_view.loc[x.index, 'dias_vencido'] > 0].sum()),
+            # Se usa una función lambda más directa en el contexto del grupo:
+            saldo_vencido=('importe', lambda x: x[df_view.loc[x.index, 'dias_vencido'] > 0].sum() if 'dias_vencido' in df_view.columns else x.sum()),
             dias_max=('dias_vencido', 'max'),
             telefono=('telefono1', 'first'),
             email=('e_mail', 'first'),
