@@ -13,8 +13,8 @@ import re
 import unicodedata
 from datetime import datetime, timedelta
 from openpyxl import Workbook
-from openpyxl.styles import PatternFill, Font, TableStyleInfo
-from openpyxl.worksheet.table import Table
+from openpyxl.styles import PatternFill, Font
+from openpyxl.worksheet.table import Table, TableStyleInfo
 from urllib.parse import quote
 
 # --- 1. CONFIGURACIÓN DE LA PÁGINA ---
