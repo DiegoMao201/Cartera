@@ -1,683 +1,604 @@
+# ======================================================================================
+# ARCHIVO: Tablero_Principal.py (v.Final con Diseño Súper Compacto y Botón Personalizado)
+# ======================================================================================
 import streamlit as st
 import pandas as pd
+import toml
+import os
+from io import BytesIO, StringIO
 import plotly.express as px
 import plotly.graph_objects as go
-import io
-import os
-import glob
-import re
-import unicodedata
-from datetime import datetime
-from urllib.parse import quote
 from openpyxl import Workbook
-from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils import get_column_letter
+from openpyxl.drawing.image import Image as XLImage
+from openpyxl.worksheet.table import Table, TableStyleInfo
+import unicodedata
+import re
+from datetime import datetime
 from fpdf import FPDF
-import numpy as np # Necesario para algunas funciones de cálculo
+import yagmail
+from urllib.parse import quote
+import tempfile
+import dropbox
+import glob
 
-# --- CONFIGURACIÓN VISUAL PROFESIONAL ---
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
-    page_title="Centro de Mando: Cobranza Ferreinox",
-    page_icon="🛡️",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_title="Tablero Principal",
+    page_icon="📈",
+    layout="wide"
 )
 
-# Paleta de Colores y CSS Corporativo
-COLOR_PRIMARIO = "#003366"  # Azul oscuro corporativo
-COLOR_ACCION = "#FFC300"    # Amarillo para acciones
-COLOR_FONDO = "#f4f6f9"
+# --- PALETA DE COLORES Y CSS ---
+PALETA_COLORES = {
+    "primario": "#003865",
+    "secundario": "#0058A7",
+    "acento": "#FFC300",
+    "fondo_claro": "#F0F2F6",
+    "texto_claro": "#FFFFFF",
+    "texto_oscuro": "#31333F",
+    "alerta_rojo": "#D32F2F",
+    "alerta_naranja": "#F57C00",
+    "alerta_amarillo": "#FBC02D",
+    "exito_verde": "#388E3C"
+}
 st.markdown(f"""
 <style>
-    .main {{ background-color: {COLOR_FONDO}; }}
-    /* Métricas */
-    .stMetric {{ background-color: white; padding: 15px; border-radius: 8px; border-left: 5px solid {COLOR_PRIMARIO}; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }}
-    /* Expander/Títulos de Sección */
-    div[data-testid="stExpander"] div[role="button"] p {{ font-size: 1.1rem; font-weight: bold; color: {COLOR_PRIMARIO}; }}
-    /* Título de la Aplicación */
-    .css-1av0etd {{ color: {COLOR_PRIMARIO}; }} 
-    /* Estilo de Botón de Acción (Simulación de botón de WhatsApp/PDF) */
-    .action-button {{
-        display: inline-block;
-        padding: 8px 15px;
-        color: white;
-        background-color: #25D366; /* Verde WhatsApp */
-        border-radius: 5px;
-        text-align: center;
-        text-decoration: none;
-        font-weight: bold;
-        transition: background-color 0.3s;
-    }}
-    .action-button:hover {{ background-color: #128C7E; }}
+    .stApp {{ background-color: {PALETA_COLORES['fondo_claro']}; }}
+    .stMetric {{ background-color: #FFFFFF; border-radius: 10px; padding: 15px; border: 1px solid #CCCCCC; }}
+    .stTabs [data-baseweb="tab-list"] {{ gap: 24px; }}
+    .stTabs [data-baseweb="tab"] {{ height: 50px; white-space: pre-wrap; background-color: transparent; border-radius: 4px 4px 0px 0px; border-bottom: 2px solid #C0C0C0; }}
+    .stTabs [aria-selected="true"] {{ border-bottom: 2px solid {PALETA_COLORES['primario']}; color: {PALETA_COLORES['primario']}; font-weight: bold; }}
+    div[data-baseweb="input"], div[data-baseweb="select"], div.st-multiselect, div.st-text-area {{ background-color: #FFFFFF; border: 1.5px solid {PALETA_COLORES['secundario']}; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); padding-left: 5px; }}
+    .button {{ display: inline-block; padding: 10px 20px; color: white; background-color: #25D366; border-radius: 5px; text-align: center; text-decoration: none; font-weight: bold; }}
 </style>
 """, unsafe_allow_html=True)
 
+
 # ======================================================================================
-# 1. MOTOR DE INGESTIÓN Y LIMPIEZA DE DATOS (Inteligencia de Columnas)
+# --- LÓGICA DE CARGA DE DATOS HÍBRIDA ---
 # ======================================================================================
-
-def normalizar_texto(texto):
-    """Elimina tildes, símbolos y pone mayúsculas para mapeo."""
-    if not isinstance(texto, str): return str(texto)
-    texto = unicodedata.normalize('NFD', texto).encode('ascii', 'ignore').decode("utf-8").upper().strip()
-    # Eliminar símbolos que no sean esenciales para el mapeo
-    return re.sub(r'[^\w\s\.]', '', texto).strip()
-
-def limpiar_moneda(valor):
-    """Limpia formatos de moneda, tolerante a comas y puntos."""
-    if pd.isna(valor): return 0.0
-    s_val = str(valor).strip()
-    s_val = re.sub(r'[^\d.,-]', '', s_val)
-    if not s_val: return 0.0
-    try:
-        # Intenta manejar formatos (1.000,00 vs 1,000.00)
-        if s_val.count(',') > 1 and s_val.count('.') == 0: s_val = s_val.replace(',', '') # Miles con coma
-        elif s_val.count('.') > 1 and s_val.count(',') == 0: s_val = s_val.replace('.', '') # Miles con punto
-        elif s_val.count(',') == 1 and s_val.count('.') == 1:
-            if s_val.rfind(',') > s_val.rfind('.'): s_val = s_val.replace('.', '').replace(',', '.') # Latino (último es separador decimal)
-            else: s_val = s_val.replace(',', '') # USA (coma es separador de miles)
-        elif s_val.count(',') == 1 and s_val.count('.') == 0 and len(s_val.split(',')[-1]) <= 2: # Asume decimal con coma
-            s_val = s_val.replace(',', '.')
-        
-        # Elimina el separador de miles si es solo un punto o coma (ya que el último se manejó)
-        s_val = s_val.replace(',', '').replace('.', '') # Se eliminan para prevenir errores
-        return float(s_val.replace(',', '').replace(' ', ''))
-    except:
-        try:
-             # Caso final para forzar la conversión
-            return float(re.sub(r'[^\d.]', '', s_val))
-        except:
-             return 0.0
-
-def mapear_y_limpiar_df(df):
-    """Mapea, limpia y valida las columnas."""
-    df.columns = [normalizar_texto(c) for c in df.columns]
-    
-    # Mapeo de Columnas Críticas y Opcionales
-    mapa = {
-        'cliente': ['NOMBRE', 'RAZON SOCIAL', 'TERCERO', 'CLIENTE'],
-        'nit': ['NIT', 'IDENTIFICACION', 'CEDULA', 'RUT'],
-        'saldo': ['IMPORTE', 'SALDO', 'TOTAL', 'DEUDA', 'VALOR'],
-        'dias': ['DIAS', 'VENCIDO', 'MORA', 'ANTIGUEDAD'],
-        'telefono': ['TEL', 'MOVIL', 'CELULAR', 'TELEFONO', 'CONTACTO', 'TELF'],
-        'vendedor': ['VENDEDOR', 'ASESOR', 'COMERCIAL', 'NOMVENDEDOR'],
-        'factura': ['NUMERO', 'FACTURA', 'DOC', 'SERIE'],
-        'email': ['CORREO', 'EMAIL', 'E-MAIL', 'MAIL']
-    }
-    
-    renombres = {}
-    for standard, variantes in mapa.items():
-        for col in df.columns:
-            # Una lógica más flexible que busca coincidencias parciales y exactas
-            col_norm = normalizar_texto(col)
-            if standard not in renombres.values() and any(v in col_norm for v in variantes):
-                renombres[col] = standard
-                break
-    
-    df.rename(columns=renombres, inplace=True)
-    
-    # --- VALIDACIÓN CRÍTICA ---
-    req = ['cliente', 'saldo', 'dias']
-    if not all(c in df.columns for c in req):
-        missing = [c for c in req if c not in df.columns]
-        return None, f"Faltan columnas críticas: {', '.join(missing)}. Columnas detectadas: {list(df.columns)}"
-
-    # --- LIMPIEZA Y CONVERSIÓN ---
-    df['saldo'] = df['saldo'].apply(limpiar_moneda)
-    df['dias'] = pd.to_numeric(df['dias'], errors='coerce').fillna(0).astype(int)
-    
-    # Asegurar campos opcionales
-    for c in ['telefono', 'vendedor', 'nit', 'factura', 'email']:
-        if c not in df.columns: 
-            df[c] = 'N/A'
-        else:
-            df[c] = df[c].fillna('N/A').astype(str)
-
-    # Filtrar saldos > 0 y eliminar duplicados (ej. por factura)
-    df_filtrado = df[df['saldo'] > 0]
-    
-    # Si hay columna de 'factura', se considera cada una como una deuda única
-    if 'factura' in df_filtrado.columns and 'cliente' in df_filtrado.columns:
-        df_filtrado.drop_duplicates(subset=['cliente', 'factura'], keep='first', inplace=True)
-    
-    return df_filtrado, "Datos limpios y listos."
-
 
 @st.cache_data(ttl=600)
-def cargar_datos(uploaded_file):
-    """Procesa el archivo subido por el usuario."""
-    if uploaded_file is None:
-        return None, "Por favor, sube un archivo de Cartera."
-
+def cargar_datos_desde_dropbox():
+    """Carga los datos más recientes desde el archivo CSV en Dropbox."""
     try:
-        # Detección del tipo de archivo
-        if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file, sep=None, engine='python', encoding='latin-1', dtype=str)
-        else:
-            df = pd.read_excel(uploaded_file, engine='openpyxl', dtype=str)
-            
-        df_procesado, status = mapear_y_limpiar_df(df)
-        
-        if df_procesado is None:
-            return None, f"Error en la estructura del archivo {uploaded_file.name}: {status}"
-        
-        return df_procesado, f"Datos cargados y limpios de: {uploaded_file.name}"
-        
+        APP_KEY = st.secrets["dropbox"]["app_key"]
+        APP_SECRET = st.secrets["dropbox"]["app_secret"]
+        REFRESH_TOKEN = st.secrets["dropbox"]["refresh_token"]
+
+        with dropbox.Dropbox(app_key=APP_KEY, app_secret=APP_SECRET, oauth2_refresh_token=REFRESH_TOKEN) as dbx:
+            path_archivo_dropbox = '/data/cartera_detalle.csv'
+            metadata, res = dbx.files_download(path=path_archivo_dropbox)
+            contenido_csv = res.content.decode('latin-1')
+
+            nombres_columnas_originales = [
+                'Serie', 'Numero', 'Fecha Documento', 'Fecha Vencimiento', 'Cod Cliente',
+                'NombreCliente', 'Nit', 'Poblacion', 'Provincia', 'Telefono1', 'Telefono2',
+                'NomVendedor', 'Entidad Autoriza', 'E-Mail', 'Importe', 'Descuento',
+                'Cupo Aprobado', 'Dias Vencido'
+            ]
+
+            df = pd.read_csv(StringIO(contenido_csv), header=None, names=nombres_columnas_originales, sep='|', engine='python')
+            return df
     except Exception as e:
-        return None, f"Error leyendo {uploaded_file.name}: {str(e)}"
+        st.error(f"Error al cargar datos desde Dropbox: {e}")
+        return pd.DataFrame()
+
+@st.cache_data
+def cargar_datos_historicos():
+    """Busca y carga todos los archivos Excel históricos locales."""
+    archivos_historicos = glob.glob("Cartera_*.xlsx")
+    if not archivos_historicos:
+        return pd.DataFrame()
+
+    lista_de_dataframes = []
+    for archivo in archivos_historicos:
+        try:
+            df_hist = pd.read_excel(archivo)
+            if not df_hist.empty:
+                if "Total" in str(df_hist.iloc[-1, 0]):
+                    df_hist = df_hist.iloc[:-1]
+                lista_de_dataframes.append(df_hist)
+        except Exception as e:
+            st.warning(f"No se pudo leer el archivo histórico {archivo}: {e}")
+
+    if lista_de_dataframes:
+        return pd.concat(lista_de_dataframes, ignore_index=True)
+    return pd.DataFrame()
+
+@st.cache_data
+def cargar_y_procesar_datos():
+    """
+    Orquesta la carga de datos, los combina, limpia duplicados y procesa.
+    """
+    df_dropbox = cargar_datos_desde_dropbox()
+    df_historico = cargar_datos_historicos()
+
+    df_combinado = pd.concat([df_dropbox, df_historico], ignore_index=True)
+
+    if df_combinado.empty:
+        st.error("No se pudieron cargar datos de ninguna fuente. La aplicación no puede continuar.")
+        st.stop()
+
+    df_combinado = df_combinado.loc[:, ~df_combinado.columns.duplicated()]
+    df_renamed = df_combinado.rename(columns=lambda x: normalizar_nombre(x).lower().replace(' ', '_'))
+    df_renamed = df_renamed.loc[:, ~df_renamed.columns.duplicated()]
+
+    df_renamed['serie'] = df_renamed['serie'].astype(str)
+    df_renamed['fecha_documento'] = pd.to_datetime(df_renamed['fecha_documento'], errors='coerce')
+    df_renamed['fecha_vencimiento'] = pd.to_datetime(df_renamed['fecha_vencimiento'], errors='coerce')
+
+    df_filtrado = df_renamed[~df_renamed['serie'].str.contains('W|X', case=False, na=False)]
+
+    return procesar_cartera(df_filtrado)
+
 
 # ======================================================================================
-# 2. CEREBRO DE ESTRATEGIA, KPIs y Gestión
+# --- CLASE PDF Y FUNCIONES AUXILIARES ---
 # ======================================================================================
-
-def generar_estrategia(df):
-    """Segmenta la cartera en rangos de edad y asigna prioridad."""
-    
-    bins = [-float('inf'), 0, 15, 30, 60, float('inf')]
-    labels = ["🟢 Corriente (0)", "🟡 Preventivo (1-15)", "🟠 Administrativo (16-30)", "🔴 Alto Riesgo (31-60)", "⚫ Pre-Jurídico (+60)"]
-    prioridad_map = {"🟢 Corriente (0)": 5, "🟡 Preventivo (1-15)": 4, "🟠 Administrativo (16-30)": 3, "🔴 Alto Riesgo (31-60)": 2, "⚫ Pre-Jurídico (+60)": 1}
-    
-    df['Estado'] = pd.cut(df['dias'], bins=bins, labels=labels, right=True, ordered=True)
-    df['Prioridad'] = df['Estado'].map(prioridad_map)
-    
-    return df
-
-def calcular_kpis(df):
-    """Calcula indicadores clave de rendimiento (KPIs)."""
-    total = df['saldo'].sum()
-    vencido = df[df['dias'] > 0]['saldo'].sum()
-    critico_60_mas = df[df['dias'] >= 60]['saldo'].sum()
-    
-    pct_mora = (vencido / total) * 100 if total > 0 else 0
-    
-    # Cálculo del Índice de Severidad de Cobranza (CSI)
-    # CSI = Suma(Saldo * Días Mora) / Saldo Total
-    csi_numerator = (df['saldo'] * df['dias']).sum()
-    csi = csi_numerator / total if total > 0 else 0
-    
-    # Antigüedad Promedio Vencida
-    vencido_df = df[df['dias'] > 0]
-    antiguedad_prom_vencida = (vencido_df['saldo'] * vencido_df['dias']).sum() / vencido if vencido > 0 else 0
-    
-    clientes_morosos = df[df['dias'] > 0]['cliente'].nunique()
-    
-    return {
-        'total': total,
-        'vencido': vencido,
-        'critico_60_mas': critico_60_mas,
-        'pct_mora': pct_mora,
-        'csi': csi,
-        'antiguedad_prom_vencida': antiguedad_prom_vencida,
-        'clientes_morosos': clientes_morosos
-    }
-
-def crear_link_whatsapp(row, is_summary=False):
-    """Genera el enlace de WhatsApp con un mensaje basado en el riesgo."""
-    tel = str(row['telefono']).strip()
-    tel = re.sub(r'\D', '', tel) # Quita todo lo que no sea dígito
-    if len(tel) < 10: return None # Número incompleto
-    if len(tel) == 10 and tel.startswith('3'): tel = '57' + tel # Asume Colombia si empieza con 3
-    
-    # En el modo de resumen por cliente, el saldo y los días son el total/máximo del cliente.
-    saldo = row['Saldo_Total_Cliente'] if is_summary else row['saldo']
-    dias = row['Dias_Max_Mora'] if is_summary else row['dias']
-    cliente = str(row['cliente']).split()[0].title()
-    
-    # Lógica de Guion más agresiva y directa
-    if dias <= 0:
-        msg = f"Hola {cliente}, saludamos de Ferreinox. ¡Felicitaciones! Tu cuenta está al día. Hemos enviado tu estado de cuenta a tu correo. ¡Gracias por tu gestión!"
-    elif dias <= 15:
-        msg = f"Hola {cliente}, recordatorio preventivo de Ferreinox. Tienes un saldo pendiente de ${saldo:,.0f} (Factura: {row['factura'] if not is_summary else 'Varias'}) vencido hace {dias} días. ¿Puedes confirmar la fecha de pago HOY, por favor?"
-    elif dias <= 30:
-        msg = f"ATENCIÓN {cliente}: Su factura ${saldo:,.0f} ({row['factura'] if not is_summary else 'Varias'}) tiene {dias} días de vencimiento. Requerimos confirmación de pago. Si no recibimos respuesta hoy, su gestión pasará a un nivel superior."
-    elif dias <= 60:
-        msg = f"URGENTE {cliente}: Su deuda de ${saldo:,.0f} ({dias} días) pone su crédito bajo revisión. Debe realizar el pago antes de 24 horas para evitar el bloqueo total de despachos. Contáctenos inmediatamente."
-    else:
-        msg = f"ACCIÓN LEGAL {cliente}: Su cuenta está en estado PRE-JURÍDICO. Saldo: ${saldo:,.0f}. Evite reporte a centrales de riesgo y honorarios. *Responda HOY* con el comprobante de pago."
-    
-    if numero_limpio:
-        return f"https://wa.me/{numero_limpio}?text={quote(msg)}"
-    return None
-
-# ======================================================================================
-# 3. EXPORTACIÓN PROFESIONAL (Basado en el segundo código)
-# ======================================================================================
-
-def generar_excel_gerencial(df_input, kpis):
-    """Genera un archivo Excel con formato corporativo, resumen ejecutivo y detalle."""
-    output = io.BytesIO()
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = "Reporte Gerencial"
-    
-    # Estilos
-    azul_corp = PatternFill(start_color="003366", end_color="003366", fill_type="solid")
-    gris_claro = PatternFill(start_color="F0F0F0", end_color="F0F0F0", fill_type="solid")
-    rojo_alerta = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type='solid')
-    header_font = Font(color="FFFFFF", bold=True)
-    font_bold = Font(bold=True)
-    money_fmt = '"$"#,##0'
-    pct_fmt = '0.0%'
-    
-    thin_border = Border(left=Side(style='thin'), 
-                         right=Side(style='thin'), 
-                         top=Side(style='thin'), 
-                         bottom=Side(style='thin'))
-
-    # --- Resumen Ejecutivo (A1:F10) ---
-    sheet['A1'] = "REPORTE EJECUTIVO DE CARTERA - FERREINOX"
-    sheet['A1'].font = Font(size=18, bold=True, color="003366")
-    sheet['A2'] = f"Generado: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-    sheet['A2'].font = Font(italic=True)
-    
-    # KPIs en el resumen
-    kpi_data = [
-        ("TOTAL CARTERA", kpis['total'], money_fmt, azul_corp),
-        ("TOTAL VENCIDO", kpis['vencido'], money_fmt, PatternFill(start_color="FFA500", end_color="FFA500", fill_type="solid")),
-        ("% DE MORA", kpis['pct_mora'] / 100, pct_fmt, gris_claro),
-        ("CRÍTICO (+60 Días)", kpis['critico_60_mas'], money_fmt, rojo_alerta),
-        ("ANTIGÜEDAD PROM. VENCIDA", kpis['antiguedad_prom_vencida'], '0 días', gris_claro),
-        ("ÍNDICE DE SEVERIDAD (CSI)", kpis['csi'], '0.0', gris_claro),
-    ]
-
-    fila_kpi = 4
-    for label, value, fmt, fill in kpi_data:
-        sheet[f'A{fila_kpi}'] = label
-        sheet[f'A{fila_kpi}'].font = font_bold
-        sheet[f'A{fila_kpi}'].fill = fill if fila_kpi % 2 == 0 else gris_claro
-        sheet[f'B{fila_kpi}'] = value
-        sheet[f'B{fila_kpi}'].number_format = fmt
-        sheet[f'B{fila_kpi}'].font = font_bold
-        fila_kpi += 1
-
-    # Separador para la tabla de detalle
-    sheet['A11'] = "DETALLE COMPLETO DE CARTERA (Filtrable)"
-    sheet['A11'].font = Font(size=14, bold=True, color="003366")
-    
-    # --- Detalle de Cartera (Fila 13 en adelante) ---
-    
-    # Columnas a Exportar
-    cols = ['cliente', 'nit', 'factura', 'vendedor', 'telefono', 'email', 'Estado', 'dias', 'saldo']
-    cols_to_export = [c for c in cols if c in df_input.columns]
-    start_row = 13
-    
-    # Headers
-    sheet.append([c.upper() for c in cols_to_export])
-    for col_idx, cell in enumerate(sheet[start_row], 1):
-        cell.fill = azul_corp
-        cell.font = header_font
-        cell.alignment = Alignment(horizontal='center', wrap_text=True)
-        cell.border = thin_border
-        
-    # Rows
-    for row in df_input[cols_to_export].itertuples(index=False):
-        sheet.append(row)
-        
-    # Formato de Moneda y Colores por Días Vencidos
-    saldo_col_idx = cols_to_export.index('saldo') + 1
-    dias_col_idx = cols_to_export.index('dias') + 1
-    
-    for row_idx, row in enumerate(sheet.iter_rows(min_row=start_row + 1, max_row=sheet.max_row), start=start_row + 1):
-        # Formato de saldo
-        row[saldo_col_idx - 1].number_format = money_fmt
-        
-        # Colores por Mora
-        dias = row[dias_col_idx - 1].value
-        if isinstance(dias, int):
-            if dias > 60: row[dias_col_idx - 1].fill = PatternFill(start_color="FF9999", end_color="FF9999", fill_type='solid') # Rojo Fuerte
-            elif dias > 30: row[dias_col_idx - 1].fill = PatternFill(start_color="FFEB99", end_color="FFEB99", fill_type='solid') # Naranja
-            elif dias > 0: row[dias_col_idx - 1].fill = PatternFill(start_color="FFFFCC", end_color="FFFFCC", fill_type='solid') # Amarillo
-
-    # Autoajuste de columnas
-    for i, col_name in enumerate(cols_to_export, 1):
-        ancho = 30 if col_name == 'cliente' else (20 if col_name in ['saldo', 'email', 'vendedor'] else 15)
-        sheet.column_dimensions[chr(64 + i)].width = ancho
-        
-    # --- Configurar Filtros y Congelar Paneles ---
-    ultima_fila_detalle = sheet.max_row
-    sheet.auto_filter.ref = f"A{start_row}:{get_column_letter(len(cols_to_export))}{ultima_fila_detalle}"
-    sheet.freeze_panes = f'A{start_row + 1}'
-
-    workbook.save(output)
-    return output.getvalue()
-
-
-# --- CLASE PDF ESTADO DE CUENTA (Similar a la del segundo código) ---
-
 class PDF(FPDF):
     def header(self):
-        self.set_font('Arial', 'B', 18)
-        self.set_text_color(0, 51, 102) # Azul Corporativo
-        self.cell(0, 10, 'ESTADO DE CUENTA | FERREINOX SAS BIC', 0, 1, 'C')
-        self.set_font('Arial', 'I', 9)
-        self.set_text_color(100, 100, 100)
-        self.cell(0, 5, f'Generado: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}', 0, 1, 'R')
-        self.ln(5)
-        self.set_draw_color(0, 51, 102)
-        self.line(10, self.get_y(), 200, self.get_y())
-        self.ln(5)
+        try:
+            self.image("LOGO FERREINOX SAS BIC 2024.png", 10, 8, 80)
+        except RuntimeError:
+            self.set_font('Arial', 'B', 12); self.cell(80, 10, 'Logo no encontrado o invalido', 0, 0, 'L')
+        self.set_font('Arial', 'B', 18); self.cell(0, 10, 'Estado de Cuenta', 0, 1, 'R')
+        self.set_font('Arial', 'I', 9); self.cell(0, 10, f'Generado el: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}', 0, 1, 'R')
+        self.ln(5); self.set_line_width(0.5); self.set_draw_color(220, 220, 220); self.line(10, 35, 200, 35); self.ln(10)
 
     def footer(self):
-        self.set_y(-25)
-        self.set_font('Arial', 'I', 9)
-        self.set_text_color(100, 100, 100)
-        self.cell(0, 5, "Portal de Pagos Ferreinox: [Enlace no incluido por seguridad]", 0, 1, 'C')
-        self.set_y(-15)
-        self.set_font('Arial', '', 8)
-        self.cell(0, 10, f'Página {self.page_no()}/{{nb}}', 0, 0, 'C')
+        self.set_y(-40)
+        self.set_font('Arial', 'I', 9); self.set_text_color(100, 100, 100)
+        self.cell(0, 6, "Para ingresar al portal de pagos, utiliza el NIT como 'usuario' y el Codigo de Cliente como 'codigo unico interno'.", 0, 1, 'C')
+        self.set_font('Arial', 'B', 11); self.set_text_color(0, 0, 0)
+        self.cell(0, 8, 'Realiza tu pago de forma facil y segura aqui:', 0, 1, 'C')
+        self.set_font('Arial', 'BU', 12); self.set_text_color(4, 88, 167)
+        link = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
+        self.cell(0, 10, "Portal de Pagos Ferreinox SAS BIC", 0, 1, 'C', link=link)
+
+def normalizar_nombre(nombre: str) -> str:
+    if not isinstance(nombre, str): return ""
+    nombre = nombre.upper().strip().replace('.', '')
+    nombre = ''.join(c for c in unicodedata.normalize('NFD', nombre) if unicodedata.category(c) != 'Mn')
+    return ' '.join(nombre.split())
+
+ZONAS_SERIE = { "PEREIRA": [155, 189, 158, 439], "MANIZALES": [157, 238], "ARMENIA": [156] }
+
+def procesar_cartera(df: pd.DataFrame) -> pd.DataFrame:
+    df_proc = df.copy()
+    df_proc['importe'] = pd.to_numeric(df_proc['importe'], errors='coerce').fillna(0)
+    df_proc['numero'] = pd.to_numeric(df_proc['numero'], errors='coerce').fillna(0)
+    df_proc.loc[df_proc['numero'] < 0, 'importe'] *= -1
+    df_proc['dias_vencido'] = pd.to_numeric(df_proc['dias_vencido'], errors='coerce').fillna(0)
+    df_proc['nomvendedor_norm'] = df_proc['nomvendedor'].apply(normalizar_nombre)
+    ZONAS_SERIE_STR = {zona: [str(s) for s in series] for zona, series in ZONAS_SERIE.items()}
+    def asignar_zona_robusta(valor_serie):
+        if pd.isna(valor_serie): return "OTRAS ZONAS"
+        numeros_en_celda = re.findall(r'\d+', str(valor_serie))
+        if not numeros_en_celda: return "OTRAS ZONAS"
+        for zona, series_clave_str in ZONAS_SERIE_STR.items():
+            if set(numeros_en_celda) & set(series_clave_str): return zona
+        return "OTRAS ZONAS"
+    df_proc['zona'] = df_proc['serie'].apply(asignar_zona_robusta)
+    bins = [-float('inf'), 0, 15, 30, 60, float('inf')]; labels = ['Al día', '1-15 días', '16-30 días', '31-60 días', 'Más de 60 días']
+    df_proc['edad_cartera'] = pd.cut(df_proc['dias_vencido'], bins=bins, labels=labels, right=True)
+    return df_proc
+
+def generar_excel_formateado(df: pd.DataFrame):
+    output = BytesIO()
+    df_export = df[['nombrecliente', 'serie', 'numero', 'fecha_documento', 'fecha_vencimiento', 'importe', 'dias_vencido']].copy()
+    for col in ['fecha_documento', 'fecha_vencimiento']: df_export[col] = pd.to_datetime(df_export[col], errors='coerce').dt.strftime('%d/%m/%Y')
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df_export.to_excel(writer, index=False, sheet_name='Cartera', startrow=9)
+        wb, ws = writer.book, writer.sheets['Cartera']
+        try:
+            img = XLImage("LOGO FERREINOX SAS BIC 2024.png"); img.anchor = 'A1'; img.width = 390; img.height = 130
+            ws.add_image(img)
+        except FileNotFoundError: ws['A1'] = "Logo no encontrado."
+        fill_red, fill_orange, fill_yellow = PatternFill(start_color='FF0000', end_color='FF0000', fill_type='solid'), PatternFill(start_color='FFA500', end_color='FFA500', fill_type='solid'), PatternFill(start_color='FFF9C4', end_color='FFF9C4', fill_type='solid')
+        font_bold, font_green_bold = Font(bold=True), Font(bold=True, color="006400")
+        first_data_row, last_data_row = 10, ws.max_row
+        tab = Table(displayName="CarteraVendedor", ref=f"A{first_data_row-1}:G{last_data_row}")
+        tab.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showFirstColumn=False, showLastColumn=False, showRowStripes=True, showColumnStripes=False)
+        ws.add_table(tab)
+        for i, ancho in enumerate([40, 10, 12, 18, 18, 18, 15], 1): ws.column_dimensions[get_column_letter(i)].width = ancho
+        importe_col_idx, dias_col_idx, formato_moneda = 6, 7, '"$"#,##0'
+        for row_idx, row in enumerate(ws.iter_rows(min_row=first_data_row, max_row=last_data_row), start=first_data_row):
+            if row_idx == first_data_row:
+                for cell in row:
+                    cell.font = font_bold
+                    cell.alignment = Alignment(horizontal='center', vertical='center')
+                continue
+            row[importe_col_idx - 1].number_format = formato_moneda
+            dias_cell = row[dias_col_idx - 1]
+            try:
+                dias = int(dias_cell.value)
+                if dias > 60: dias_cell.fill = fill_red
+                elif dias > 30: dias_cell.fill = fill_orange
+                elif dias > 0: dias_cell.fill = fill_yellow
+            except (ValueError, TypeError):
+                pass
+            dias_cell.alignment = Alignment(horizontal='center')
+
+        ws[f"E{last_data_row + 2}"] = "Tu cartera total es de:"; ws[f"E{last_data_row + 2}"].font = font_green_bold
+        ws[f"F{last_data_row + 2}"] = f"=SUBTOTAL(9,F{first_data_row}:F{last_data_row})"; ws[f"F{last_data_row + 2}"].number_format = formato_moneda; ws[f"F{last_data_row + 2}"].font = font_green_bold
+        ws[f"E{last_data_row + 3}"] = "Facturas vencidas por valor de:"; ws[f"E{last_data_row + 3}"].font = font_green_bold
+        ws[f"F{last_data_row + 3}"] = f"=SUMIF(G{first_data_row}:G{last_data_row},\">0\",F{first_data_row}:F{last_data_row})"; ws[f"F{last_data_row + 3}"].number_format = formato_moneda; ws[f"F{last_data_row + 3}"].font = font_green_bold
+    return output.getvalue()
 
 def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame, total_vencido_cliente: float):
     pdf = PDF()
-    pdf.set_auto_page_break(auto=True, margin=30)
+    pdf.set_auto_page_break(auto=True, margin=45)
     pdf.add_page()
-    pdf.alias_nb_pages()
-
     if datos_cliente.empty:
-        pdf.set_font('Arial', 'B', 12)
-        pdf.cell(0, 10, 'No se encontraron facturas para este cliente.', 0, 1, 'C')
+        pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, 'No se encontraron facturas para este cliente.', 0, 1, 'C')
         return bytes(pdf.output())
 
-    datos_cliente_ordenados = datos_cliente.sort_values(by='dias', ascending=False)
+    datos_cliente_ordenados = datos_cliente.sort_values(by='fecha_vencimiento', ascending=True)
     info_cliente = datos_cliente_ordenados.iloc[0]
 
-    # Información del Cliente
-    pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Cliente:', 0, 0)
-    pdf.set_font('Arial', '', 11); pdf.cell(0, 10, info_cliente['cliente'], 0, 1)
-    pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'NIT:', 0, 0)
-    pdf.set_font('Arial', '', 11); pdf.cell(0, 10, info_cliente['nit'], 0, 1); pdf.ln(5)
+    pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Cliente:', 0, 0); pdf.set_font('Arial', '', 11); pdf.cell(0, 10, info_cliente['nombrecliente'], 0, 1)
+    pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Codigo de Cliente:', 0, 0); pdf.set_font('Arial', '', 11)
+    cod_cliente_str = str(int(info_cliente['cod_cliente'])) if pd.notna(info_cliente['cod_cliente']) else "N/A"
+    pdf.cell(0, 10, cod_cliente_str, 0, 1); pdf.ln(5)
 
-    # Mensaje de introducción
-    mensaje = (f"Apreciado(a) {info_cliente['cliente'].split()[0].title()}, adjunto encontrará el detalle de su estado de cuenta a la fecha. "
-               f"Le solicitamos su amable gestión para el pago de los valores vencidos.")
-    pdf.set_text_color(50, 50, 50); pdf.set_font('Arial', 'I', 10); pdf.multi_cell(0, 5, mensaje, 0, 'J'); pdf.ln(5)
-    
-    # Encabezados de la tabla
-    pdf.set_font('Arial', 'B', 9); pdf.set_fill_color(0, 51, 102); pdf.set_text_color(255, 255, 255)
-    headers = [('Factura', 25), ('Días Mora', 20), ('Vendedor', 40), ('Saldo', 30)]
-    for header, width in headers: pdf.cell(width, 8, header, 1, 0, 'C', 1)
-    pdf.ln()
+    pdf.set_font('Arial', '', 10)
+    mensaje = ("Apreciado cliente, a continuación encontrará el detalle de su estado de cuenta a la fecha. "
+               "Le invitamos a realizar su revisión y proceder con el pago de los valores vencidos. "
+               "Puede realizar su pago de forma fácil y segura a través de nuestro PORTAL DE PAGOS en línea, "
+               "cuyo enlace encontrará al final de este documento.")
+    pdf.set_text_color(128, 128, 128); pdf.multi_cell(0, 5, mensaje, 0, 'J'); pdf.set_text_color(0, 0, 0); pdf.ln(10)
 
-    # Filas de la tabla
+    pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(0, 56, 101); pdf.set_text_color(255, 255, 255)
+    pdf.cell(30, 10, 'Factura', 1, 0, 'C', 1); pdf.cell(40, 10, 'Fecha Factura', 1, 0, 'C', 1)
+    pdf.cell(40, 10, 'Fecha Vencimiento', 1, 0, 'C', 1); pdf.cell(40, 10, 'Importe', 1, 1, 'C', 1)
+
+    pdf.set_font('Arial', '', 10)
     total_importe = 0
     for _, row in datos_cliente_ordenados.iterrows():
-        total_importe += row['saldo']
         pdf.set_text_color(0, 0, 0)
-        
-        # Color de fondo según la mora
-        if row['dias'] > 60: pdf.set_fill_color(255, 220, 220) # Rojo claro
-        elif row['dias'] > 30: pdf.set_fill_color(255, 240, 220) # Naranja claro
-        elif row['dias'] > 0: pdf.set_fill_color(255, 255, 220) # Amarillo claro
-        else: pdf.set_fill_color(255, 255, 255) # Blanco para al día
-        
-        pdf.set_font('Arial', '', 9)
-        pdf.cell(25, 6, str(row['factura']), 1, 0, 'C', 1)
-        pdf.cell(20, 6, str(int(row['dias'])), 1, 0, 'C', 1)
-        pdf.cell(40, 6, row['vendedor'], 1, 0, 'L', 1)
-        pdf.cell(30, 6, f"${row['saldo']:,.0f}", 1, 0, 'R', 1)
-        pdf.ln()
+        if row['dias_vencido'] > 0: pdf.set_fill_color(255, 235, 238)
+        else: pdf.set_fill_color(255, 255, 255)
+        total_importe += row['importe']
+        numero_factura_str = str(int(row['numero'])) if pd.notna(row['numero']) else "N/A"
+        fecha_doc_str = row['fecha_documento'].strftime('%d/%m/%Y') if pd.notna(row['fecha_documento']) else ''
+        fecha_ven_str = row['fecha_vencimiento'].strftime('%d/%m/%Y') if pd.notna(row['fecha_vencimiento']) else ''
+        pdf.cell(30, 10, numero_factura_str, 1, 0, 'C', 1)
+        pdf.cell(40, 10, fecha_doc_str, 1, 0, 'C', 1)
+        pdf.cell(40, 10, fecha_ven_str, 1, 0, 'C', 1)
+        pdf.cell(40, 10, f"${row['importe']:,.0f}", 1, 1, 'R', 1)
 
-    # Fila de Totales
-    pdf.set_text_color(0, 0, 0); pdf.set_fill_color(224, 224, 224); pdf.set_font('Arial', 'B', 9)
-    pdf.cell(85, 8, 'TOTAL ADEUDADO', 1, 0, 'R', 1)
-    pdf.set_fill_color(240, 240, 240)
-    pdf.cell(30, 8, f"${total_importe:,.0f}", 1, 0, 'R', 1)
-    pdf.ln()
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(224, 224, 224); pdf.set_text_color(0, 0, 0)
+    pdf.cell(110, 10, 'TOTAL ADEUDADO', 1, 0, 'R', 1)
+    pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(240, 240, 240);
+    pdf.cell(40, 10, f"${total_importe:,.0f}", 1, 1, 'R', 1)
 
     if total_vencido_cliente > 0:
-        pdf.set_text_color(192, 0, 0); pdf.set_fill_color(255, 204, 204); pdf.set_font('Arial', 'B', 10)
-        pdf.cell(85, 8, 'VALOR TOTAL VENCIDO', 1, 0, 'R', 1)
-        pdf.cell(30, 8, f"${total_vencido_cliente:,.0f}", 1, 0, 'R', 1)
-        pdf.ln()
+        pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(255, 204, 204); pdf.set_text_color(192, 0, 0)
+        pdf.cell(110, 10, 'VALOR TOTAL VENCIDO', 1, 0, 'R', 1)
+        pdf.cell(40, 10, f"${total_vencido_cliente:,.0f}", 1, 1, 'R', 1)
 
     return bytes(pdf.output())
 
-# ======================================================================================
-# 4. INTERFAZ GRÁFICA (DASHBOARD)
-# ======================================================================================
+def generar_analisis_cartera(kpis: dict):
+    comentarios = []
+    if kpis['porcentaje_vencido'] > 30: comentarios.append(f"<li>🔴 **Alerta Crítica:** El <b>{kpis['porcentaje_vencido']:.1f}%</b> de la cartera está vencida. Requiere acciones inmediatas.</li>")
+    elif kpis['porcentaje_vencido'] > 15: comentarios.append(f"<li>🟡 **Advertencia:** Con un <b>{kpis['porcentaje_vencido']:.1f}%</b> de cartera vencida, es momento de intensificar gestiones.</li>")
+    else: comentarios.append(f"<li>🟢 **Saludable:** El porcentaje de cartera vencida (<b>{kpis['porcentaje_vencido']:.1f}%</b>) está en un nivel manejable.</li>")
+    if kpis['antiguedad_prom_vencida'] > 60: comentarios.append(f"<li>🔴 **Riesgo Alto:** Antigüedad promedio de <b>{kpis['antiguedad_prom_vencida']:.0f} días</b>. Priorizar recuperación.</li>")
+    elif kpis['antiguedad_prom_vencida'] > 30: comentarios.append(f"<li>🟡 **Atención Requerida:** Antigüedad promedio de <b>{kpis['antiguedad_prom_vencida']:.0f} días</b>. Evitar que envejezcan más.</li>")
+    if kpis['csi'] > 15: comentarios.append(f"<li>🔴 **Severidad Crítica (CSI: {kpis['csi']:.1f}):** Impacto muy alto que afecta el flujo de caja.</li>")
+    elif kpis['csi'] > 5: comentarios.append(f"<li>🟡 **Severidad Moderada (CSI: {kpis['csi']:.1f}):** Hay focos de deuda antigua o de alto valor que pesan.</li>")
+    else: comentarios.append(f"<li>🟢 **Severidad Baja (CSI: {kpis['csi']:.1f}):** Impacto bajo, indicando buena gestión.</li>")
+    return "<ul>" + "".join(comentarios) + "</ul>"
 
+# ======================================================================================
+# --- BLOQUE PRINCIPAL DE LA APP ---
+# ======================================================================================
 def main():
-    col_logo, col_titulo, col_upload = st.columns([1, 4, 2])
-    
-    with col_titulo:
-        st.title("🛡️ Centro de Mando: Cobranza Estratégica")
-        st.markdown(f"**Ferreinox SAS BIC** | Panel Operativo y Gerencial | Última actualización: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
-        
-    with col_upload:
-        uploaded_file = st.file_uploader("📂 **Subir Archivo de Cartera** (`.xlsx` o `.csv`)", type=['xlsx', 'csv'], help="El archivo debe contener las columnas: Cliente, Saldo y Días Mora.")
-        if uploaded_file:
-            st.button("🔄 Recargar Datos (Con el archivo subido)", on_click=st.cache_data.clear)
-            
-    # --- CARGA Y PROCESAMIENTO ---
-    df_raw, status = cargar_datos(uploaded_file)
-    
-    if df_raw is None:
-        st.error(status)
-        st.stop()
+    if 'authentication_status' not in st.session_state:
+        st.session_state['authentication_status'] = False
+        st.session_state['acceso_general'] = False
+        st.session_state['vendedor_autenticado'] = None
 
-    # Aplicar Estrategia
-    df = generar_estrategia(df_raw.copy())
-    
-    # --- SIDEBAR: FILTROS ---
-    with st.sidebar:
-        st.header("🔍 Filtros de Gestión")
-        
-        # Filtro Vendedor
-        vendedores = ["TODOS"] + sorted(list(df['vendedor'].unique()))
-        sel_vendedor = st.selectbox("Vendedor / Asesor", vendedores)
-        if sel_vendedor != "TODOS":
-            df = df[df['vendedor'] == sel_vendedor]
+    if not st.session_state['authentication_status']:
+        st.title("Acceso al Tablero de Cartera")
+        try:
+            general_password = st.secrets["general"]["password"]
+            vendedores_secrets = st.secrets["vendedores"]
+        except Exception as e:
+            st.error(f"Error al cargar las contraseñas desde los secretos: {e}")
+            st.stop()
+        password = st.text_input("Introduce la contraseña:", type="password", key="password_input")
+        if st.button("Ingresar"):
+            if password == str(general_password):
+                st.session_state['authentication_status'] = True
+                st.session_state['acceso_general'] = True
+                st.session_state['vendedor_autenticado'] = "General"
+                st.rerun()
+            else:
+                for vendedor_key, pass_vendedor in vendedores_secrets.items():
+                    if password == str(pass_vendedor):
+                        st.session_state['authentication_status'] = True
+                        st.session_state['acceso_general'] = False
+                        st.session_state['vendedor_autenticado'] = vendedor_key
+                        st.rerun()
+                        break
+                if not st.session_state['authentication_status']:
+                    st.error("Contraseña incorrecta.")
+    else:
+        st.title("📊 Tablero de Cartera Ferreinox SAS BIC")
 
-        # Filtro Estado (Prioridad)
-        # Ordenar por el número de prioridad (cuanto menor, más crítico)
-        estados_ordenados = sorted(list(df['Estado'].unique()), key=lambda x: df[df['Estado'] == x]['Prioridad'].mean(), reverse=False)
-        estados = ["TODOS"] + estados_ordenados
-        sel_estado = st.selectbox("Estado de Mora", estados)
-        if sel_estado != "TODOS":
-            df = df[df['Estado'] == sel_estado]
-        
+        if st.button("🔄 Recargar Datos (Dropbox + Locales)"):
+            st.cache_data.clear()
+            st.success("Caché limpiado. Recargando todos los datos...")
+            st.rerun()
+
+        with st.sidebar:
+            try:
+                st.image("LOGO FERREINOX SAS BIC 2024.png", use_container_width=True)
+            except FileNotFoundError:
+                st.warning("Logo no encontrado.")
+            st.success(f"Usuario: {st.session_state['vendedor_autenticado']}")
+            if st.button("Cerrar Sesión"):
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                st.rerun()
+
+        cartera_procesada = cargar_y_procesar_datos()
+
+        st.sidebar.title("Filtros")
+        if st.session_state['acceso_general']:
+            vendedores_en_excel_display = ["Todos"] + sorted(cartera_procesada['nomvendedor'].dropna().unique())
+            vendedor_sel = st.sidebar.selectbox("Filtrar por Vendedor:", vendedores_en_excel_display)
+        else:
+            vendedor_sel = st.session_state['vendedor_autenticado']
+
+        zonas_disponibles = ["Todas las Zonas"] + sorted(cartera_procesada['zona'].dropna().unique())
+        zona_sel = st.sidebar.selectbox("Filtrar por Zona:", zonas_disponibles)
+
+        poblaciones_disponibles = ["Todas"] + sorted(cartera_procesada['poblacion'].dropna().unique())
+        poblacion_sel = st.sidebar.selectbox("Filtrar por Población:", poblaciones_disponibles)
+
+        cartera_filtrada = cartera_procesada.copy()
+        if vendedor_sel != "Todos":
+            cartera_filtrada = cartera_filtrada[cartera_filtrada['nomvendedor_norm'] == normalizar_nombre(vendedor_sel)]
+        if zona_sel != "Todas las Zonas":
+            cartera_filtrada = cartera_filtrada[cartera_filtrada['zona'] == zona_sel]
+        if poblacion_sel != "Todas":
+            cartera_filtrada = cartera_filtrada[cartera_filtrada['poblacion'] == poblacion_sel]
+
+        if cartera_filtrada.empty:
+            st.warning(f"No se encontraron datos para los filtros seleccionados."); st.stop()
+
+        total_cartera = cartera_filtrada['importe'].sum()
+        cartera_vencida_df = cartera_filtrada[cartera_filtrada['dias_vencido'] > 0]
+        total_vencido = cartera_vencida_df['importe'].sum()
+        porcentaje_vencido = (total_vencido / total_cartera) * 100 if total_cartera > 0 else 0
+        csi = (cartera_vencida_df['importe'] * cartera_vencida_df['dias_vencido']).sum() / total_cartera if total_cartera > 0 else 0
+        antiguedad_prom_vencida = (cartera_vencida_df['importe'] * cartera_vencida_df['dias_vencido']).sum() / total_vencido if total_vencido > 0 else 0
+
+        st.header("Indicadores Clave de Rendimiento (KPIs)")
+        kpi_row1 = st.columns(3)
+        kpi_row2 = st.columns(2)
+
+        kpi_row1[0].metric("💰 Cartera Total", f"${total_cartera:,.0f}")
+        kpi_row1[1].metric("🔥 Cartera Vencida", f"${total_vencido:,.0f}")
+        kpi_row1[2].metric("📈 % Vencido s/ Total", f"{porcentaje_vencido:.1f}%")
+
+        kpi_row2[0].metric("⏳ Antigüedad Prom. Vencida", f"{antiguedad_prom_vencida:.0f} días")
+        kpi_row2[1].metric(label="💥 Índice de Severidad (CSI)", value=f"{csi:.1f}")
+
+        with st.expander("🤖 **Análisis y Recomendaciones del Asistente IA**", expanded=True):
+            kpis_dict = {'porcentaje_vencido': porcentaje_vencido, 'antiguedad_prom_vencida': antiguedad_prom_vencida, 'csi': csi}
+            analisis = generar_analisis_cartera(kpis_dict)
+            st.markdown(analisis, unsafe_allow_html=True)
         st.markdown("---")
-        mostrar_vencido = st.checkbox("Mostrar solo Cartera Vencida")
-        if mostrar_vencido:
-             df = df[df['dias'] > 0]
-        st.markdown("---")
-        st.markdown("### ⚙️ Herramienta de Gestión Rápida")
-        # Generar DataFrame agrupado por cliente para la gestión individual
-        df_clientes_gestion = df.groupby('cliente').agg(
-            Saldo_Total_Cliente=('saldo', 'sum'),
-            Dias_Max_Mora=('dias', 'max'),
-            Vendedor=('vendedor', lambda x: x.iloc[0]),
-            Telefono=('telefono', lambda x: x.iloc[0]),
-            Email=('email', lambda x: x.iloc[0])
-        ).reset_index()
-        
-        # Generar Link WA para el resumen
-        df_clientes_gestion['Link_WA'] = df_clientes_gestion.apply(lambda row: crear_link_whatsapp(row, is_summary=True), axis=1)
 
-        lista_clientes = [""] + sorted(df_clientes_gestion['cliente'].unique())
-        sel_cliente_rapido = st.selectbox("🎯 Cliente para Contacto Directo", lista_clientes, index=0)
-
-    if df.empty:
-        st.warning("No hay datos que coincidan con los filtros aplicados.")
-        return
-
-    # --- CÁLCULO DE KPIS ---
-    kpis = calcular_kpis(df)
-
-    # --- KPIs SUPERIORES ---
-    st.header("Indicadores Clave de Rendimiento (KPIs) 📈")
-    k1, k2, k3, k4, k5, k6 = st.columns(6)
-    
-    k1.metric("💰 Cartera Total", f"${kpis['total']:,.0f}")
-    k2.metric("⚠️ Total Vencido", f"${kpis['vencido']:,.0f}", f"{kpis['pct_mora']:.1f}%")
-    k3.metric("🔥 Crítico (+60 Días)", f"${kpis['critico_60_mas']:,.0f}")
-    k4.metric("👥 Clientes Morosos", f"{kpis['clientes_morosos']}")
-    k5.metric("⏳ Antigüedad Prom. Vencida", f"{kpis['antiguedad_prom_vencida']:.0f} días")
-    k6.metric("💥 Índice de Severidad (CSI)", f"{kpis['csi']:.1f}", help="Mayor CSI = Mayor riesgo de cuentas por cobrar. Suma(Saldo * Días) / Saldo Total")
-    
-    st.markdown("---")
-
-    # --- PESTAÑAS PRINCIPALES ---
-    tab_accion, tab_analisis, tab_export = st.tabs(["🚀 GESTIÓN DIARIA INMEDIATA", "📊 ANÁLISIS GERENCIAL", "📥 EXPORTAR Y DATOS"])
-
-    # --------------------------------------------------------
-    # TAB 1: GESTIÓN (Prioridad para Líder de Cartera)
-    # --------------------------------------------------------
-    with tab_accion:
-        st.subheader("🎯 Tareas del Día: Cartera Vencida por Factura")
-        st.caption("Ordenado por Prioridad (Pre-Jurídico a Preventivo) y Mayor Saldo. Actúe de arriba hacia abajo.")
-
-        # Preparar datos para la tabla interactiva
-        df_display = df[df['dias'] > 0].sort_values(by=['Prioridad', 'saldo'], ascending=[True, False]).copy()
-        
-        # Generar Link WA por factura (usando los datos de la fila individual)
-        df_display['Link_WA'] = df_display.apply(lambda row: crear_link_whatsapp(row, is_summary=False), axis=1)
-        
-        columnas_accion = ['Estado', 'cliente', 'factura', 'dias', 'saldo', 'vendedor', 'telefono', 'Link_WA']
-        
-        st.data_editor(
-            df_display[columnas_accion],
-            column_config={
-                "Link_WA": st.column_config.LinkColumn(
-                    "📱 ACCIÓN WHATSAPP",
-                    help="Clic para abrir WhatsApp Web con el guion listo",
-                    validate="^https://wa\.me/.*",
-                    display_text="💬 ENVIAR GUION"
-                ),
-                "saldo": st.column_config.NumberColumn("Deuda Factura", format="$ %d"),
-                "dias": st.column_config.NumberColumn("Días Mora", format="%d días", min_value=1, max_value=365),
-                "Estado": st.column_config.TextColumn("ESTADO (Prioridad)", width="medium"),
-                "cliente": st.column_config.TextColumn("CLIENTE (Razón Social)", width="large"),
-                "telefono": st.column_config.TextColumn("Teléfono")
-            },
-            hide_index=True,
-            use_container_width=True,
-            height=600
-        )
-        
-        # Sección de Gestión Rápida Individual (para el cliente seleccionado en la sidebar)
-        if sel_cliente_rapido:
-            st.markdown("---")
-            st.subheader(f"⚙️ Gestión Documental para: **{sel_cliente_rapido}**")
-            info_cliente_rapida = df_clientes_gestion[df_clientes_gestion['cliente'] == sel_cliente_rapido].iloc[0]
-            
-            datos_cliente_detalle = df[df['cliente'] == sel_cliente_rapido]
-            total_vencido_cliente = datos_cliente_detalle[datos_cliente_detalle['dias'] > 0]['saldo'].sum()
-            
-            pdf_bytes = generar_pdf_estado_cuenta(datos_cliente_detalle, total_vencido_cliente)
-            
-            col_pdf, col_wa_link = st.columns(2)
-            
-            with col_pdf:
-                st.download_button(
-                    label="📄 DESCARGAR ESTADO DE CUENTA (PDF)", 
-                    data=pdf_bytes, 
-                    file_name=f"Estado_Cuenta_{info_cliente_rapida['cliente'].replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.pdf", 
-                    mime="application/pdf"
-                )
-                st.info(f"Correo: {info_cliente_rapida['Email']} | Vendedor: {info_cliente_rapida['Vendedor']}")
-            
-            with col_wa_link:
-                wa_url = info_cliente_rapida['Link_WA']
-                if wa_url:
-                    st.markdown(f'<a href="{wa_url}" target="_blank" class="action-button">📲 ENVIAR GUION RESUMEN A {info_cliente_rapida["Telefono"]}</a>', unsafe_allow_html=True)
+        tab1, tab2, tab3 = st.tabs(["📊 Visión General de la Cartera", "👥 Análisis por Cliente", "📑 Detalle Completo"])
+        with tab1:
+            st.subheader("Distribución de Cartera por Antigüedad")
+            col_grafico, col_tabla_resumen = st.columns([2, 1])
+            with col_grafico:
+                df_edades = cartera_filtrada.groupby('edad_cartera', observed=True)['importe'].sum().reset_index()
+                color_map_edades = {'Al día': PALETA_COLORES['exito_verde'], '1-15 días': PALETA_COLORES['alerta_amarillo'], '16-30 días': PALETA_COLORES['alerta_naranja'], '31-60 días': 'darkorange', 'Más de 60 días': PALETA_COLORES['alerta_rojo']}
+                fig = px.bar(df_edades, x='edad_cartera', y='importe', text_auto='.2s', title='Monto de Cartera por Rango de Días', labels={'edad_cartera': 'Antigüedad', 'importe': 'Monto Total'}, color='edad_cartera', color_discrete_map=color_map_edades)
+                fig.update_layout(showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
+            with col_tabla_resumen:
+                st.subheader("Resumen por Antigüedad")
+                df_edades['Porcentaje'] = (df_edades['importe'] / total_cartera * 100).map('{:.1f}%'.format) if total_cartera > 0 else '0.0%'
+                df_edades['importe'] = df_edades['importe'].map('${:,.0f}'.format)
+                st.dataframe(df_edades.rename(columns={'edad_cartera': 'Rango', 'importe': 'Monto'}), use_container_width=True, hide_index=True)
+        with tab2:
+            st.subheader("Análisis de Concentración de Deuda por Cliente")
+            col_pareto, col_treemap = st.columns(2)
+            with col_treemap:
+                st.markdown("**Visualización de Cartera Vencida por Cliente (Treemap)**")
+                df_clientes_vencidos = cartera_vencida_df.groupby('nombrecliente')['importe'].sum().reset_index()
+                df_clientes_vencidos = df_clientes_vencidos[df_clientes_vencidos['importe'] > 0]
+                fig_treemap = px.treemap(df_clientes_vencidos, path=[px.Constant("Clientes con Deuda Vencida"), 'nombrecliente'], values='importe', title='Haga clic en un recuadro para explorar', color_continuous_scale='Reds', color='importe')
+                fig_treemap.update_layout(margin = dict(t=50, l=25, r=25, b=25))
+                st.plotly_chart(fig_treemap, use_container_width=True)
+            with col_pareto:
+                st.markdown("**Clientes Clave (Principio de Pareto)**")
+                client_debt = cartera_vencida_df.groupby('nombrecliente')['importe'].sum().sort_values(ascending=False)
+                if not client_debt.empty:
+                    client_debt_cumsum = client_debt.cumsum()
+                    total_debt_vencida = client_debt.sum()
+                    pareto_limit = total_debt_vencida * 0.80
+                    pareto_clients_df = client_debt.to_frame().iloc[0:len(client_debt_cumsum[client_debt_cumsum <= pareto_limit]) + 1]
+                    num_total_clientes_deuda = len(client_debt)
+                    num_clientes_pareto = len(pareto_clients_df)
+                    porcentaje_clientes_pareto = (num_clientes_pareto / num_total_clientes_deuda) * 100 if num_total_clientes_deuda > 0 else 0
+                    st.info(f"El **{porcentaje_clientes_pareto:.0f}%** de los clientes ({num_clientes_pareto} de {num_total_clientes_deuda}) representan aprox. el **80%** de la cartera vencida.")
+                    df_pareto_display = pareto_clients_df.reset_index()
+                    df_pareto_display.columns = ['Cliente', 'Monto Vencido']
+                    df_pareto_display['Monto Vencido'] = df_pareto_display['Monto Vencido'].map('${:,.0f}'.format)
+                    st.dataframe(df_pareto_display, height=250, hide_index=True, use_container_width=True)
                 else:
-                     st.warning("Número de WhatsApp no válido o no disponible.")
+                    st.info("No hay cartera vencida para analizar.")
+        with tab3:
+            st.subheader(f"Detalle Completo: {vendedor_sel} / {zona_sel} / {poblacion_sel}")
+            st.download_button(label="📥 Descargar Reporte en Excel", data=generar_excel_formateado(cartera_filtrada), file_name=f'Cartera_{normalizar_nombre(vendedor_sel)}_{zona_sel}_{poblacion_sel}.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            columnas_disponibles = cartera_filtrada.columns
+            columnas_a_ocultar_existentes = [col for col in ['provincia', 'telefono1', 'telefono2', 'entidad_autoriza', 'e_mail', 'descuento', 'cupo_aprobado', 'nomvendedor_norm', 'zona'] if col in columnas_disponibles]
+            cartera_para_mostrar = cartera_filtrada.drop(columns=columnas_a_ocultar_existentes, errors='ignore')
+            st.dataframe(cartera_para_mostrar, use_container_width=True, hide_index=True)
 
+        st.markdown("---")
+        st.header("⚙️ Herramientas de Gestión")
+        st.subheader("Generar y Enviar Estado de Cuenta por Cliente")
+        lista_clientes = sorted(cartera_filtrada['nombrecliente'].dropna().unique())
+        if not lista_clientes:
+            st.warning("No hay clientes para mostrar con los filtros actuales.")
+        else:
+            cliente_seleccionado = st.selectbox("Busca y selecciona un cliente para gestionar su cuenta:", [""] + lista_clientes, format_func=lambda x: 'Selecciona un cliente...' if x == "" else x, key="cliente_selector")
 
-    # --------------------------------------------------------
-    # TAB 2: ANÁLISIS (Visión Estratégica para Gerencia)
-    # --------------------------------------------------------
-    with tab_analisis:
-        st.subheader("📈 Concentración y Antigüedad de la Cartera")
-        c1, c2 = st.columns(2)
-        
-        # Gráfico de Distribución por Edad (Basado en el segundo código)
-        with c1:
-            st.markdown("### 1. Distribución de Cartera por Riesgo")
-            df_edades = df.groupby('Estado', observed=True)['saldo'].sum().reset_index()
-            color_map_edades = {"🟢 Corriente (0)": '#28A745', "🟡 Preventivo (1-15)": '#FFC107', "🟠 Administrativo (16-30)": '#FD7E14', "🔴 Alto Riesgo (31-60)": '#DC3545', "⚫ Pre-Jurídico (+60)": '#343A40'}
-            fig_bar = px.bar(df_edades, x='Estado', y='saldo', text_auto='.2s', title='Monto de Cartera por Rango de Días', labels={'Estado': 'Antigüedad', 'saldo': 'Monto Total'}, color='Estado', color_discrete_map=color_map_edades)
-            fig_bar.update_layout(xaxis={'categoryorder':'array', 'categoryarray': list(color_map_edades.keys())}, showlegend=False)
-            st.plotly_chart(fig_bar, use_container_width=True)
-            
-        # Análisis de Pareto
-        with c2:
-            st.markdown("### 2. Análisis de Concentración (Pareto 80/20)")
-            client_debt = df[df['dias'] > 0].groupby('cliente')['saldo'].sum().sort_values(ascending=False)
-            
-            if not client_debt.empty:
-                client_debt_cumsum = client_debt.cumsum()
-                total_debt_vencida = client_debt.sum()
-                pareto_limit = total_debt_vencida * 0.80
+            if cliente_seleccionado:
+                datos_cliente_seleccionado = cartera_filtrada[cartera_filtrada['nombrecliente'] == cliente_seleccionado].copy()
+                info_cliente_raw = datos_cliente_seleccionado.iloc[0]
+                correo_cliente = info_cliente_raw.get('e_mail', 'Correo no disponible')
+                telefono_raw = str(info_cliente_raw.get('telefono1', ''))
+                telefono_cliente = telefono_raw.split('.')[0] if '.' in telefono_raw else telefono_raw
+                nit_cliente = str(info_cliente_raw.get('nit', 'N/A'))
+                cod_cliente = str(int(info_cliente_raw['cod_cliente'])) if pd.notna(info_cliente_raw['cod_cliente']) else "N/A"
                 
-                # Encontrar el punto de corte del 80%
-                pareto_clients_df = client_debt.to_frame().iloc[0:len(client_debt_cumsum[client_debt_cumsum <= pareto_limit]) + 1]
-                num_total_clientes_deuda = df[df['dias'] > 0]['cliente'].nunique()
-                num_clientes_pareto = len(pareto_clients_df)
-                porcentaje_clientes_pareto = (num_clientes_pareto / num_total_clientes_deuda) * 100 if num_total_clientes_deuda > 0 else 0
-                
-                st.info(f"Solo el **{porcentaje_clientes_pareto:.0f}%** de los clientes ({num_clientes_pareto} de {num_total_clientes_deuda}) representan aprox. el **80%** de la cartera vencida. **Priorice la gestión en estos {num_clientes_pareto} clientes.**")
-                
-                # Crear gráfico de Pareto (Combinación de Barra y Línea Acumulada)
-                df_pareto_chart = client_debt.head(15).reset_index()
-                df_pareto_chart['Acumulado'] = (df_pareto_chart['saldo'].cumsum() / total_debt_vencida)
-                
-                fig_pareto = go.Figure()
-                fig_pareto.add_trace(go.Bar(x=df_pareto_chart['cliente'], y=df_pareto_chart['saldo'], name='Monto Vencido', marker_color=COLOR_PRIMARIO))
-                fig_pareto.add_trace(go.Scatter(x=df_pareto_chart['cliente'], y=df_pareto_chart['Acumulado'], name='Acumulado', yaxis='y2', marker_color='#DC3545', line=dict(width=3)))
-                fig_pareto.update_layout(
-                    title='Top 15 Clientes por Deuda Vencida',
-                    yaxis=dict(title='Monto Vencido', tickformat='$,.0f'),
-                    yaxis2=dict(title='Porcentaje Acumulado', overlaying='y', side='right', tickformat='.0%')
-                )
-                st.plotly_chart(fig_pareto, use_container_width=True)
+                portal_link = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
 
-        # Análisis por Vendedor
-        if sel_vendedor == "TODOS" and not df.empty:
-            st.markdown("---")
-            st.subheader("Desempeño por Vendedor/Zona")
-            df_vendedor_resumen = df.groupby('vendedor').agg(
-                Total_Cartera=('saldo', 'sum'),
-                Vencido=('saldo', lambda x: df.loc[x.index][df.loc[x.index, 'dias'] > 0]['saldo'].sum()),
-                Clientes=('cliente', 'nunique')
-            ).reset_index()
-            
-            df_vendedor_resumen['% Vencido'] = (df_vendedor_resumen['Vencido'] / df_vendedor_resumen['Total_Cartera'] * 100).fillna(0)
-            df_vendedor_resumen = df_vendedor_resumen.sort_values('% Vencido', ascending=False)
-            
-            st.dataframe(
-                df_vendedor_resumen.style.format(
-                    {'Total_Cartera': '${:,.0f}', 'Vencido': '${:,.0f}', '% Vencido': '{:.1f}%'}
-                ).background_gradient(cmap='YlOrRd', subset=['% Vencido']),
-                use_container_width=True, 
-                hide_index=True
-            )
+                st.write(f"**Facturas para {cliente_seleccionado}:**")
+                st.dataframe(datos_cliente_seleccionado[['numero', 'fecha_documento', 'fecha_vencimiento', 'dias_vencido', 'importe']], use_container_width=True, hide_index=True)
 
+                total_cartera_cliente = datos_cliente_seleccionado['importe'].sum()
+                facturas_vencidas_cliente = datos_cliente_seleccionado[datos_cliente_seleccionado['dias_vencido'] > 0]
+                total_vencido_cliente = facturas_vencidas_cliente['importe'].sum()
 
-    # --------------------------------------------------------
-    # TAB 3: EXPORTACIÓN (Datos y Descargas)
-    # --------------------------------------------------------
-    with tab_export:
-        st.subheader("📥 Descarga de Reportes y Detalle de Datos")
-        
-        col_dl, col_raw = st.columns([1, 2])
-        
-        with col_dl:
-            st.markdown("**Reporte Listo para Gerencia**")
-            excel_data = generar_excel_gerencial(df, kpis)
-            st.download_button(
-                label="✅ DESCARGAR EXCEL GERENCIAL FORMATEADO",
-                data=excel_data,
-                file_name=f"Reporte_Cartera_Ferreinox_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                type="primary"
-            )
-            st.caption("Incluye KPIs, Resumen Ejecutivo y formato profesional con filtros y colores.")
-            
-        with col_raw:
-            st.markdown("**Vista de la Base de Datos Filtrada**")
-            # Mostrar todas las columnas relevantes
-            st.dataframe(df.drop(columns=['Prioridad'], errors='ignore'), use_container_width=True, height=300)
+                summary_cols = st.columns(2)
+                summary_cols[0].metric("🔥 Cartera Vencida del Cliente", f"${total_vencido_cliente:,.0f}")
+                summary_cols[1].metric("💰 Cartera Total del Cliente", f"${total_cartera_cliente:,.0f}")
 
-if __name__ == "__main__":
+                pdf_bytes = generar_pdf_estado_cuenta(datos_cliente_seleccionado, total_vencido_cliente)
+
+                st.download_button(label="📄 Descargar Estado de Cuenta (PDF)", data=pdf_bytes, file_name=f"Estado_Cuenta_{normalizar_nombre(cliente_seleccionado).replace(' ', '_')}.pdf", mime="application/pdf")
+                st.markdown("---")
+                col_email, col_whatsapp = st.columns(2)
+
+                with col_email:
+                    st.subheader("✉️ Enviar por Correo Electrónico")
+                    email_destino = st.text_input("Verificar o modificar correo:", value=correo_cliente)
+
+                    if st.button("📧 Enviar Correo con Estado de Cuenta"):
+                        if not email_destino or email_destino == 'Correo no disponible' or '@' not in email_destino:
+                            st.error("Dirección de correo no válida o no disponible.")
+                        else:
+                            try:
+                                sender_email = st.secrets["email_credentials"]["sender_email"]
+                                sender_password = st.secrets["email_credentials"]["sender_password"]
+
+                                if total_vencido_cliente > 0:
+                                    dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
+                                    asunto = f"Recordatorio de Saldo Pendiente – {cliente_seleccionado}"
+                                    # --- [INICIO] NUEVA PLANTILLA HTML - CLIENTES CON DEUDA ---
+                                    cuerpo_html = f"""
+                                    <!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><head><title>Recordatorio Amistoso de Saldo Vencido - Ferreinox</title><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style type="text/css">#outlook a {{ padding:0; }}
+                                                  body {{ margin:0;padding:0;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%; }}
+                                                  table, td {{ border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt; }}
+                                                  img {{ border:0;height:auto;line-height:100%; outline:none;text-decoration:none;-ms-interpolation-mode:bicubic; }}
+                                                  p {{ display:block;margin:13px 0; }}</style><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" type="text/css"><style type="text/css">@import url(https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap);</style><style type="text/css">@media only screen and (min-width:480px) {{
+                                                      .mj-column-per-100 {{ width:100% !important; max-width: 100%; }}
+                                                      .mj-column-per-50 {{ width:50% !important; max-width: 50%; }}
+                                                    }}</style><style media="screen and (min-width:480px)">.moz-text-html .mj-column-per-100 {{ width:100% !important; max-width: 100%; }}
+                                                   .moz-text-html .mj-column-per-50 {{ width:50% !important; max-width: 50%; }}</style><style type="text/css"></style><style type="text/css">.greeting-strong {{
+                                                        color: #1e40af;
+                                                        font-weight: 600;
+                                                      }}
+                                                      .whatsapp-button table {{
+                                                        width: 100% !important;
+                                                      }}</style></head><body style="word-spacing:normal;background-color:#f3f4f6;"><div style="background-color:#f3f4f6;"><div class="email-container" style="background:#FFFFFF;background-color:#FFFFFF;margin:0px auto;border-radius:24px;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#FFFFFF;background-color:#FFFFFF;width:100%;border-radius:24px;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:0;text-align:center;"><div style="background:#1e3a8a;background-color:#1e3a8a;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#1e3a8a;background-color:#1e3a8a;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:30px 30px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="vertical-align:top;" width="100%"><tbody><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:28px;font-weight:700;line-height:1.6;text-align:center;color:#ffffff;">Recordatorio de Saldo Pendiente</div></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#ffffff;background-color:#ffffff;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;background-color:#ffffff;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:40px 40px 20px 40px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="vertical-align:top;" width="100%"><tbody><tr><td align="left" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:18px;font-weight:500;line-height:1.6;text-align:left;color:#374151;">Hola, <span class="greeting-strong">{cliente_seleccionado}</span> 👋</div></td></tr><tr><td align="left" style="font-size:0px;padding:10px 25px;padding-bottom:20px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;line-height:1.6;text-align:left;color:#6b7280;">Te contactamos de parte de <strong>Ferreinox SAS BIC</strong> para recordarte amablemente sobre tu estado de cuenta. Hemos identificado un saldo vencido y te invitamos a revisarlo.</div></td></tr><tr><td align="center" style="font-size:0px;padding:10px 0;word-break:break-word;"><p style="border-top:solid 2px #3b82f6;font-size:1px;margin:0px auto;width:100%;"></p></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#ffffff;background-color:#ffffff;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;background-color:#ffffff;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:10px 40px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="background-color:#fee2e2;border-radius:20px;vertical-align:top;" width="100%"><tbody><tr><td align="center" style="font-size:0px;padding:25px 0 10px 0;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:48px;line-height:1.6;text-align:center;color:#374151;">⚠️</div></td></tr><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:24px;font-weight:700;line-height:1.6;text-align:center;color:#991b1b;">Valor Total Vencido</div></td></tr><tr><td align="center" style="font-size:0px;padding:5px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:40px;font-weight:700;line-height:1.6;text-align:center;color:#991b1b;">${total_vencido_cliente:,.0f}</div></td></tr><tr><td align="center" style="font-size:0px;padding:5px 25px 30px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;line-height:1.6;text-align:center;color:#b91c1c;">Tu factura más antigua tiene <strong>{dias_max_vencido} días</strong> de vencimiento.</div></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#ffffff;background-color:#ffffff;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;background-color:#ffffff;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:20px 40px;text-align:center;"><div class="mj-column-per-50 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:middle;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="background-color:#f8fafc;border-radius:16px;vertical-align:middle;" width="100%"><tbody><tr><td align="left" style="font-size:0px;padding:20px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;font-weight:700;line-height:1.2;text-align:left;color:#334155;">NIT/CC</div><div style="font-family:Inter, -apple-system, sans-serif;font-size:20px;font-weight:700;line-height:1.2;text-align:left;color:#1e293b;">{nit_cliente}</div></td></tr><tr><td align="left" style="font-size:0px;padding:20px;padding-top:0;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;font-weight:700;line-height:1.2;text-align:left;color:#334155;">CÓDIGO INTERNO</div><div style="font-family:Inter, -apple-system, sans-serif;font-size:20px;font-weight:700;line-height:1.2;text-align:left;color:#1e293b;">{cod_cliente}</div></td></tr></tbody></table></div><div class="mj-column-per-50 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:middle;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="vertical-align:middle;" width="100%"><tbody><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;font-weight:500;line-height:1.6;text-align:center;color:#475569;">Usa estos datos en nuestro portal de pagos.</div></td></tr><tr><td align="center" vertical-align="middle" style="font-size:0px;padding:10px 25px;word-break:break-word;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:separate;line-height:100%;"><tr><td align="center" bgcolor="#16a34a" role="presentation" style="border:none;border-radius:12px;cursor:auto;mso-padding-alt:16px 25px;background:#16a34a;" valign="middle"><a href="{portal_link}" style="display:inline-block;background:#16a34a;color:#ffffff;font-family:Inter, -apple-system, sans-serif;font-size:16px;font-weight:600;line-height:120%;margin:0;text-decoration:none;text-transform:none;padding:16px 25px;mso-padding-alt:0px;border-radius:12px;" target="_blank">🚀 Realizar Pago</a></td></tr></table></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#ffffff;background-color:#ffffff;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;background-color:#ffffff;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:20px 40px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%"><tbody><tr><td style="background-color:#f8fafc;border-left:5px solid #3b82f6;border-radius:16px;vertical-align:top;padding:20px;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%"><tbody><tr><td align="left" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;font-weight:500;line-height:1.6;text-align:left;color:#475569;">💡 <strong>Nota:</strong> Si ya realizaste el pago, por favor omite este mensaje. Para tu control, hemos adjuntado tu estado de cuenta en PDF.</div></td></tr></tbody></table></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#1f2937;background-color:#1f2937;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#1f2937;background-color:#1f2937;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:30px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="vertical-align:top;" width="100%"><tbody><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:18px;font-weight:600;line-height:1.6;text-align:center;color:#ffffff;">Área de Cartera y Recaudos</div></td></tr><tr><td align="center" style="font-size:0px;padding:10px 25px;padding-bottom:20px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;line-height:1.6;text-align:center;color:#e5e7eb;"><strong>Líneas de Atención WhatsApp</strong></div></td></tr><tr><td align="center" vertical-align="middle" class="whatsapp-button" style="font-size:0px;padding:10px 25px;word-break:break-word;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:separate;line-height:100%;"><tr><td align="center" bgcolor="#25d366" role="presentation" style="border:none;border-radius:12px;cursor:auto;mso-padding-alt:10px 25px;background:#25d366;" valign="middle"><a href="https://wa.me/573165219904" style="display:inline-block;background:#25d366;color:#ffffff;font-family:Inter, -apple-system, sans-serif;font-size:13px;font-weight:500;line-height:120%;margin:0;text-decoration:none;text-transform:none;padding:10px 25px;mso-padding-alt:0px;border-radius:12px;" target="_blank">📱 Armenia: 316 5219904</a></td></tr></table></td></tr><tr><td align="center" vertical-align="middle" class="whatsapp-button" style="font-size:0px;padding:10px 25px;padding-top:12px;word-break:break-word;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:separate;line-height:100%;"><tr><td align="center" bgcolor="#25d366" role="presentation" style="border:none;border-radius:12px;cursor:auto;mso-padding-alt:10px 25px;background:#25d366;" valign="middle"><a href="https://wa.me/573108501359" style="display:inline-block;background:#25d366;color:#ffffff;font-family:Inter, -apple-system, sans-serif;font-size:13px;font-weight:500;line-height:120%;margin:0;text-decoration:none;text-transform:none;padding:10px 25px;mso-padding-alt:0px;border-radius:12px;" target="_blank">📱 Manizales: 310 8501359</a></td></tr></table></td></tr><tr><td align="center" vertical-align="middle" class="whatsapp-button" style="font-size:0px;padding:10px 25px;padding-top:12px;word-break:break-word;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:separate;line-height:100%;"><tr><td align="center" bgcolor="#25d366" role="presentation" style="border:none;border-radius:12px;cursor:auto;mso-padding-alt:10px 25px;background:#25d366;" valign="middle"><a href="https://wa.me/573142087169" style="display:inline-block;background:#25d366;color:#ffffff;font-family:Inter, -apple-system, sans-serif;font-size:13px;font-weight:500;line-height:120%;margin:0;text-decoration:none;text-transform:none;padding:10px 25px;mso-padding-alt:0px;border-radius:12px;" target="_blank">📱 Pereira: 314 2087169</a></td></tr></table></td></tr><tr><td align="center" style="font-size:0px;padding:30px 0 20px 0;word-break:break-word;"><p style="border-top:solid 1px #4b5563;font-size:1px;margin:0px auto;width:100%;"></p></td></tr><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:14px;line-height:1.6;text-align:center;color:#9ca3af;">© 2025 Ferreinox SAS BIC - Todos los derechos reservados</div></td></tr></tbody></table></div></td></tr></tbody></table></div></td></tr></tbody></table></div></div></body></html>
+                                    """
+                                    # --- [FIN] NUEVA PLANTILLA HTML - CLIENTES CON DEUDA ---
+                                else:
+                                    asunto = f"Tu Estado de Cuenta Actualizado - {cliente_seleccionado}"
+                                    # --- [INICIO] NUEVA PLANTILLA HTML - CLIENTES AL DÍA ---
+                                    cuerpo_html = f"""
+                                    <!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><head><title>Tu Estado de Cuenta Actualizado - Ferreinox</title><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style type="text/css">#outlook a {{ padding:0; }}
+                                                  body {{ margin:0;padding:0;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%; }}
+                                                  table, td {{ border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt; }}
+                                                  img {{ border:0;height:auto;line-height:100%; outline:none;text-decoration:none;-ms-interpolation-mode:bicubic; }}
+                                                  p {{ display:block;margin:13px 0; }}</style><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" type="text/css"><style type="text/css">@import url(https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap);</style><style type="text/css">@media only screen and (min-width:480px) {{
+                                                      .mj-column-per-100 {{ width:100% !important; max-width: 100%; }}
+                                                    }}</style><style media="screen and (min-width:480px)">.moz-text-html .mj-column-per-100 {{ width:100% !important; max-width: 100%; }}</style><style type="text/css"></style><style type="text/css">.greeting-strong {{
+                                                        color: #1e40af;
+                                                        font-weight: 600;
+                                                      }}
+                                                      .whatsapp-button table {{
+                                                        /* Hacemos que los botones de WhatsApp ocupen todo el ancho */
+                                                        width: 100% !important;
+                                                      }}</style></head><body style="word-spacing:normal;background-color:#f3f4f6;"><div style="background-color:#f3f4f6;"><div class="email-container" style="background:#FFFFFF;background-color:#FFFFFF;margin:0px auto;border-radius:24px;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#FFFFFF;background-color:#FFFFFF;width:100%;border-radius:24px;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:0;text-align:center;"><div style="background:#1e3a8a;background-color:#1e3a8a;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#1e3a8a;background-color:#1e3a8a;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:30px 30px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="vertical-align:top;" width="100%"><tbody><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:28px;font-weight:700;line-height:1.6;text-align:center;color:#ffffff;">Estado de Cuenta Actualizado</div></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#ffffff;background-color:#ffffff;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;background-color:#ffffff;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:40px 40px 20px 40px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="vertical-align:top;" width="100%"><tbody><tr><td align="left" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:18px;font-weight:500;line-height:1.6;text-align:left;color:#374151;">Hola, <span class="greeting-strong">{cliente_seleccionado}</span> ✨</div></td></tr><tr><td align="left" style="font-size:0px;padding:10px 25px;padding-bottom:20px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;line-height:1.6;text-align:left;color:#6b7280;">Recibe un cordial saludo del equipo de <strong>Ferreinox SAS BIC</strong>.</div></td></tr><tr><td align="center" style="font-size:0px;padding:10px 0;word-break:break-word;"><p style="border-top:solid 2px #3b82f6;font-size:1px;margin:0px auto;width:100%;"></p></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#ffffff;background-color:#ffffff;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;background-color:#ffffff;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:10px 40px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="background-color:#10b981;border-radius:20px;vertical-align:top;" width="100%"><tbody><tr><td align="center" style="font-size:0px;padding:25px 0 10px 0;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:48px;line-height:1.6;text-align:center;color:#374151;">🎉</div></td></tr><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:24px;font-weight:700;line-height:1.6;text-align:center;color:#ffffff;">¡Felicitaciones!</div></td></tr><tr><td align="center" style="font-size:0px;padding:5px 25px 30px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;line-height:1.6;text-align:center;color:#ffffff;">Tu cuenta no presenta saldos vencidos.<br>Agradecemos enormemente tu puntualidad y excelente gestión de pagos.</div></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#ffffff;background-color:#ffffff;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;background-color:#ffffff;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:20px 40px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%"><tbody><tr><td style="background-color:#f8fafc;border-left:5px solid #3b82f6;border-radius:16px;vertical-align:top;padding:20px;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%"><tbody><tr><td align="left" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;font-weight:500;line-height:1.6;text-align:left;color:#475569;">📄 Para tu control y referencia, hemos adjuntado tu estado de cuenta completo en formato PDF a este correo electrónico.</div></td></tr></tbody></table></td></tr></tbody></table></div></td></tr></tbody></table></div><div style="background:#1f2937;background-color:#1f2937;margin:0px auto;max-width:600px;"><table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#1f2937;background-color:#1f2937;width:100%;"><tbody><tr><td style="direction:ltr;font-size:0px;padding:30px;text-align:center;"><div class="mj-column-per-100 mj-outlook-group-fix" style="font-size:0px;text-align:left;direction:ltr;display:inline-block;vertical-align:top;width:100%;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="vertical-align:top;" width="100%"><tbody><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:18px;font-weight:600;line-height:1.6;text-align:center;color:#ffffff;">Área de Cartera y Recaudos</div></td></tr><tr><td align="center" style="font-size:0px;padding:10px 25px;padding-bottom:20px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:16px;line-height:1.6;text-align:center;color:#e5e7eb;"><strong>Líneas de Atención WhatsApp</strong></div></td></tr><tr><td align="center" vertical-align="middle" class="whatsapp-button" style="font-size:0px;padding:10px 25px;word-break:break-word;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:separate;line-height:100%;"><tr><td align="center" bgcolor="#25d366" role="presentation" style="border:none;border-radius:12px;cursor:auto;mso-padding-alt:10px 25px;background:#25d366;" valign="middle"><a href="https://wa.me/573165219904" style="display:inline-block;background:#25d366;color:#ffffff;font-family:Inter, -apple-system, sans-serif;font-size:13px;font-weight:500;line-height:120%;margin:0;text-decoration:none;text-transform:none;padding:10px 25px;mso-padding-alt:0px;border-radius:12px;" target="_blank">📱 Armenia: 316 5219904</a></td></tr></table></td></tr><tr><td align="center" vertical-align="middle" class="whatsapp-button" style="font-size:0px;padding:10px 25px;padding-top:12px;word-break:break-word;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:separate;line-height:100%;"><tr><td align="center" bgcolor="#25d366" role="presentation" style="border:none;border-radius:12px;cursor:auto;mso-padding-alt:10px 25px;background:#25d366;" valign="middle"><a href="https://wa.me/573108501359" style="display:inline-block;background:#25d366;color:#ffffff;font-family:Inter, -apple-system, sans-serif;font-size:13px;font-weight:500;line-height:120%;margin:0;text-decoration:none;text-transform:none;padding:10px 25px;mso-padding-alt:0px;border-radius:12px;" target="_blank">📱 Manizales: 310 8501359</a></td></tr></table></td></tr><tr><td align="center" vertical-align="middle" class="whatsapp-button" style="font-size:0px;padding:10px 25px;padding-top:12px;word-break:break-word;"><table border="0" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:separate;line-height:100%;"><tr><td align="center" bgcolor="#25d366" role="presentation" style="border:none;border-radius:12px;cursor:auto;mso-padding-alt:10px 25px;background:#25d366;" valign="middle"><a href="https://wa.me/573142087169" style="display:inline-block;background:#25d366;color:#ffffff;font-family:Inter, -apple-system, sans-serif;font-size:13px;font-weight:500;line-height:120%;margin:0;text-decoration:none;text-transform:none;padding:10px 25px;mso-padding-alt:0px;border-radius:12px;" target="_blank">📱 Pereira: 314 2087169</a></td></tr></table></td></tr><tr><td align="center" style="font-size:0px;padding:30px 0 20px 0;word-break:break-word;"><p style="border-top:solid 1px #4b5563;font-size:1px;margin:0px auto;width:100%;"></p></td></tr><tr><td align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div style="font-family:Inter, -apple-system, sans-serif;font-size:14px;line-height:1.6;text-align:center;color:#9ca3af;">© 2025 Ferreinox SAS BIC - Todos los derechos reservados</div></td></tr></tbody></table></div></td></tr></tbody></table></div></td></tr></tbody></table></div></div></body></html>
+                                    """
+                                    # --- [FIN] NUEVA PLANTILLA HTML - CLIENTES AL DÍA ---
+                                
+                                with st.spinner(f"Enviando correo a {email_destino}..."):
+                                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                                        tmp.write(pdf_bytes)
+                                        tmp_path = tmp.name
+
+                                    try:
+                                        yag = yagmail.SMTP(sender_email, sender_password)
+                                        
+                                        contenidos_correo = [cuerpo_html, tmp_path]
+                                        
+                                        yag.send(
+                                            to=email_destino,
+                                            subject=asunto,
+                                            contents=contenidos_correo
+                                        )
+                                        st.success(f"¡Correo enviado exitosamente a {email_destino}!")
+                                        
+                                    finally:
+                                        if os.path.exists(tmp_path):
+                                            os.remove(tmp_path)
+                                
+                            except Exception as e:
+                                st.error(f"Error al enviar el correo: {e}")
+
+                with col_whatsapp:
+                    st.subheader("📲 Enviar por WhatsApp")
+                    numero_completo_para_mostrar = f"+57{telefono_cliente}" if telefono_cliente else "+57"
+                    numero_destino_wa = st.text_input("Verificar o modificar número de WhatsApp:", value=numero_completo_para_mostrar, key="whatsapp_input")
+
+                    if not facturas_vencidas_cliente.empty:
+                        total_vencido_cliente_wa = facturas_vencidas_cliente['importe'].sum()
+                        dias_max_vencido = int(facturas_vencidas_cliente['dias_vencido'].max())
+                        mensaje_whatsapp = (
+                            f"👋 ¡Hola {cliente_seleccionado}! Te saludamos desde Ferreinox SAS BIC.\n\n"
+                            f"Te recordamos que tienes un saldo vencido de *${total_vencido_cliente_wa:,.0f}*. La factura más antigua tiene *{dias_max_vencido} días* de vencida.\n\n"
+                            f"Para ponerte al día, puedes usar nuestro Portal de Pagos:\n"
+                            f"🔗 {portal_link}\n\n"
+                            f"Tus datos de acceso son:\n"
+                            f"👤 *Usuario (NIT):* {nit_cliente}\n"
+                            f"🔑 *Código Único:* {cod_cliente}\n\n"
+                            f"Hemos enviado el estado de cuenta detallado a tu correo. ¡Agradecemos tu pronta gestión!"
+                        )
+                    else:
+                        total_cartera_cliente_wa = datos_cliente_seleccionado['importe'].sum()
+                        mensaje_whatsapp = (
+                            f"👋 ¡Hola {cliente_seleccionado}! Te saludamos desde Ferreinox SAS BIC.\n\n"
+                            f"¡Felicitaciones! Tu cuenta está al día. Tu saldo total es de *${total_cartera_cliente_wa:,.0f}*.\n\n"
+                            f"Hemos enviado tu estado de cuenta al correo para tu referencia.\n\n"
+                            f"¡Gracias por tu confianza!"
+                        )
+
+                    mensaje_codificado = quote(mensaje_whatsapp)
+                    numero_limpio = re.sub(r'\D', '', numero_destino_wa)
+                    if numero_limpio:
+                        url_whatsapp = f"https://wa.me/{numero_limpio}?text={mensaje_codificado}"
+                        st.markdown(f'<a href="{url_whatsapp}" target="_blank" class="button">📱 Enviar a WhatsApp ({numero_destino_wa})</a>', unsafe_allow_html=True)
+                    else:
+                        st.warning("Ingresa un número de teléfono válido para habilitar el botón de WhatsApp.")
+
+if __name__ == '__main__':
     main()
