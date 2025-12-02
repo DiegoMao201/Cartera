@@ -187,7 +187,7 @@ def mapear_y_limpiar_df(df_raw):
 
     return df, "OK"
 
-@st.cache_data(ttl=600) # Carga automática desde Dropbox
+@st.cache_data(ttl=600) # Carga automática desde Dropbox (USANDO EL DECORADOR SOLICITADO)
 def cargar_datos_automaticos_dropbox():
     """Carga los datos más recientes desde el archivo CSV en Dropbox y los mapea."""
     try:
@@ -197,10 +197,10 @@ def cargar_datos_automaticos_dropbox():
         REFRESH_TOKEN = st.secrets["dropbox"]["refresh_token"]
 
         with dropbox.Dropbox(app_key=APP_KEY, app_secret=APP_SECRET, oauth2_refresh_token=REFRESH_TOKEN) as dbx:
-            path_archivo_dropbox = st.secrets["dropbox"]["file_path"] # e.g., '/data/cartera_detalle.csv'
+            path_archivo_dropbox = st.secrets["dropbox"].get("file_path", '/data/cartera_detalle.csv') # Usar valor por defecto si no está en secrets
             metadata, res = dbx.files_download(path=path_archivo_dropbox)
             
-            # Decodificación y lectura del CSV (asumiendo separador | y encoding latin-1, como en el código 2)
+            # Decodificación y lectura del CSV (asumiendo separador | y encoding latin-1)
             contenido_csv = res.content.decode('latin-1')
             
             # Se usa el primer encabezado para mapear automáticamente, no una lista fija.
@@ -213,11 +213,11 @@ def cargar_datos_automaticos_dropbox():
             return None, f"Error en procesamiento de datos (Dropbox): {status}"
             
         return df_proc, f"Conectado a la fuente principal: **Dropbox ({metadata.name})**"
-        
+            
     except toml.TomlDecodeError:
         return None, "Error: Las credenciales de Dropbox no están configuradas correctamente en `secrets.toml`."
-    except KeyError:
-        return None, "Error: Las claves de Dropbox (app_key, app_secret, refresh_token, file_path) no se encontraron en `secrets.toml`."
+    except KeyError as ke:
+        return None, f"Error: La clave de Dropbox no se encontró en `secrets.toml`: {ke}"
     except Exception as e:
         return None, f"Error al cargar datos desde Dropbox: {e}"
 
@@ -481,13 +481,20 @@ def enviar_correo(destinatario, asunto, cuerpo_html, pdf_bytes):
         st.error("⚠️ Credenciales de correo incompletas. Revisa `secrets.toml`.")
         return False
 
+    # VALIDACIÓN BÁSICA DE DESTINATARIO
+    if not destinatario or '@' not in destinatario:
+        st.error("⚠️ El correo electrónico del destinatario no es válido.")
+        return False
+
     try:
         # Guardar PDF temporalmente
+        tmp_path = ''
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(pdf_bytes)
             tmp_path = tmp.name
 
         with st.spinner(f"Enviando correo a {destinatario}..."):
+            # Conexión con yagmail
             yag = yagmail.SMTP(email_user, email_pass)
             
             yag.send(
@@ -499,7 +506,7 @@ def enviar_correo(destinatario, asunto, cuerpo_html, pdf_bytes):
         os.remove(tmp_path) # Limpiar el archivo temporal
         return True
     except Exception as e:
-        st.error(f"Error enviando correo. Asegúrate que la contraseña es una 'Contraseña de Aplicación' (no la normal): {e}")
+        st.error(f"Error enviando correo. Asegúrate que la contraseña es una 'Contraseña de Aplicación' (no la normal) y que el remitente está configurado: {e}")
         try:
             if os.path.exists(tmp_path): os.remove(tmp_path)
         except:
@@ -575,7 +582,6 @@ def main():
             
         password = st.text_input("Introduce la contraseña:", type="password", key="password_input")
         if st.button("Ingresar"):
-            vendedor_norm = normalizar_nombre(password) # Usamos la función de normalización del código 2
             
             if password == str(general_password):
                 st.session_state['authentication_status'] = True
@@ -699,8 +705,8 @@ def main():
         
         # Selector de cliente
         cliente_sel = st.selectbox("🔍 Selecciona Cliente a Gestionar (Priorizado por Deuda Vencida)", 
-                                    [""] + clientes_a_mostrar, 
-                                    format_func=lambda x: '--- Selecciona un cliente ---' if x == "" else x)
+                                 [""] + clientes_a_mostrar, 
+                                 format_func=lambda x: '--- Selecciona un cliente ---' if x == "" else x)
         
         if cliente_sel:
             data_cli = df_agrupado[df_agrupado['nombrecliente'] == cliente_sel].iloc[0]
@@ -750,7 +756,8 @@ def main():
                     
                     if saldo_vencido_cli > 0:
                         asunto_msg = f"Recordatorio URGENTE de Saldo Pendiente - {cliente_sel}"
-                        cuerpo_html = plantilla_correo_vencido(cliente_sel, saldo_vencido_cli, data_cli['dias_max'], data_cli['nit'], data_cli['cod_cliente'], "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/")
+                        portal_link_email = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
+                        cuerpo_html = plantilla_correo_vencido(cliente_sel, saldo_vencido_cli, data_cli['dias_max'], data_cli['nit'], data_cli['cod_cliente'], portal_link_email)
                     else:
                         asunto_msg = f"Tu Estado de Cuenta Actualizado - {cliente_sel} (Cta al Día)"
                         cuerpo_html = plantilla_correo_al_dia(cliente_sel, data_cli['saldo'])
@@ -780,7 +787,7 @@ def main():
             color_map = {"🟢 Al Día": "green", "🟡 Prev. (1-15)": "gold", "🟠 Riesgo (16-30)": "orange", 
                          "🔴 Crítico (31-60)": "orangered", "🚨 Alto Riesgo (61-90)": "red", "⚫ Legal (+90)": "black"}
             fig_pie = px.pie(df_pie, names='Rango', values='importe', color='Rango', 
-                              color_discrete_map=color_map, hole=.3)
+                             color_discrete_map=color_map, hole=.3)
             fig_pie.update_traces(textinfo='percent+label', marker=dict(line=dict(color='#000000', width=1)))
             st.plotly_chart(fig_pie, use_container_width=True)
             
@@ -790,8 +797,8 @@ def main():
             # Solo clientes con mora y saldo positivo 
             top_cli = df_view[(df_view['dias_vencido'] > 0) & (df_view['importe'] > 0)].groupby('nombrecliente')['importe'].sum().nlargest(10).reset_index()
             fig_bar = px.bar(top_cli, x='importe', y='nombrecliente', orientation='h', 
-                              text_auto='$.2s', title="Monto de Deuda Vencida (Top 10)", 
-                              color_discrete_sequence=[COLOR_PRIMARIO])
+                             text_auto='$.2s', title="Monto de Deuda Vencida (Top 10)", 
+                             color_discrete_sequence=[COLOR_PRIMARIO])
             fig_bar.update_layout(yaxis={'categoryorder':'total ascending'}, xaxis_title="Monto Vencido", yaxis_title="Cliente")
             st.plotly_chart(fig_bar, use_container_width=True)
             
@@ -810,6 +817,7 @@ def main():
         clientes_mora_vendedor = vencidos_df.groupby('nomvendedor_norm')['nombrecliente'].nunique().reset_index().rename(columns={'nombrecliente': 'Clientes_Mora'})
         
         # CSI por Vendedor
+        # El groupby.apply requiere la columna 'nomvendedor_norm' para funcionar correctamente en el merge posterior.
         csi_vendedor = vencidos_df.groupby('nomvendedor_norm').apply(
             lambda x: (x['importe'] * x['dias_vencido']).sum() / df_view[df_view['nomvendedor_norm'] == x.name]['importe'].sum() if df_view[df_view['nomvendedor_norm'] == x.name]['importe'].sum() > 0 else 0, 
             include_groups=False
