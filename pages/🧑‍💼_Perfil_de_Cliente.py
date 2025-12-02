@@ -1,7 +1,6 @@
 # ======================================================================================
-# ARCHIVO: Tablero_Comando_Ferreinox_PRO.py (v.FINAL UNIFICADA)
-# Descripción: Panel de Control de Cartera para gestión operativa, análisis gerencial y
-#              conexión automática a Dropbox con autenticación.
+# ARCHIVO: Tablero_Comando_Ferreinox_PRO.py (v.FINAL UNIFICADA & CORREGIDA)
+# Descripción: Panel de Control de Cartera PRO con motor de lectura de datos corregido.
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -17,6 +16,7 @@ from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
+from openpyxl.drawing.image import Image as XLImage
 from fpdf import FPDF
 import yagmail
 import tempfile
@@ -34,7 +34,7 @@ st.set_page_config(
 )
 
 # Paleta de Colores y CSS Corporativo (Unificada)
-COLOR_PRIMARIO = "#003865"       # Azul oscuro corporativo (Similar al unificado)
+COLOR_PRIMARIO = "#003865"       # Azul oscuro corporativo
 COLOR_ACCION = "#FFC300"         # Amarillo para acciones y énfasis
 COLOR_FONDO = "#f0f2f6"          # Gris claro de fondo
 COLOR_TARJETA = "#FFFFFF"        # Fondo de tarjetas y métricas
@@ -67,7 +67,7 @@ st.markdown(f"""
         text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.2);
     }}
     a.wa-link:hover {{ background-color: #128C7E; }}
-    /* Botón Email (Para uniformidad con el código 1) */
+    /* Botón Email */
     .email-btn {{ 
         background-color: {COLOR_ACCION}; color: {COLOR_PRIMARIO}; font-weight: bold;
         border: none; border-radius: 8px; padding: 10px; margin-top: 10px; width: 100%;
@@ -75,7 +75,7 @@ st.markdown(f"""
     }}
     .email-btn:hover {{ background-color: #FFD700; }}
     
-    /* Input/Select estilo profesional (tomado del código 2) */
+    /* Input/Select estilo profesional */
     div[data-baseweb="input"], div[data-baseweb="select"], div.st-multiselect, div.st-text-area {{ background-color: #FFFFFF; border: 1.5px solid {COLOR_PRIMARIO}; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); padding-left: 5px; }}
 
 </style>
@@ -83,134 +83,115 @@ st.markdown(f"""
 
 
 # ======================================================================================
-# 1. MOTOR DE CONEXIÓN, LIMPIEZA Y PROCESAMIENTO
+# 1. MOTOR DE CONEXIÓN, LIMPIEZA Y PROCESAMIENTO (CORREGIDO)
 # ======================================================================================
 
 def normalizar_texto(texto):
     if not isinstance(texto, str): return str(texto)
-    # Normaliza, quita tildes, pone en mayúsculas y quita caracteres especiales (mantiene espacios y puntos)
+    # Normaliza, quita tildes, pone en mayúsculas y quita caracteres especiales
     texto = unicodedata.normalize('NFD', texto).encode('ascii', 'ignore').decode("utf-8").upper().strip()
     return re.sub(r'[^\w\s\.]', '', texto).strip()
 
 def normalizar_nombre(nombre: str) -> str:
-    """Función para normalizar nombres de vendedores/clientes para la autenticación."""
+    """Función para normalizar nombres de vendedores/clientes."""
     if not isinstance(nombre, str): return ""
     nombre = nombre.upper().strip().replace('.', '')
     nombre = ''.join(c for c in unicodedata.normalize('NFD', nombre) if unicodedata.category(c) != 'Mn')
     return ' '.join(nombre.split())
 
-def mapear_y_limpiar_df(df_raw):
-    """Mapea y limpia el DataFrame según las columnas esperadas."""
-    
-    # 1. Mapeo de columnas con el robusto sistema de variantes
+def procesar_dataframe_robusto(df_raw):
+    """
+    Procesa el DataFrame crudo leído con el esquema del Código 2
+    para adaptarlo a las necesidades del Tablero PRO.
+    """
     df = df_raw.copy()
-    
-    # Normalizar todas las columnas primero
-    df.columns = [normalizar_texto(c) for c in df.columns]
-    
-    # Diccionario de mapeo robusto con columnas requeridas
-    mapa = {
-        'nombrecliente': ['NOMBRECLIENTE', 'RAZONSOCIAL', 'TERCERO', 'CLIENTE'],
-        'nit': ['NIT', 'IDENTIFICACION', 'CEDULA', 'RUT'],
-        'importe': ['IMPORTE', 'SALDO', 'TOTAL', 'DEUDA', 'VALOR'],
-        'dias_vencido': ['DIASVENCIDO', 'DIAS', 'VENCIDO', 'MORA', 'ANTIGUEDAD'],
-        'telefono1': ['TELEFONO1', 'TEL', 'MOVIL', 'CELULAR', 'TELEFONO'],
-        'nomvendedor': ['NOMVENDEDOR', 'VENDEDOR', 'ASESOR', 'COMERCIAL'],
-        'numero': ['NUMERO', 'FACTURA', 'DOC'],
-        'e_mail': ['EMAIL', 'CORREO', 'E-MAIL', 'MAIL'],
-        'cod_cliente': ['CODCLIENTE', 'CODIGO'],
-        # Columnas críticas del segundo script para complementar (si existen)
-        'serie': ['SERIE', 'ZONA_SERIE'], 
-        'fecha_documento': ['FECHADOCUMENTO', 'FECHAFACTURA', 'FECHA_DOC'],
-        'fecha_vencimiento': ['FECHAVENCIMIENTO', 'FECHA_VENC'],
-        'poblacion': ['POBLACION', 'CIUDAD']
-    }
-    
-    renombres = {}
-    for standard, variantes in mapa.items():
-        for col in df.columns:
-            # Buscar coincidencia parcial, pero priorizar si ya está mapeada
-            if standard not in renombres.values() and any(v in col for v in variantes):
-                renombres[col] = standard
-                break
-            
-    df.rename(columns=renombres, inplace=True)
-    
-    # ⚠️ Validación mínima (Nombre, Importe, Días, Número son críticos)
-    req = ['nombrecliente', 'importe', 'dias_vencido', 'numero']
-    if not all(c in df.columns for c in req):
-        missing = [c for c in req if c not in df.columns]
-        return None, f"Faltan columnas críticas mapeadas: {', '.join(missing)}."
 
-    # Inclusión de columnas opcionales con valor 'N/A' si faltan (para evitar KeyError)
-    for c in mapa.keys():
-        if c not in df.columns: df[c] = 'N/A'
-        else: df[c] = df[c].fillna('N/A')
+    # 1. Renombrar columnas a snake_case para compatibilidad interna
+    # Esto convierte 'NombreCliente' -> 'nombrecliente', 'Dias Vencido' -> 'dias_vencido', etc.
+    df.columns = [normalizar_texto(c).lower().replace(' ', '_') for c in df.columns]
 
-    # 2. Conversión de tipos y limpieza de datos
-    df['importe'] = pd.to_numeric(df['importe'], errors='coerce').fillna(0) # Limpieza de moneda no es necesaria si el CSV de Dropbox trae numéricos limpios
+    # 2. Limpieza de Tipos de Datos (Lógica del Código 2)
+    # Importe
+    df['importe'] = pd.to_numeric(df['importe'], errors='coerce').fillna(0)
+    
+    # Manejo de Notas Crédito (Si Numero es negativo, importe se vuelve negativo)
+    df['numero'] = pd.to_numeric(df['numero'], errors='coerce').fillna(0)
+    df.loc[df['numero'] < 0, 'importe'] *= -1
+    
+    # Días Vencido
     df['dias_vencido'] = pd.to_numeric(df['dias_vencido'], errors='coerce').fillna(0).astype(int)
-    
-    # Asegurar que el importe sea negativo si el número de factura es negativo (Notas Crédito)
-    df['numero_float'] = pd.to_numeric(df['numero'], errors='coerce').fillna(0)
-    df.loc[df['numero_float'] < 0, 'importe'] *= -1
-    df.drop(columns=['numero_float'], inplace=True)
-    
-    # Normalizar vendedores para filtrado de seguridad
-    df['nomvendedor_norm'] = df['nomvendedor'].apply(normalizar_nombre) 
-    
-    # Convertir fechas (si existen)
+
+    # Fechas
     if 'fecha_documento' in df.columns:
         df['fecha_documento'] = pd.to_datetime(df['fecha_documento'], errors='coerce')
     if 'fecha_vencimiento' in df.columns:
         df['fecha_vencimiento'] = pd.to_datetime(df['fecha_vencimiento'], errors='coerce')
-    
-    # 3. Limpieza final: Quitar facturas con saldo cero
-    df = df[df['importe'] != 0].copy()  
-    
-    # 4. Asignación de Segmentos (del código 2)
+
+    # Normalización de Vendedor para filtros
+    df['nomvendedor_norm'] = df['nomvendedor'].apply(normalizar_nombre)
+
+    # 3. Asignación de Zonas (Lógica Robusta del Código 2)
     ZONAS_SERIE = { "PEREIRA": [155, 189, 158, 439], "MANIZALES": [157, 238], "ARMENIA": [156] }
     ZONAS_SERIE_STR = {zona: [str(s) for s in series] for zona, series in ZONAS_SERIE.items()}
+    
     def asignar_zona_robusta(valor_serie):
-        if pd.isna(valor_serie) or valor_serie == 'N/A': return "OTRAS ZONAS"
+        if pd.isna(valor_serie): return "OTRAS ZONAS"
         numeros_en_celda = re.findall(r'\d+', str(valor_serie))
         if not numeros_en_celda: return "OTRAS ZONAS"
         for zona, series_clave_str in ZONAS_SERIE_STR.items():
             if set(numeros_en_celda) & set(series_clave_str): return zona
         return "OTRAS ZONAS"
-    df['zona'] = df['serie'].apply(asignar_zona_robusta)
     
-    # Segmentación estratégica de cartera (del código 1)
+    df['zona'] = df['serie'].apply(asignar_zona_robusta)
+
+    # 4. Filtrado de series basura (W, X) del Código 2
+    # Convertimos a string para asegurar que .str funcione
+    df['serie'] = df['serie'].astype(str)
+    df = df[~df['serie'].str.contains('W|X', case=False, na=False)]
+
+    # 5. Segmentación estratégica de cartera (Necesaria para gráficos PRO)
+    # Se crea la columna 'Rango' (Capitalizada) que usa el Dashboard PRO
     bins = [-float('inf'), 0, 15, 30, 60, 90, float('inf')]
     labels = ["🟢 Al Día", "🟡 Prev. (1-15)", "🟠 Riesgo (16-30)", "🔴 Crítico (31-60)", "🚨 Alto Riesgo (61-90)", "⚫ Legal (+90)"]
     df['Rango'] = pd.cut(df['dias_vencido'], bins=bins, labels=labels, right=True)
 
-    return df, "OK"
+    # Limpieza final: Quitar saldos cero
+    df = df[df['importe'] != 0].copy()
 
-@st.cache_data(ttl=600) # Carga automática desde Dropbox (USANDO EL DECORADOR SOLICITADO)
+    return df
+
+@st.cache_data(ttl=600) 
 def cargar_datos_automaticos_dropbox():
-    """Carga los datos más recientes desde el archivo CSV en Dropbox y los mapea."""
+    """
+    Carga los datos usando la lógica 'perfecta' del Código 2:
+    Lectura sin encabezados y asignación manual de columnas.
+    """
     try:
-        # Se asume que las credenciales están en st.secrets
+        # Credenciales
         APP_KEY = st.secrets["dropbox"]["app_key"]
         APP_SECRET = st.secrets["dropbox"]["app_secret"]
         REFRESH_TOKEN = st.secrets["dropbox"]["refresh_token"]
 
         with dropbox.Dropbox(app_key=APP_KEY, app_secret=APP_SECRET, oauth2_refresh_token=REFRESH_TOKEN) as dbx:
-            path_archivo_dropbox = st.secrets["dropbox"].get("file_path", '/data/cartera_detalle.csv') # Usar valor por defecto si no está en secrets
+            path_archivo_dropbox = '/data/cartera_detalle.csv' # Ruta fija como en el código 2
             metadata, res = dbx.files_download(path=path_archivo_dropbox)
             
-            # Decodificación y lectura del CSV (asumiendo separador | y encoding latin-1)
+            # Decodificación
             contenido_csv = res.content.decode('latin-1')
             
-            # Se usa el primer encabezado para mapear automáticamente, no una lista fija.
-            df = pd.read_csv(StringIO(contenido_csv), sep='|', engine='python', dtype=str)
-
-        # Mapear y limpiar el DataFrame
-        df_proc, status = mapear_y_limpiar_df(df)
+            # --- LÓGICA DE LECTURA DEL CÓDIGO 2 (LA QUE FUNCIONA) ---
+            nombres_columnas_originales = [
+                'Serie', 'Numero', 'Fecha Documento', 'Fecha Vencimiento', 'Cod Cliente',
+                'NombreCliente', 'Nit', 'Poblacion', 'Provincia', 'Telefono1', 'Telefono2',
+                'NomVendedor', 'Entidad Autoriza', 'E-Mail', 'Importe', 'Descuento',
+                'Cupo Aprobado', 'Dias Vencido'
+            ]
             
-        if df_proc is None:  
-            return None, f"Error en procesamiento de datos (Dropbox): {status}"
+            # Lectura robusta con engine python y header=None
+            df_raw = pd.read_csv(StringIO(contenido_csv), header=None, names=nombres_columnas_originales, sep='|', engine='python')
+
+        # Procesar el DataFrame para adaptarlo al Tablero PRO
+        df_proc = procesar_dataframe_robusto(df_raw)
             
         return df_proc, f"Conectado a la fuente principal: **Dropbox ({metadata.name})**"
             
@@ -242,7 +223,7 @@ def calcular_kpis(df):
     return total, vencido, pct_vencido, clientes_mora, csi, antiguedad_prom_vencida
 
 def generar_analisis_cartera(kpis: dict):
-    """Genera comentarios de análisis IA basados en KPIs (tomado y mejorado del código 2)."""
+    """Genera comentarios de análisis IA basados en KPIs."""
     comentarios = []
     
     # 1. Análisis de % Vencido
@@ -312,15 +293,13 @@ def generar_link_wa(telefono, cliente, saldo_vencido, dias_max, nit, cod_cliente
 # ======================================================================================
 
 class PDF(FPDF):
-    """Clase personalizada para generar PDF con estilos de Ferreinox (Unificado y mejorado)."""
+    """Clase personalizada para generar PDF con estilos de Ferreinox."""
     def header(self):
         self.set_font('Arial', 'B', 12)
         self.set_text_color(0, 51, 102) # Color Primario
-        # Intenta usar logo si existe, si no, usa texto
+        # Intenta usar logo si existe
         try:
-            # Reemplazar con la ruta real de su logo si lo aloja
-            # self.image("LOGO_FERREINOX_SAS_BIC_2024.png", 10, 8, 80) 
-            self.cell(80, 10, 'FERREINOX SAS BIC', 0, 0, 'L')
+             self.image("LOGO FERREINOX SAS BIC 2024.png", 10, 8, 80) 
         except RuntimeError: 
             self.cell(80, 10, 'FERREINOX SAS BIC', 0, 0, 'L')
             
@@ -354,11 +333,11 @@ def crear_pdf(df_cliente, total_vencido_cliente):
     
     # --- Datos Cliente ---
     pdf.set_font("Arial", 'B', 11); pdf.set_text_color(0, 51, 102)
-    pdf.cell(40, 6, "Cliente:", 0, 0); pdf.set_font("Arial", '', 11); pdf.set_text_color(0, 0, 0); pdf.cell(0, 6, row['nombrecliente'], 0, 1)
+    pdf.cell(40, 6, "Cliente:", 0, 0); pdf.set_font("Arial", '', 11); pdf.set_text_color(0, 0, 0); pdf.cell(0, 6, str(row['nombrecliente']), 0, 1)
     pdf.set_font("Arial", 'B', 11); pdf.set_text_color(0, 51, 102)
-    pdf.cell(40, 6, "NIT/ID:", 0, 0); pdf.set_font("Arial", '', 11); pdf.set_text_color(0, 0, 0); pdf.cell(0, 6, row['nit'], 0, 1)
+    pdf.cell(40, 6, "NIT/ID:", 0, 0); pdf.set_font("Arial", '', 11); pdf.set_text_color(0, 0, 0); pdf.cell(0, 6, str(row['nit']), 0, 1)
     pdf.set_font("Arial", 'B', 11); pdf.set_text_color(0, 51, 102)
-    pdf.cell(40, 6, "Asesor:", 0, 0); pdf.set_font("Arial", '', 11); pdf.set_text_color(0, 0, 0); pdf.cell(0, 6, row['nomvendedor'], 0, 1)
+    pdf.cell(40, 6, "Asesor:", 0, 0); pdf.set_font("Arial", '', 11); pdf.set_text_color(0, 0, 0); pdf.cell(0, 6, str(row['nomvendedor']), 0, 1)
     pdf.ln(5)
     
     # --- Tabla de Facturas ---
@@ -385,8 +364,8 @@ def crear_pdf(df_cliente, total_vencido_cliente):
         fecha_doc_str = item['fecha_documento'].strftime('%d/%m/%Y') if pd.notna(item['fecha_documento']) else 'N/A'
         fecha_venc_str = item['fecha_vencimiento'].strftime('%d/%m/%Y') if pd.notna(item['fecha_vencimiento']) else 'N/A'
         
-        pdf.cell(25, 7, str(item['numero']), 1, 0, 'C', 1)
-        pdf.cell(25, 7, str(item['dias_vencido']), 1, 0, 'C', 1)
+        pdf.cell(25, 7, str(int(item['numero'])), 1, 0, 'C', 1)
+        pdf.cell(25, 7, str(int(item['dias_vencido'])), 1, 0, 'C', 1)
         pdf.cell(35, 7, fecha_doc_str, 1, 0, 'C', 1)
         pdf.cell(35, 7, fecha_venc_str, 1, 0, 'C', 1)
         pdf.cell(40, 7, f"${item['importe']:,.0f}", 1, 1, 'R', 1)
@@ -406,7 +385,7 @@ def crear_pdf(df_cliente, total_vencido_cliente):
     return bytes(pdf.output())
 
 def crear_excel_gerencial(df, total, vencido, pct_mora, clientes_mora, csi, antiguedad_prom_vencida):
-    """Genera el reporte ejecutivo en Excel con estilos y fórmulas (tomado del código 2)."""
+    """Genera el reporte ejecutivo en Excel con estilos y fórmulas."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Resumen Gerencial"
@@ -513,12 +492,10 @@ def enviar_correo(destinatario, asunto, cuerpo_html, pdf_bytes):
             pass
         return False
         
-# --- PLANTILLAS HTML PROFESIONALES (Tomadas del código 2) ---
+# --- PLANTILLAS HTML PROFESIONALES ---
 
 def plantilla_correo_vencido(cliente, saldo, dias, nit, cod_cliente, portal_link):
     """Plantilla de correo para clientes con deuda vencida."""
-    # Uso de HTML complejo para mayor compatibilidad con clientes de correo (MJML-style)
-    # El contenido se mantiene idéntico al código 2, asegurando la profesionalidad
     dias_max_vencido = int(dias)
     return f"""
     <!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><head><title>Recordatorio Amistoso de Saldo Vencido - Ferreinox</title><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style type="text/css">#outlook a {{ padding:0; }}
@@ -540,8 +517,6 @@ def plantilla_correo_vencido(cliente, saldo, dias, nit, cod_cliente, portal_link
 
 def plantilla_correo_al_dia(cliente, total_cartera):
     """Plantilla de correo para clientes con cuenta al día."""
-    # Uso de HTML complejo para mayor compatibilidad con clientes de correo (MJML-style)
-    # El contenido se mantiene idéntico al código 2, asegurando la profesionalidad
     return f"""
     <!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><head><title>Tu Estado de Cuenta Actualizado - Ferreinox</title><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style type="text/css">#outlook a {{ padding:0; }}
     body {{ margin:0;padding:0;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%; }}
@@ -563,7 +538,7 @@ def plantilla_correo_al_dia(cliente, total_cartera):
 # ======================================================================================
 
 def main():
-    # --- AUTENTICACIÓN (Tomado del código 2) ---
+    # --- AUTENTICACIÓN ---
     if 'authentication_status' not in st.session_state:
         st.session_state['authentication_status'] = False
         st.session_state['acceso_general'] = False
@@ -605,6 +580,10 @@ def main():
     
     # --- BARRA LATERAL: CONFIGURACIÓN Y FILTROS ---
     with st.sidebar:
+        try:
+            st.image("LOGO FERREINOX SAS BIC 2024.png", use_container_width=True) 
+        except FileNotFoundError:
+            pass
         st.header("👤 Sesión y Control")
         st.success(f"Usuario: **{st.session_state['vendedor_autenticado']}**")
         if st.button("Cerrar Sesión"):
@@ -672,7 +651,7 @@ def main():
     k5.metric("⏳ Antigüedad Prom.", f"{antiguedad_prom_vencida:.0f} días")
     k6.metric("💥 Índice de Severidad (CSI)", f"{csi:,.1f}")
     
-    # Análisis IA (mejorado del código 2)
+    # Análisis IA
     with st.expander("🤖 **Análisis y Recomendaciones del Asistente IA**", expanded=pct_mora > 15):
         kpis_dict = {'porcentaje_vencido': pct_mora, 'antiguedad_prom_vencida': antiguedad_prom_vencida, 'csi': csi}
         analisis = generar_analisis_cartera(kpis_dict)
@@ -730,13 +709,13 @@ def main():
                             f'</div>', unsafe_allow_html=True)
                 st.error(f"**Días Máx Mora:** {int(data_cli['dias_max'])} días")
                 st.text(f"📞 {telefono_cli} | 📧 {email_cli}")
-                st.text(f"ID: {data_cli['nit']} | Cód. Cliente: {data_cli['cod_cliente']}")
+                st.text(f"ID: {data_cli['nit']} | Cód. Cliente: {int(data_cli['cod_cliente']) if pd.notna(data_cli['cod_cliente']) else 'N/A'}")
                 
                 # Generar PDF en memoria
                 pdf_bytes = crear_pdf(detalle_facturas, saldo_vencido_cli)
                 
                 # --- BOTÓN WHATSAPP ---
-                link_wa = generar_link_wa(telefono_cli, cliente_sel, saldo_vencido_cli, data_cli['dias_max'], data_cli['nit'], data_cli['cod_cliente'])
+                link_wa = generar_link_wa(telefono_cli, cliente_sel, saldo_vencido_cli, data_cli['dias_max'], data_cli['nit'], int(data_cli['cod_cliente']) if pd.notna(data_cli['cod_cliente']) else 'N/A')
                 if link_wa and len(re.sub(r'\D', '', link_wa)) >= 10:
                     st.markdown(f"""<a href="{link_wa}" target="_blank" class="wa-link">📱 ABRIR WHATSAPP CON GUION</a>""", unsafe_allow_html=True)
                 else:
@@ -747,7 +726,7 @@ def main():
             with c2:
                 st.write("#### 📄 Detalle de Facturas (Priorizadas por Mora)")
                 # Vista previa de facturas
-                st.dataframe(detalle_facturas[['numero', 'fecha_vencimiento', 'dias_vencido', 'importe', 'Rango']].style.format({'importe': '${:,.0f}'}).background_gradient(subset=['dias_vencido'], cmap='YlOrRd'), height=250, use_container_width=True, hide_index=True)
+                st.dataframe(detalle_facturas[['numero', 'fecha_vencimiento', 'dias_vencido', 'importe', 'Rango']].style.format({'importe': '${:,.0f}', 'numero': '{:.0f}'}).background_gradient(subset=['dias_vencido'], cmap='YlOrRd'), height=250, use_container_width=True, hide_index=True)
                 
                 # --- ENVÍO DE CORREO ---
                 st.write("#### 📧 Envío de Estado de Cuenta por Correo")
@@ -757,7 +736,7 @@ def main():
                     if saldo_vencido_cli > 0:
                         asunto_msg = f"Recordatorio URGENTE de Saldo Pendiente - {cliente_sel}"
                         portal_link_email = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
-                        cuerpo_html = plantilla_correo_vencido(cliente_sel, saldo_vencido_cli, data_cli['dias_max'], data_cli['nit'], data_cli['cod_cliente'], portal_link_email)
+                        cuerpo_html = plantilla_correo_vencido(cliente_sel, saldo_vencido_cli, data_cli['dias_max'], data_cli['nit'], int(data_cli['cod_cliente']) if pd.notna(data_cli['cod_cliente']) else 'N/A', portal_link_email)
                     else:
                         asunto_msg = f"Tu Estado de Cuenta Actualizado - {cliente_sel} (Cta al Día)"
                         cuerpo_html = plantilla_correo_al_dia(cliente_sel, data_cli['saldo'])
@@ -783,7 +762,7 @@ def main():
         with c_pie:
             st.markdown("**1. Distribución de Saldo por Rango de Mora** ")
             df_pie = df_view.groupby('Rango', observed=True)['importe'].sum().reset_index()
-            # Mapeo de colores coherente con los rangos (del código 1)
+            # Mapeo de colores coherente con los rangos
             color_map = {"🟢 Al Día": "green", "🟡 Prev. (1-15)": "gold", "🟠 Riesgo (16-30)": "orange", 
                          "🔴 Crítico (31-60)": "orangered", "🚨 Alto Riesgo (61-90)": "red", "⚫ Legal (+90)": "black"}
             fig_pie = px.pie(df_pie, names='Rango', values='importe', color='Rango', 
@@ -817,7 +796,6 @@ def main():
         clientes_mora_vendedor = vencidos_df.groupby('nomvendedor_norm')['nombrecliente'].nunique().reset_index().rename(columns={'nombrecliente': 'Clientes_Mora'})
         
         # CSI por Vendedor
-        # El groupby.apply requiere la columna 'nomvendedor_norm' para funcionar correctamente en el merge posterior.
         csi_vendedor = vencidos_df.groupby('nomvendedor_norm').apply(
             lambda x: (x['importe'] * x['dias_vencido']).sum() / df_view[df_view['nomvendedor_norm'] == x.name]['importe'].sum() if df_view[df_view['nomvendedor_norm'] == x.name]['importe'].sum() > 0 else 0, 
             include_groups=False
