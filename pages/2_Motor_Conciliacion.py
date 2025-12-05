@@ -1,6 +1,6 @@
 # ======================================================================================
 # ARCHIVO: pages/2_Motor_Conciliacion.py
-# (Versión v18 - "Omnisciente Gerencial": Filtros + Consolidado Mensual + IA)
+# (Versión v19 - "Omnisciente Detallada": Facturas Visibles + Info Cliente Completa)
 # ======================================================================================
 
 import streamlit as st
@@ -20,7 +20,7 @@ import hashlib
 from collections import defaultdict
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Motor Conciliación V18", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Motor Conciliación V19", page_icon="🕵️‍♂️", layout="wide")
 
 # ======================================================================================
 # --- 1. CONEXIONES Y UTILIDADES ---
@@ -130,8 +130,9 @@ def generar_excel_operativo(df):
         
         # --- PREPARAR DATOS ---
         cols_export = [
-            'FECHA', 'Valor_Banco', 'Texto_Completo', 'Cliente_Identificado', 
-            'NIT', 'Estado', 'Facturas_Conciliadas', 'Detalle_Operacion', 
+            'FECHA', 'Valor_Banco', 'Texto_Completo', 
+            'Cliente_Identificado', 'NIT', 
+            'Facturas_Conciliadas', 'Detalle_Operacion', 'Estado', 
             'Diferencia', 'Tipo_Ajuste', 'Status_Gestion', 'Sugerencia_IA', 'ID_Unico'
         ]
         # Asegurar columnas
@@ -148,14 +149,10 @@ def generar_excel_operativo(df):
         header_fmt = workbook.add_format({'bold': True, 'fg_color': '#203764', 'font_color': 'white', 'border': 1})
         currency_fmt = workbook.add_format({'num_format': '$ #,##0.00'})
         
-        # Formatos condicionales simples
-        fmt_green = workbook.add_format({'bg_color': '#C6EFCE', 'font_color': '#006100'})
-        fmt_red = workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
-
         for i, col in enumerate(df_export.columns):
             worksheet.write(0, i, col, header_fmt)
-            width = 15
-            if col in ['Texto_Completo', 'Cliente_Identificado', 'Detalle_Operacion']: width = 40
+            width = 18
+            if col in ['Texto_Completo', 'Cliente_Identificado', 'Detalle_Operacion']: width = 45
             worksheet.set_column(i, i, width)
 
         # Aplicar formato moneda
@@ -327,7 +324,7 @@ def procesar_archivo_manual(uploaded_file):
 
 def analizar_deuda_cliente(nombre_cliente, nit_cliente, valor_pago, df_cartera):
     res = {
-        'Estado': '⚠️ SIN COINCIDENCIA DE VALOR',
+        'Estado': '⚠️ SIN COINCIDENCIA VALOR',
         'Facturas_Conciliadas': '',
         'Detalle_Operacion': '',
         'Diferencia': 0,
@@ -340,7 +337,7 @@ def analizar_deuda_cliente(nombre_cliente, nit_cliente, valor_pago, df_cartera):
         facturas = df_cartera[df_cartera['NombreCliente'].str.contains(nombre_cliente, case=False, na=False)]
     
     if facturas.empty:
-        res['Detalle_Operacion'] = "Cliente identificado, pero sin cartera pendiente."
+        res['Detalle_Operacion'] = "Cliente identificado por Nombre/NIT, pero no tiene facturas abiertas en cartera."
         res['Diferencia'] = valor_pago * -1
         return res
 
@@ -351,28 +348,31 @@ def analizar_deuda_cliente(nombre_cliente, nit_cliente, valor_pago, df_cartera):
     if abs(valor_pago - total_deuda) < 1000:
         res['Estado'] = '✅ MATCH EXACTO (TOTAL)'
         res['Facturas_Conciliadas'] = 'TODAS'
-        res['Detalle_Operacion'] = f"Pago total deuda."
+        res['Detalle_Operacion'] = f"Pago total de {len(facturas_list)} facturas pendientes."
         return res
         
-    # 2. MATCH FACTURAS ESPECÍFICAS
+    # 2. MATCH FACTURAS ESPECÍFICAS (Combinatoria)
     found = False
-    for r in range(1, 4):
+    # Probamos combinaciones de 1 a 4 facturas
+    for r in range(1, 5): 
         if found: break
         for combo in itertools.combinations(facturas_list, r):
             suma_combo = sum(c['Importe'] for c in combo)
             numeros = ", ".join([str(c['Numero']) for c in combo])
             
+            # Match Exacto de Subconjunto
             if abs(valor_pago - suma_combo) < 500:
                 res['Estado'] = '✅ FACTURAS ESPECÍFICAS'
                 res['Facturas_Conciliadas'] = numeros
-                res['Detalle_Operacion'] = "Suma exacta de facturas."
+                res['Detalle_Operacion'] = f"Suma exacta de: {numeros}"
                 found = True
                 break
             
+            # Match con Descuento Pronto Pago (~3%)
             if abs(valor_pago - (suma_combo * 0.97)) < 2000:
                 res['Estado'] = '💎 CONCILIADO C/DCTO'
                 res['Facturas_Conciliadas'] = numeros
-                res['Detalle_Operacion'] = "Pago con aprox 3% descuento."
+                res['Detalle_Operacion'] = f"Posible Dcto Pronto Pago sobre: {numeros}"
                 res['Tipo_Ajuste'] = "Descuento Pronto Pago"
                 found = True
                 break
@@ -388,13 +388,14 @@ def analizar_deuda_cliente(nombre_cliente, nit_cliente, valor_pago, df_cartera):
     if abs(valor_pago - pago_imptos) < 5000:
         res['Estado'] = '🏢 CONCILIADO (IMPUESTOS)'
         res['Impuesto_Est'] = rete_fuente + rete_iva
-        res['Detalle_Operacion'] = "Coincide menos retenciones."
+        res['Detalle_Operacion'] = "Coincide monto total menos retenciones estimadas."
+        res['Facturas_Conciliadas'] = 'TODAS (Probable)'
         return res
 
     # 4. ABONO PARCIAL
     res['Estado'] = '⚠️ ABONO / PARCIAL'
     res['Diferencia'] = total_deuda - valor_pago
-    res['Detalle_Operacion'] = f"Abono a deuda. Resta ${total_deuda - valor_pago:,.0f}"
+    res['Detalle_Operacion'] = f"No cruza exacto. Deuda Total: ${total_deuda:,.0f}. Diferencia: ${res['Diferencia']:,.0f}"
     
     return res
 
@@ -459,7 +460,7 @@ def motor_omnisciente(df_manual, df_cartera, df_historico, df_kb):
                 if n in mapa_nit_nombre:
                     nit_detectado = n
                     cliente_detectado = mapa_nit_nombre[n]
-                    metodo_deteccion = "🆔 NIT en Texto"
+                    metodo_deteccion = "🆔 NIT encontrado en Texto"
                     break
             
             # B2. Palabra Clave
@@ -478,7 +479,7 @@ def motor_omnisciente(df_manual, df_cartera, df_historico, df_kb):
                 if score >= 85:
                     cliente_detectado = df_cartera[df_cartera['nombre_norm'] == match]['NombreCliente'].iloc[0]
                     nit_detectado = df_cartera[df_cartera['nombre_norm'] == match]['nit_norm'].iloc[0]
-                    metodo_deteccion = f"≈ Similitud ({score}%)"
+                    metodo_deteccion = f"≈ Similitud Nombre ({score}%)"
 
         # C. RESULTADO
         item['Cliente_Identificado'] = cliente_detectado if cliente_detectado else ""
@@ -490,7 +491,7 @@ def motor_omnisciente(df_manual, df_cartera, df_historico, df_kb):
             analisis = analizar_deuda_cliente(cliente_detectado, nit_detectado, val_pago, df_cartera)
             item.update(analisis)
         else:
-            # Radar Monto
+            # Radar Monto (Último recurso)
             match_monto = df_cartera[
                 (df_cartera['Importe'] >= val_pago - 100) & 
                 (df_cartera['Importe'] <= val_pago + 100)
@@ -498,8 +499,11 @@ def motor_omnisciente(df_manual, df_cartera, df_historico, df_kb):
             if not match_monto.empty:
                 cand = match_monto.iloc[0]
                 item['Estado'] = '💡 SUGERENCIA MONTO'
-                item['Sugerencia_IA'] = f"Monto coincide con {cand['NombreCliente']}"
-                item['Detalle_Operacion'] = f"Posible Factura {cand['Numero']}"
+                item['Sugerencia_IA'] = "Coincidencia solo por Valor"
+                item['Cliente_Identificado'] = cand['NombreCliente'] # Sugerencia visual
+                item['NIT'] = cand['nit_norm']
+                item['Detalle_Operacion'] = f"Monto coincide con Factura {cand['Numero']} de {cand['NombreCliente']}"
+                item['Facturas_Conciliadas'] = str(cand['Numero'])
             else:
                 item['Estado'] = '❓ NO IDENTIFICADO'
                 item['Detalle_Operacion'] = "Sin coincidencias claras."
@@ -513,8 +517,8 @@ def motor_omnisciente(df_manual, df_cartera, df_historico, df_kb):
 # ======================================================================================
 
 def main():
-    st.title("📊 Conciliación Omnisciente (Gerencial V18)")
-    st.markdown("Plataforma Integral: Filtros Mes a Mes + Reportes Consolidados + IA")
+    st.title("📊 Conciliación Omnisciente V19")
+    st.markdown("Plataforma Integral: Visión Completa de Facturas, NITs y Detalles de Conciliación")
 
     # --- BARRA LATERAL: CARGA DE DATOS ---
     with st.sidebar:
@@ -545,7 +549,7 @@ def main():
     uploaded_file = st.file_uploader("Sube el Archivo Manual Diario (.xlsx)", type=["xlsx"])
 
     if uploaded_file and 'cartera' in st.session_state:
-        if st.button("🚀 EJECUTAR MOTOR IA", type="primary", use_container_width=True):
+        if st.button("🚀 EJECUTAR MOTOR IA (ANÁLISIS COMPLETO)", type="primary", use_container_width=True):
             
             # 1. Leer Manual
             df_manual = procesar_archivo_manual(uploaded_file)
@@ -620,22 +624,44 @@ def main():
         c2.metric("Pendientes de Gestión", kpis['pendientes'], delta_color="inverse")
         c3.metric("Monto Total Vista", f"${kpis['monto']:,.0f}")
 
-        # --- EDITOR DE DATOS ---
+        # --- EDITOR DE DATOS (AQUÍ ESTÁ LA MEJORA VISUAL) ---
+        st.write("### 📝 Detalle de Conciliación (Edita aquí)")
         lista_clientes = sorted(st.session_state['cartera']['NombreCliente'].unique().tolist())
+        
+        # Configuración de Columnas para máxima visibilidad
         col_config = {
-            "Status_Gestion": st.column_config.SelectboxColumn("Gestión", options=['PENDIENTE', 'REGISTRADA'], required=True),
+            "Status_Gestion": st.column_config.SelectboxColumn("Gestión", options=['PENDIENTE', 'REGISTRADA'], required=True, width="small"),
             "Cliente_Identificado": st.column_config.SelectboxColumn("Cliente", options=lista_clientes, width="large"),
-            "Valor_Banco": st.column_config.NumberColumn("Valor", format="$ %d"),
-            "FECHA": st.column_config.DateColumn("Fecha", format="DD/MM/YYYY")
+            "Valor_Banco": st.column_config.NumberColumn("Valor Pago", format="$ %d", width="small"),
+            "FECHA": st.column_config.DateColumn("Fecha", format="DD/MM/YYYY", width="small"),
+            "NIT": st.column_config.TextColumn("NIT Detectado", width="medium"),
+            "Facturas_Conciliadas": st.column_config.TextColumn("Facturas Cruzadas", width="medium", help="Facturas que suman el valor del pago"),
+            "Detalle_Operacion": st.column_config.TextColumn("Explicación IA", width="large"),
+            "Estado": st.column_config.TextColumn("Estado Match", width="medium"),
+            "Sugerencia_IA": st.column_config.TextColumn("Método Detección", width="medium")
         }
-        cols_view = ['Status_Gestion', 'FECHA', 'Valor_Banco', 'Cliente_Identificado', 'Estado', 'Sugerencia_IA', 'Detalle_Operacion', 'ID_Unico']
+        
+        # Seleccionamos y ordenamos las columnas que quieres ver
+        cols_view = [
+            'Status_Gestion', 
+            'FECHA', 
+            'Valor_Banco', 
+            'Cliente_Identificado', 
+            'NIT', 
+            'Facturas_Conciliadas', 
+            'Detalle_Operacion', 
+            'Estado', 
+            'Sugerencia_IA', 
+            'ID_Unico'
+        ]
         
         edited_df = st.data_editor(
             df_view[cols_view], 
             use_container_width=True, 
             column_config=col_config, 
             key="editor_filtrado",
-            num_rows="dynamic"
+            num_rows="dynamic",
+            height=600
         )
         
         # --- SINCRONIZACIÓN DE CAMBIOS ---
@@ -654,12 +680,12 @@ def main():
         c_excel, c_informe, c_save = st.columns(3)
         
         with c_excel:
-            # Descarga Operativa (Lo que se ve en pantalla)
+            # Descarga Operativa
             excel_op = generar_excel_operativo(edited_df)
             st.download_button("💾 Descargar Vista Actual (Operativo)", data=excel_op, file_name="Conciliacion_Operativa.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
             
         with c_informe:
-            # Descarga Gerencial (Todo consolidado por Mes)
+            # Descarga Gerencial
             excel_mg = generar_reporte_gerencial(st.session_state['resultado_final'])
             st.download_button("📊 Descargar Informe Gerencial (Mes a Mes)", data=excel_mg, file_name="Reporte_Consolidado_Mensual.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
             
