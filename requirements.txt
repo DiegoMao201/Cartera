@@ -14,4 +14,5 @@ gspread-dataframe
 oauth2client
 fuzzywuzzy
 python-Levenshtein
+python-docx
 
