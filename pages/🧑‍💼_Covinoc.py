@@ -1,5 +1,13 @@
 # ======================================================================================
-# ARCHIVO: Pagina_Covinoc.py (v10 - Filtros Días Emisión/Serie y Mensaje Wpp)
+# ARCHIVO: Pagina_Covinoc.py (v11 - Reporte Informativo y Mejoras Visuales)
+# MODIFICADO: 
+#           (Solicitud Usuario Actual)
+#           1. Se añade botón de descarga "Reporte Informativo" en Tab 1.
+#              - Formato profesional (colores, bordes).
+#              - Filtros de Excel activados.
+#              - Ordenado por días de vencido (descendente).
+#              - Escala de color en "Días Vencido".
+#
 # MODIFICADO: 
 #           (Solicitud Usuario 04/11/2025)
 #           1. Se añade filtro FIJO a Tab 1 para mostrar SÓLO facturas
@@ -462,12 +470,116 @@ def format_date(date_obj) -> str:
 # =================== FIN DE LA MODIFICACIÓN (Formato Fecha YYYY/MM/DD) ===================
 
 def to_excel(df: pd.DataFrame) -> bytes:
-    """Convierte un DataFrame a un archivo Excel en memoria (bytes)."""
+    """Convierte un DataFrame a un archivo Excel en memoria (bytes) - Formato de carga."""
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Facturas')
     processed_data = output.getvalue()
     return processed_data
+
+# ======================================================================================
+# --- NUEVA FUNCIÓN: EXCEL INFORMATIVO PROFESIONAL (Solicitud Usuario) ---
+# ======================================================================================
+def to_excel_informativo(df: pd.DataFrame) -> bytes:
+    """
+    Genera un Excel visualmente profesional, con filtros y formato condicional.
+    Resalta de las más vencidas a las menos vencidas.
+    """
+    output = BytesIO()
+    
+    # 1. Preparar DF para visualización
+    df_export = df.copy()
+    
+    # Renombrar columnas para que sean amigables
+    mapa_columnas = {
+        'nombrecliente': 'Cliente',
+        'nit': 'NIT',
+        'serie': 'Serie',
+        'numero': 'Factura',
+        'factura_norm': 'Titulo Valor',
+        'fecha_documento': 'Fecha Emisión',
+        'dias_emision': 'Días desde Emisión',
+        'fecha_vencimiento': 'Fecha Vencimiento',
+        'dias_vencido': 'Días Vencido',
+        'importe': 'Valor Total',
+        'nomvendedor': 'Vendedor'
+    }
+    df_export = df_export.rename(columns=mapa_columnas)
+    
+    # Seleccionar solo columnas relevantes si existen
+    cols_deseadas = [
+        'Cliente', 'NIT', 'Serie', 'Factura', 'Fecha Emisión', 'Días desde Emisión',
+        'Fecha Vencimiento', 'Días Vencido', 'Valor Total', 'Vendedor'
+    ]
+    cols_finales = [c for c in cols_deseadas if c in df_export.columns]
+    df_export = df_export[cols_finales]
+    
+    # 2. Ordenar: De más vencidas a menos vencidas
+    if 'Días Vencido' in df_export.columns:
+        df_export = df_export.sort_values(by='Días Vencido', ascending=False)
+        
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        sheet_name = 'Reporte Detallado'
+        df_export.to_excel(writer, index=False, sheet_name=sheet_name)
+        
+        workbook = writer.book
+        worksheet = writer.sheets[sheet_name]
+        
+        # --- Formatos ---
+        # Header Style: Azul oscuro corporativo, texto blanco, negrita
+        header_format = workbook.add_format({
+            'bold': True,
+            'text_wrap': True,
+            'valign': 'top',
+            'fg_color': '#003865',
+            'font_color': '#FFFFFF',
+            'border': 1
+        })
+        
+        # Currency Format
+        money_format = workbook.add_format({'num_format': '$ #,##0'})
+        
+        # Date Format
+        date_format = workbook.add_format({'num_format': 'yyyy-mm-dd'})
+        
+        # 3. Aplicar Formatos de Columna y Anchura
+        for col_num, value in enumerate(df_export.columns.values):
+            # Escribir encabezado con formato
+            worksheet.write(0, col_num, value, header_format)
+            
+            # Ajustar ancho de columnas según contenido aproximado
+            if value == 'Cliente':
+                worksheet.set_column(col_num, col_num, 40)
+            elif value in ['NIT', 'Vendedor']:
+                worksheet.set_column(col_num, col_num, 20)
+            elif value in ['Valor Total']:
+                worksheet.set_column(col_num, col_num, 18, money_format)
+            elif 'Fecha' in value:
+                worksheet.set_column(col_num, col_num, 15, date_format)
+            else:
+                worksheet.set_column(col_num, col_num, 15)
+                
+        # 4. Activar AutoFilter
+        max_row = len(df_export)
+        max_col = len(df_export.columns) - 1
+        worksheet.autofilter(0, 0, max_row, max_col)
+        
+        # 5. Formato Condicional (Escala de color en Días Vencido)
+        # Resaltar: Rojo (Más vencidas) -> Amarillo -> Verde (Menos vencidas)
+        if 'Días Vencido' in df_export.columns:
+            idx_vencido = df_export.columns.get_loc('Días Vencido')
+            # Letra de la columna (ej. G)
+            col_letter = chr(ord('A') + idx_vencido) 
+            rango_celdas = f"{col_letter}2:{col_letter}{max_row+1}"
+            
+            worksheet.conditional_format(rango_celdas, {
+                'type': '3_color_scale',
+                'min_color': '#63BE7B', # Verde (Menos vencido)
+                'mid_color': '#FFEB84', # Amarillo
+                'max_color': '#F8696B'  # Rojo (Más vencido)
+            })
+            
+    return output.getvalue()
 
 
 # ======================================================================================
@@ -751,11 +863,12 @@ def main():
                 # Filtramos las filas que fueron seleccionadas del editor
                 df_seleccionado = df_editado[df_editado["Seleccionar"] == True].copy()
                 
-                st.markdown(f"**Facturas seleccionadas para descarga: {len(df_seleccionado)}**")
+                st.markdown(f"**Facturas seleccionadas: {len(df_seleccionado)}**")
                 # =================== FIN MODIFICACIÓN: Selección de Facturas ===================
 
                 # --- Lógica de Descarga Excel (Tab 1) - MODIFICADA ---
-                # Ahora usa df_seleccionado en lugar de df_a_subir
+                
+                # 1. Preparar Excel de Carga (SISTEMA)
                 if not df_seleccionado.empty:
                     df_subir_excel = pd.DataFrame()
                     df_subir_excel['TIPO_DOCUMENTO'] = df_seleccionado['nit'].apply(get_tipo_doc_from_nit_col)
@@ -765,17 +878,37 @@ def main():
                     df_subir_excel['FECHA'] = pd.to_datetime(df_seleccionado['fecha_vencimiento'], errors='coerce').apply(format_date)
                     df_subir_excel['CODIGO_CONSULTA'] = 986638
                     excel_data_subir = to_excel(df_subir_excel)
+                    
+                    # 2. Preparar Excel Informativo (HUMANO/REPORTE)
+                    excel_data_informativo = to_excel_informativo(df_seleccionado)
+                    
                 else:
                     excel_data_subir = b""
+                    excel_data_informativo = b""
 
-                st.download_button(
-                    label="📥 Descargar Excel para Subida (SÓLO SELECCIONADAS)", 
-                    data=excel_data_subir, 
-                    file_name="1_facturas_a_subir_SELECCIONADAS.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
-                    # Se deshabilita si no hay nada seleccionado
-                    disabled=df_seleccionado.empty 
-                )
+                # --- COLUMNAS PARA BOTONES DE DESCARGA ---
+                col_btn1, col_btn2 = st.columns(2)
+
+                with col_btn1:
+                    st.download_button(
+                        label="📤 Descargar Excel para CARGA (Sistema)", 
+                        data=excel_data_subir, 
+                        file_name="1_facturas_a_subir_CARGA.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                        disabled=df_seleccionado.empty,
+                        use_container_width=True
+                    )
+                
+                with col_btn2:
+                    st.download_button(
+                        label="📋 Descargar Reporte INFORMATIVO (Detalle)", 
+                        data=excel_data_informativo, 
+                        file_name="1_facturas_a_subir_DETALLE.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                        disabled=df_seleccionado.empty,
+                        use_container_width=True,
+                        help="Descarga un Excel profesional con filtros, ordenado por días vencidos y con formato condicional."
+                    )
 
         with tab2:
             st.subheader("Facturas a Exonerar de Covinoc")
