@@ -1,10 +1,11 @@
 # ======================================================================================
-# ARCHIVO: Pagina_Covinoc.py (v15 - COMPLETO: Reportes + Docs Word PRO + Alertas 100 Días)
+# ARCHIVO: Pagina_Covinoc.py (v16 - COMPLETO: Reportes + Docs Word PRO + Alertas 100 Días + LISTADO REVISIÓN)
 # MODIFICADO:
 #           1. FUSIÓN TOTAL: Toda la lógica anterior se mantiene intacta.
 #           2. VISUAL: Paleta institucional (#B21917, #E73537, #F0833A, #F9B016, #FEF4C0).
 #           3. WORD: Fuente 'Quicksand' y estilos corporativos nuevos.
 #           4. TAB 3: Cálculo de 100 días límite para reclamación con alertas visuales.
+#           5. TAB 1 (NUEVO): Generación de Excel único de clientes para depuración administrativa.
 #
 # REQUISITOS (requirements.txt):
 #           - streamlit
@@ -399,6 +400,58 @@ def to_excel_informativo(df: pd.DataFrame) -> bytes:
             rango_celdas = f"{col_letter}2:{col_letter}{max_row+1}"
             worksheet.conditional_format(rango_celdas, {'type': '3_color_scale', 'min_color': '#63BE7B', 'mid_color': '#FFEB84', 'max_color': '#F8696B'})
             
+    return output.getvalue()
+
+def to_excel_clientes_revision(df_resumen: pd.DataFrame) -> bytes:
+    """
+    Genera un Excel diseñado específicamente para que los compañeros revisen
+    y marquen 'SI/NO' para depurar la base de datos.
+    """
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        sheet_name = 'Revisión Clientes'
+        # Renombrar columnas para el usuario final
+        df_final = df_resumen.rename(columns={
+            'nombrecliente': 'Cliente',
+            'nit': 'NIT',
+            'nomvendedor': 'Vendedor Principal',
+            'importe': 'Deuda Total Pendiente',
+            'numero': 'Cantidad Facturas'
+        })
+        
+        # Columnas vacías para diligenciar
+        df_final['¿SEGUIR SUBIENDO? (SI/NO)'] = ''
+        df_final['OBSERVACIONES'] = ''
+        
+        # Ordenar columnas
+        cols = ['Cliente', 'NIT', 'Vendedor Principal', 'Cantidad Facturas', 'Deuda Total Pendiente', '¿SEGUIR SUBIENDO? (SI/NO)', 'OBSERVACIONES']
+        df_final = df_final[cols]
+        
+        df_final.to_excel(writer, index=False, sheet_name=sheet_name)
+        
+        workbook = writer.book
+        worksheet = writer.sheets[sheet_name]
+        
+        # Formatos
+        header_format = workbook.add_format({'bold': True, 'text_wrap': True, 'valign': 'top', 'fg_color': '#B21917', 'font_color': '#FFFFFF', 'border': 1})
+        money_format = workbook.add_format({'num_format': '$ #,##0'})
+        input_format = workbook.add_format({'bg_color': '#FEF4C0', 'border': 1}) # Amarillo suave para input
+        
+        for col_num, value in enumerate(df_final.columns.values):
+            worksheet.write(0, col_num, value, header_format)
+            if value == 'Cliente': worksheet.set_column(col_num, col_num, 45)
+            elif value == 'NIT': worksheet.set_column(col_num, col_num, 15)
+            elif value == 'Vendedor Principal': worksheet.set_column(col_num, col_num, 25)
+            elif value == 'Deuda Total Pendiente': worksheet.set_column(col_num, col_num, 20, money_format)
+            elif value == '¿SEGUIR SUBIENDO? (SI/NO)': 
+                worksheet.set_column(col_num, col_num, 25, input_format)
+            elif value == 'OBSERVACIONES': 
+                worksheet.set_column(col_num, col_num, 40, input_format)
+            else:
+                worksheet.set_column(col_num, col_num, 15)
+                
+        worksheet.autofilter(0, 0, len(df_final), len(df_final.columns) - 1)
+        
     return output.getvalue()
 
 
@@ -824,6 +877,32 @@ def main():
                 st.info("No hay facturas pendientes por subir que cumplan el criterio de 1 a 5 días de emisión.")
             else:
                 st.markdown("---")
+                # =================================================================================
+                # --- NUEVO: BOTÓN DE DESCARGA LISTADO CLIENTES PARA REVISIÓN ADMINISTRATIVA ---
+                # =================================================================================
+                st.markdown("##### 🛠️ Herramientas Administrativas")
+                col_admin_1, col_admin_2 = st.columns([0.7, 0.3])
+                with col_admin_1:
+                    st.info("¿Desea enviar este listado a revisión para saber qué clientes excluir?")
+                with col_admin_2:
+                    # Agrupar por cliente para crear el listado único
+                    if not df_a_subir.empty:
+                        df_resumen_clientes = df_a_subir.groupby(['nombrecliente', 'nit', 'nomvendedor']).agg({
+                            'importe': 'sum',
+                            'numero': 'count'
+                        }).reset_index()
+                        
+                        excel_clientes_revision = to_excel_clientes_revision(df_resumen_clientes)
+                        
+                        st.download_button(
+                            label="📂 Descargar Listado de Clientes para Revisión",
+                            data=excel_clientes_revision,
+                            file_name="Listado_Clientes_Para_Revision.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
+                st.markdown("---")
+
                 st.subheader("Filtros Adicionales")
                 
                 # Filtro 1: Excluir Clientes
