@@ -1,11 +1,10 @@
 # ======================================================================================
-# ARCHIVO: Pagina_Covinoc.py (v16 - COMPLETO: Reportes + Docs Word PRO + Alertas 100 Días + LISTADO REVISIÓN)
+# ARCHIVO: Pagina_Covinoc.py (v17 - COMPLETO: Reporte Revisión TOTAL COVINOC)
 # MODIFICADO:
-#           1. FUSIÓN TOTAL: Toda la lógica anterior se mantiene intacta.
-#           2. VISUAL: Paleta institucional (#B21917, #E73537, #F0833A, #F9B016, #FEF4C0).
-#           3. WORD: Fuente 'Quicksand' y estilos corporativos nuevos.
-#           4. TAB 3: Cálculo de 100 días límite para reclamación con alertas visuales.
-#           5. TAB 1 (NUEVO): Generación de Excel único de clientes para depuración administrativa.
+#           1. TAB 1: El Excel "Listado_Clientes_Para_Revision.xlsx" ahora descarga
+#              TODOS los clientes que existen en ReporteTransacciones (Covinoc), 
+#              independientemente de si están al día, vencidos o filtrados.
+#           2. Se mantiene toda la estética y funcionalidad previa.
 #
 # REQUISITOS (requirements.txt):
 #           - streamlit
@@ -25,7 +24,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import unicodedata
 import re
-from datetime import datetime, timedelta # Agregado timedelta para cálculo de fechas
+from datetime import datetime, timedelta
 import dropbox
 import glob
 import urllib.parse
@@ -51,12 +50,12 @@ st.set_page_config(
 
 # --- PALETA DE COLORES INSTITUCIONAL ---
 PALETA_COLORES = {
-    "primario": "#B21917",       # Rojo Oscuro Institucional (Títulos, Botones, Bordes Fuertes)
-    "secundario": "#E73537",     # Rojo Claro (Hover, Detalles)
-    "acento": "#F0833A",         # Naranja (Inputs, Bordes suaves)
-    "destacado": "#F9B016",      # Amarillo (Alertas medias)
+    "primario": "#B21917",       # Rojo Oscuro Institucional
+    "secundario": "#E73537",     # Rojo Claro
+    "acento": "#F0833A",         # Naranja
+    "destacado": "#F9B016",      # Amarillo
     "fondo_claro": "#FAFAFA",    # Fondo Web
-    "fondo_suave": "#FEF4C0",    # Amarillo Pálido (Fondos tablas, selección)
+    "fondo_suave": "#FEF4C0",    # Amarillo Pálido
     "texto_claro": "#FFFFFF",
     "texto_oscuro": "#31333F",
     "exito_verde": "#388E3C"
@@ -247,7 +246,9 @@ def cargar_y_comparar_datos():
     df_cartera_raw = cargar_datos_cartera_dropbox()
     if df_cartera_raw.empty:
         st.error("No se pudo cargar 'cartera_detalle.csv'.")
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        # Retornamos los DataFrames vacíos para todas las variables
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    
     df_cartera = procesar_cartera(df_cartera_raw)
     
     # Filtro Series
@@ -258,7 +259,7 @@ def cargar_y_comparar_datos():
     df_covinoc = cargar_reporte_transacciones_dropbox()
     if df_covinoc.empty:
         st.error("No se pudo cargar 'reporteTransacciones.xlsx'.")
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
     df_cartera['nit_norm_cartera'] = df_cartera['nit'].apply(normalizar_nit_simple)
     set_nits_cartera = set(df_cartera['nit_norm_cartera'].unique())
@@ -331,7 +332,8 @@ def cargar_y_comparar_datos():
     df_ajustes = df_interseccion[(df_interseccion['saldo_covinoc'] > df_interseccion['importe_cartera'])].copy()
     df_ajustes['diferencia'] = df_ajustes['saldo_covinoc'] - df_ajustes['importe_cartera']
 
-    return df_a_subir, df_a_exonerar, df_aviso_no_pago, df_reclamadas, df_ajustes
+    # --- RETORNO AMPLIADO: INCLUYE LOS DATAFRAMES CRUDOS PARA REPORTES TOTALES ---
+    return df_a_subir, df_a_exonerar, df_aviso_no_pago, df_reclamadas, df_ajustes, df_covinoc, df_cartera
 
 
 # ======================================================================================
@@ -415,7 +417,7 @@ def to_excel_clientes_revision(df_resumen: pd.DataFrame) -> bytes:
             'nombrecliente': 'Cliente',
             'nit': 'NIT',
             'nomvendedor': 'Vendedor Principal',
-            'importe': 'Deuda Total Pendiente',
+            'importe': 'Deuda Total (Reporte)',
             'numero': 'Cantidad Facturas'
         })
         
@@ -424,7 +426,12 @@ def to_excel_clientes_revision(df_resumen: pd.DataFrame) -> bytes:
         df_final['OBSERVACIONES'] = ''
         
         # Ordenar columnas
-        cols = ['Cliente', 'NIT', 'Vendedor Principal', 'Cantidad Facturas', 'Deuda Total Pendiente', '¿SEGUIR SUBIENDO? (SI/NO)', 'OBSERVACIONES']
+        cols = ['Cliente', 'NIT', 'Vendedor Principal', 'Cantidad Facturas', 'Deuda Total (Reporte)', '¿SEGUIR SUBIENDO? (SI/NO)', 'OBSERVACIONES']
+        # Asegurar que existan, si no, crear vacías
+        for c in cols:
+            if c not in df_final.columns:
+                df_final[c] = ''
+                
         df_final = df_final[cols]
         
         df_final.to_excel(writer, index=False, sheet_name=sheet_name)
@@ -442,7 +449,7 @@ def to_excel_clientes_revision(df_resumen: pd.DataFrame) -> bytes:
             if value == 'Cliente': worksheet.set_column(col_num, col_num, 45)
             elif value == 'NIT': worksheet.set_column(col_num, col_num, 15)
             elif value == 'Vendedor Principal': worksheet.set_column(col_num, col_num, 25)
-            elif value == 'Deuda Total Pendiente': worksheet.set_column(col_num, col_num, 20, money_format)
+            elif value == 'Deuda Total (Reporte)': worksheet.set_column(col_num, col_num, 20, money_format)
             elif value == '¿SEGUIR SUBIENDO? (SI/NO)': 
                 worksheet.set_column(col_num, col_num, 25, input_format)
             elif value == 'OBSERVACIONES': 
@@ -851,7 +858,8 @@ def main():
 
         # --- Carga y Procesamiento de Datos ---
         with st.spinner("Cargando y comparando archivos de Dropbox..."):
-            df_a_subir, df_a_exonerar, df_aviso_no_pago, df_reclamadas, df_ajustes = cargar_y_comparar_datos()
+            # AQUI SE DESEMPAQUETAN LOS 7 ELEMENTOS
+            df_a_subir, df_a_exonerar, df_aviso_no_pago, df_reclamadas, df_ajustes, df_covinoc_full, df_cartera_full = cargar_y_comparar_datos()
 
         if df_a_subir.empty and df_a_exonerar.empty and df_aviso_no_pago.empty and df_reclamadas.empty and df_ajustes.empty:
             st.warning("Se cargaron los archivos, pero no se encontraron diferencias para las 5 categorías.")
@@ -878,29 +886,66 @@ def main():
             else:
                 st.markdown("---")
                 # =================================================================================
-                # --- NUEVO: BOTÓN DE DESCARGA LISTADO CLIENTES PARA REVISIÓN ADMINISTRATIVA ---
+                # --- NUEVO: BOTÓN DE DESCARGA LISTADO COMPLETO COVINOC (SIN FILTROS) ---
                 # =================================================================================
                 st.markdown("##### 🛠️ Herramientas Administrativas")
                 col_admin_1, col_admin_2 = st.columns([0.7, 0.3])
                 with col_admin_1:
-                    st.info("¿Desea enviar este listado a revisión para saber qué clientes excluir?")
+                    st.info("¿Desea descargar el listado TOTAL de clientes que existen en ReporteTransacciones (Covinoc)?")
                 with col_admin_2:
-                    # Agrupar por cliente para crear el listado único
-                    if not df_a_subir.empty:
-                        df_resumen_clientes = df_a_subir.groupby(['nombrecliente', 'nit', 'nomvendedor']).agg({
-                            'importe': 'sum',
-                            'numero': 'count'
+                    # LÓGICA MODIFICADA PARA LISTAR TODOS LOS CLIENTES DE COVINOC (ReporteTransacciones)
+                    # Y CRUZARLOS CON CARTERA PARA OBTENER EL NOMBRE Y VENDEDOR
+                    if not df_covinoc_full.empty:
+                        # 1. Agrupar la data de Covinoc (que es la fuente de verdad para este reporte)
+                        df_covinoc_full['saldo'] = pd.to_numeric(df_covinoc_full['saldo'], errors='coerce').fillna(0)
+                        
+                        # Usamos 'nit_norm_cartera' que ya fue calculado en cargar_y_comparar_datos
+                        # Si es nulo (no encontró match), usamos el documento original limpio
+                        df_covinoc_full['nit_join'] = df_covinoc_full['nit_norm_cartera']
+                        mask_sin_nit = df_covinoc_full['nit_join'].isna()
+                        if mask_sin_nit.any():
+                             df_covinoc_full.loc[mask_sin_nit, 'nit_join'] = df_covinoc_full.loc[mask_sin_nit, 'documento'].apply(normalizar_nit_simple)
+                        
+                        df_resumen_covinoc = df_covinoc_full.groupby('nit_join').agg({
+                            'saldo': 'sum',
+                            'titulo_valor': 'count'
                         }).reset_index()
                         
-                        excel_clientes_revision = to_excel_clientes_revision(df_resumen_clientes)
+                        # 2. Obtener nombres y vendedores de Cartera Completa (únicos por NIT)
+                        if not df_cartera_full.empty:
+                            df_info_clientes = df_cartera_full[['nit_norm_cartera', 'nombrecliente', 'nomvendedor']].drop_duplicates(subset=['nit_norm_cartera'])
+                            
+                            # 3. Cruzar (Left Join) para traer info descriptiva a los clientes de Covinoc
+                            df_final_revision = pd.merge(df_resumen_covinoc, df_info_clientes, left_on='nit_join', right_on='nit_norm_cartera', how='left')
+                        else:
+                            df_final_revision = df_resumen_covinoc.copy()
+                            df_final_revision['nombrecliente'] = None
+                            df_final_revision['nomvendedor'] = None
+                        
+                        # 4. Rellenar vacíos para clientes que están en Covinoc pero YA NO en Cartera actual
+                        df_final_revision['nombrecliente'] = df_final_revision['nombrecliente'].fillna('CLIENTE EN COVINOC - NO EN CARTERA ACTUAL')
+                        df_final_revision['nomvendedor'] = df_final_revision['nomvendedor'].fillna('S/N')
+                        
+                        # 5. Renombrar columnas para que coincida con la función exportadora
+                        df_final_revision.rename(columns={
+                            'saldo': 'importe',
+                            'titulo_valor': 'numero',
+                            'nit_join': 'nit'
+                        }, inplace=True)
+                        
+                        # Generar Excel
+                        excel_clientes_revision = to_excel_clientes_revision(df_final_revision)
                         
                         st.download_button(
-                            label="📂 Descargar Listado de Clientes para Revisión",
+                            label="📂 Descargar Listado TOTAL Clientes Covinoc",
                             data=excel_clientes_revision,
-                            file_name="Listado_Clientes_Para_Revision.xlsx",
+                            file_name="Listado_TOTAL_Clientes_Covinoc.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             use_container_width=True
                         )
+                    else:
+                        st.warning("No hay datos en reporteTransacciones para generar el listado.")
+
                 st.markdown("---")
 
                 st.subheader("Filtros Adicionales")
@@ -1428,7 +1473,7 @@ def main():
             st.markdown("---")
 
             columnas_mostrar_ajustes = [
-                'nombrecliente_cartera', 'nit_cartera', 'factura_norm_cartera', 'importe_cartera',
+                'nombrecliente_cartera', 'nit_cartera', 'factura_norm_cartera', 'importe_cartera', 
                 'saldo_covinoc', 'diferencia', 'dias_vencido_cartera', 'estado_covinoc', 'clave_unica'
             ]
             columnas_existentes_ajustes = [col for col in columnas_mostrar_ajustes if col in df_ajustes.columns]
