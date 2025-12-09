@@ -570,7 +570,7 @@ def generar_documentos_reclamacion(cliente_nombre, cliente_nit, cliente_dir, cli
         doc_notif.add_paragraph("\n__________________________________________")
         p = doc_notif.add_paragraph("FIRMA DEL REPRESENTANTE LEGAL DEL AFILIADO")
         p = doc_notif.add_paragraph("FERREINOX S.A.S.")
-        p = doc_notif.add_paragraph("NIT: 900.252.189-9")
+        p = doc_notif.add_paragraph("NIT: 800.224.617-8")
 
         # Guardar Notificación
         notif_io = BytesIO()
@@ -596,7 +596,7 @@ def generar_documentos_reclamacion(cliente_nombre, cliente_nit, cliente_dir, cli
         # Texto Legal Endoso
         texto_endoso = (
             f"Yo, REPRESENTANTE LEGAL, mayor de edad, identificado como consta al pie de mi firma, "
-            f"actuando en mi calidad de representante legal de FERREINOX S.A.S., identificada con el NIT 900.252.189-9, "
+            f"actuando en mi calidad de representante legal de FERREINOX S.A.S., identificada con el NIT 800.224.617-8, "
             f"manifiesto que ENDOSO EN PROPIEDAD a la orden de NEGOCIACIÓN DE TÍTULOS NET S.A.S., identificada con NIT 830.051.527-9, "
             f"las siguientes facturas de venta:"
         )
