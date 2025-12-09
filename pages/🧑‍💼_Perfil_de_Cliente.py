@@ -1,7 +1,7 @@
 # ======================================================================================
-# ARCHIVO: Tablero_Comando_Ferreinox_PRO.py (v.FINAL CORREGIDA & ESTILOS NUEVOS)
+# ARCHIVO: Tablero_Comando_Ferreinox_PRO.py (v.FINAL GESTIÓN WA EDITABLE)
 # Descripción: Panel de Control de Cartera PRO.
-#              Corrección: Error OpenPyXL Colors + Paleta Institucional + Fuente Quicksand
+#              Corrección: Error OpenPyXL Colors + WA Editable + Fuente Quicksand
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -55,7 +55,7 @@ st.markdown(f"""
         font-family: 'Quicksand', sans-serif;
     }}
 
-    .stApp {{ background-color: #f8f9fa; }} /* Un gris muy suave para no cansar la vista, el crema se usará en acentos */
+    .stApp {{ background-color: #f8f9fa; }} /* Un gris muy suave para no cansar la vista */
 
     /* Métricas: Tarjetas con sombra y borde institucional */
     .stMetric {{ 
@@ -103,8 +103,9 @@ st.markdown(f"""
         text-decoration: none; display: block; padding: 12px; margin-top: 10px;
         background-color: #25D366; color: white; border-radius: 8px; font-weight: bold;
         text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        transition: transform 0.2s;
     }}
-    a.wa-link:hover {{ background-color: #128C7E; }}
+    a.wa-link:hover {{ background-color: #128C7E; transform: scale(1.02); }}
 
     /* Inputs */
     div[data-baseweb="input"], div[data-baseweb="select"], div.st-multiselect {{
@@ -297,6 +298,7 @@ def generar_analisis_cartera(kpis: dict):
 def generar_link_wa(telefono, cliente, saldo_vencido, dias_max, nit, cod_cliente):
     """Genera el link de WhatsApp con mensaje pre-cargado."""
     tel = re.sub(r'\D', '', str(telefono))
+    # Ajuste para números Colombia sin el 57 o con el 3 inicial
     if len(tel) == 10 and tel.startswith('3'): tel = '57' + tel 
     if len(tel) < 10: return None
     
@@ -336,7 +338,7 @@ def generar_link_wa(telefono, cliente, saldo_vencido, dias_max, nit, cod_cliente
 class PDF(FPDF):
     """Clase personalizada para generar PDF con estilos de Ferreinox."""
     def header(self):
-        # Usamos Helvetica que es estándar (Quicksand requiere .ttf externo)
+        # Usamos Helvetica que es estándar
         self.set_font('Helvetica', 'B', 12)
         
         # Color Primario para el PDF
@@ -773,8 +775,32 @@ def main():
                     pdf_bytes = crear_pdf(dets, dat['vencido'])
                     st.download_button("📄 PDF Estado Cuenta", pdf_bytes, f"EC_{sel_cli}.pdf", "application/pdf")
                     
-                    wa_link = generar_link_wa(dat['tel'], sel_cli, dat['vencido'], dat['dias_max'], dat['nit'], dat['cod'])
-                    if wa_link: st.markdown(f"<a href='{wa_link}' target='_blank' class='wa-link'>💬 WhatsApp</a>", unsafe_allow_html=True)
+                    st.divider()
+                    st.markdown("#### 💬 WhatsApp Directo")
+                    st.caption("Verifica el número antes de enviar:")
+                    
+                    # --- LÓGICA DE WA EDITABLE ---
+                    # 1. Obtenemos el numero de la base de datos y lo limpiamos
+                    raw_tel = str(dat['tel']) if pd.notna(dat['tel']) else ""
+                    raw_tel = re.sub(r'\D', '', raw_tel) # Solo dejar dígitos
+                    
+                    # 2. Casilla editable para el usuario
+                    telefono_destino = st.text_input("📱 Celular (Editable):", value=raw_tel, max_chars=15, help="Puedes escribir cualquier número aquí.")
+                    
+                    # 3. Generar link basado en lo que está en la casilla (no solo DB)
+                    if telefono_destino:
+                        wa_link = generar_link_wa(telefono_destino, sel_cli, dat['vencido'], dat['dias_max'], dat['nit'], dat['cod'])
+                        
+                        if wa_link:
+                            st.markdown(f"""
+                                <a href='{wa_link}' target='_blank' class='wa-link'>
+                                🚀 Enviar Mensaje a {telefono_destino}
+                                </a>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.warning("⚠️ El número ingresado no parece válido (muy corto).")
+                    else:
+                        st.info("ℹ️ Ingresa un número de celular para generar el enlace.")
 
                 with colB:
                     st.dataframe(dets[['numero', 'dias_vencido', 'fecha_vencimiento', 'importe', 'Rango']].style.format({'importe':'${:,.0f}'}), hide_index=True)
