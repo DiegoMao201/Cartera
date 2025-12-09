@@ -1,21 +1,21 @@
 # ======================================================================================
-# ARCHIVO: Pagina_Covinoc.py (v13 - Fusión Completa: Reportes + Docs Word)
+# ARCHIVO: Pagina_Covinoc.py (v14 - Fusión Completa: Reportes + Docs Word PRO)
 # MODIFICADO:
-#           (Solicitud Usuario Actual)
-#           1. FUSIÓN TOTAL: Se mantiene toda la lógica de filtros, colores y Excel
-#              de la versión v11.
-#           2. NUEVO: Se integra la generación de documentos Word (Endoso, Notificación,
-#              Aceptación Tácita) en la Pestaña 3 para facturas > 70 días.
-#           3. Librerías actualizadas para soportar 'python-docx' y 'zipfile'.
+#           (Solicitud Usuario Actual - Mejora Visual Word)
+#           1. FUSIÓN TOTAL: Lógica de filtros, colores y Excel v11 intacta.
+#           2. MEJORA VISUAL WORD: Documentos (Endoso, Notificación, Aceptación)
+#              con diseño corporativo, tipografía Arial, tablas estilizadas con
+#              colores y espaciados optimizados.
+#           3. DEPENDENCIAS: Requiere 'python-docx' y 'zipfile'.
 #
-# REQUISITOS:
+# REQUISITOS (requirements.txt):
 #           - streamlit
 #           - pandas
 #           - openpyxl
 #           - xlsxwriter
 #           - dropbox
 #           - plotly
-#           - python-docx  <-- NUEVA DEPENDENCIA
+#           - python-docx
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -30,17 +30,18 @@ from datetime import datetime
 import dropbox
 import glob
 import urllib.parse
-import zipfile  # <-- IMPORTADO PARA ZIP
+import zipfile 
 
-# --- LIBRERÍA PARA WORD (Asegúrate de tener python-docx en requirements.txt) ---
+# --- LIBRERÍA PARA WORD ---
 try:
     from docx import Document
-    from docx.shared import Pt, Inches, Cm
+    from docx.shared import Pt, Inches, Cm, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.enum.table import WD_TABLE_ALIGNMENT
     from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
 except ImportError:
-    st.error("⚠️ Librería 'python-docx' no detectada. Por favor agrégala a requirements.txt para usar la generación de documentos.")
+    st.error("⚠️ Librería 'python-docx' no detectada. Por favor agrégala a requirements.txt.")
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
@@ -80,7 +81,6 @@ VENDEDORES_WHATSAPP = {
 st.markdown(f"""
 <style>
     .stApp {{ background-color: {PALETA_COLORES['fondo_claro']}; }}
-    /* Modificación para métricas: añadir sombra y padding */
     .stMetric {{ 
         background-color: #FFFFFF; 
         border-radius: 10px; 
@@ -92,7 +92,6 @@ st.markdown(f"""
     .stTabs [data-baseweb="tab"] {{ height: 50px; white-space: pre-wrap; background-color: transparent; border-radius: 4px 4px 0px 0px; border-bottom: 2px solid #C0C0C0; }}
     .stTabs [aria-selected="true"] {{ border-bottom: 2px solid {PALETA_COLORES['primario']}; color: {PALETA_COLORES['primario']}; font-weight: bold; }}
     div[data-baseweb="input"], div[data-baseweb="select"], div[data-baseweb="text-area"] {{ background-color: #FFFFFF; border: 1.5px solid {PALETA_COLORES['secundario']}; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); padding-left: 5px; }}
-    /* CSS para el st.data_editor */
     .stDataFrame {{ padding-top: 10px; }}
 </style>
 """, unsafe_allow_html=True)
@@ -147,7 +146,6 @@ def procesar_cartera(df: pd.DataFrame) -> pd.DataFrame:
 
 @st.cache_data(ttl=600)
 def cargar_datos_cartera_dropbox():
-    """Carga los datos de CARTERA más recientes desde el archivo CSV en Dropbox."""
     try:
         APP_KEY = st.secrets["dropbox"]["app_key"]
         APP_SECRET = st.secrets["dropbox"]["app_secret"]
@@ -186,7 +184,6 @@ def cargar_datos_cartera_dropbox():
 
 @st.cache_data(ttl=600)
 def cargar_reporte_transacciones_dropbox():
-    """Carga el REPORTE TRANSACCIONES (Covinoc) desde un archivo Excel en Dropbox."""
     try:
         APP_KEY = st.secrets["dropbox"]["app_key"]
         APP_SECRET = st.secrets["dropbox"]["app_secret"]
@@ -194,7 +191,6 @@ def cargar_reporte_transacciones_dropbox():
 
         with dropbox.Dropbox(app_key=APP_KEY, app_secret=APP_SECRET, oauth2_refresh_token=REFRESH_TOKEN) as dbx:
             path_archivo_dropbox = '/data/reporteTransacciones.xlsx'
-            
             metadata, res = dbx.files_download(path=path_archivo_dropbox)
             
             df = pd.read_excel(
@@ -203,7 +199,6 @@ def cargar_reporte_transacciones_dropbox():
             )
             
             df.columns = [normalizar_nombre(c).lower().replace(' ', '_') for c in df.columns]
-
             return df
     except Exception as e:
         st.error(f"Error al cargar 'reporteTransacciones.xlsx' desde Dropbox: {e}")
@@ -212,19 +207,14 @@ def cargar_reporte_transacciones_dropbox():
 # --- Funciones de Normalización de Claves ---
 
 def normalizar_nit_simple(nit_str: str) -> str:
-    """Limpia un NIT, quitando todo lo que no sea un número."""
-    if not isinstance(nit_str, str):
-        return ""
+    if not isinstance(nit_str, str): return ""
     return re.sub(r'\D', '', nit_str)
 
 def normalizar_factura_simple(fact_str: str) -> str:
-    """Limpia un número de factura (para Covinoc)."""
-    if not isinstance(fact_str, str):
-        return ""
+    if not isinstance(fact_str, str): return ""
     return fact_str.split('.')[0].strip().upper().replace(' ', '').replace('-', '')
 
 def normalizar_factura_cartera(row):
-    """Concatena Serie y Numero para Cartera, limpiándolos."""
     serie = str(row['serie']).strip().upper()
     numero = str(row['numero']).split('.')[0].strip()
     return (serie + numero).replace(' ', '').replace('-', '')
@@ -234,14 +224,9 @@ def normalizar_factura_cartera(row):
 
 @st.cache_data
 def cargar_y_comparar_datos():
-    """
-    Orquesta la carga y cruce de datos con la lógica completa.
-    """
-    
-    # 1. Cargar Cartera Ferreinox
     df_cartera_raw = cargar_datos_cartera_dropbox()
     if df_cartera_raw.empty:
-        st.error("No se pudo cargar 'cartera_detalle.csv'. El cruce no puede continuar.")
+        st.error("No se pudo cargar 'cartera_detalle.csv'.")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     df_cartera = procesar_cartera(df_cartera_raw)
     
@@ -250,24 +235,20 @@ def cargar_y_comparar_datos():
         df_cartera = df_cartera[~df_cartera['serie'].astype(str).str.contains('W|X', case=False, na=False)]
         df_cartera = df_cartera[~df_cartera['serie'].astype(str).str.upper().str.endswith('U', na=False)]
 
-    # 2. Cargar Reporte Transacciones (Covinoc)
     df_covinoc = cargar_reporte_transacciones_dropbox()
     if df_covinoc.empty:
-        st.error("No se pudo cargar 'reporteTransacciones.xlsx'. El cruce no puede continuar.")
+        st.error("No se pudo cargar 'reporteTransacciones.xlsx'.")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-    # 3. Preparar Claves de Cruce
     df_cartera['nit_norm_cartera'] = df_cartera['nit'].apply(normalizar_nit_simple)
     set_nits_cartera = set(df_cartera['nit_norm_cartera'].unique())
 
     def encontrar_nit_en_cartera(doc_str_covinoc):
         if not isinstance(doc_str_covinoc, str): return None
         doc_norm = normalizar_nit_simple(doc_str_covinoc)
-        if doc_norm in set_nits_cartera:
-            return doc_norm
+        if doc_norm in set_nits_cartera: return doc_norm
         doc_norm_base = doc_norm[:-1] 
-        if doc_norm_base in set_nits_cartera:
-            return doc_norm_base 
+        if doc_norm_base in set_nits_cartera: return doc_norm_base 
         return None 
 
     df_covinoc['nit_norm_cartera'] = df_covinoc['documento'].apply(encontrar_nit_en_cartera)
@@ -276,31 +257,25 @@ def cargar_y_comparar_datos():
 
     df_cartera['clave_unica'] = df_cartera['nit_norm_cartera'] + '_' + df_cartera['factura_norm']
     df_covinoc['clave_unica'] = df_covinoc['nit_norm_cartera'] + '_' + df_covinoc['factura_norm']
-    
     df_covinoc['estado_norm'] = df_covinoc['estado'].astype(str).str.upper().str.strip()
     
-    # --- Tab 4: Reclamadas (Informativo) ---
+    # --- Tab 4 ---
     df_reclamadas = df_covinoc[df_covinoc['estado_norm'] == 'RECLAMADA'].copy()
     
-    # --- Tab 1: Facturas a Subir ---
+    # --- Tab 1 ---
     nits_protegidos = df_covinoc['nit_norm_cartera'].dropna().unique()
     df_cartera_protegida = df_cartera[df_cartera['nit_norm_cartera'].isin(nits_protegidos)].copy()
     set_claves_covinoc_total = set(df_covinoc['clave_unica'].dropna().unique())
-    df_a_subir_raw = df_cartera_protegida[
-        ~df_cartera_protegida['clave_unica'].isin(set_claves_covinoc_total)
-    ].copy()
+    df_a_subir_raw = df_cartera_protegida[~df_cartera_protegida['clave_unica'].isin(set_claves_covinoc_total)].copy()
 
-    # Filtro Fijo 1-5 Días Emisión
     today = pd.to_datetime(datetime.now().date())
     if 'fecha_documento' in df_a_subir_raw.columns:
         df_a_subir_raw['dias_emision'] = (today - df_a_subir_raw['fecha_documento']).dt.days
-        df_a_subir = df_a_subir_raw[
-            (df_a_subir_raw['dias_emision'] >= 1) & (df_a_subir_raw['dias_emision'] <= 5)
-        ].copy()
+        df_a_subir = df_a_subir_raw[(df_a_subir_raw['dias_emision'] >= 1) & (df_a_subir_raw['dias_emision'] <= 5)].copy()
     else:
         df_a_subir = df_a_subir_raw.iloc[0:0].copy() 
 
-    # --- Tab 2: Exoneraciones ---
+    # --- Tab 2 ---
     estados_cerrados = ['EFECTIVA', 'NEGADA', 'EXONERADA']
     df_covinoc_comparable = df_covinoc[~df_covinoc['estado_norm'].isin(estados_cerrados)].copy()
     set_claves_cartera_total = set(df_cartera['clave_unica'].dropna().unique())
@@ -309,51 +284,31 @@ def cargar_y_comparar_datos():
         (df_covinoc_comparable['nit_norm_cartera'].notna())
     ].copy()
 
-    # --- Intersección para Tabs 3 y 5 ---
-    df_interseccion = pd.merge(
-        df_cartera,
-        df_covinoc, 
-        on='clave_unica',
-        how='inner', 
-        suffixes=('_cartera', '_covinoc') 
-    )
+    # --- Intersección ---
+    df_interseccion = pd.merge(df_cartera, df_covinoc, on='clave_unica', how='inner', suffixes=('_cartera', '_covinoc'))
     
-    # Renombrar columnas para evitar colisiones o nombres confusos
     columnas_a_renombrar = {
-        'importe': 'importe_cartera',
-        'nombrecliente': 'nombrecliente_cartera',
-        'nit': 'nit_cartera',
-        'nomvendedor': 'nomvendedor_cartera',
-        'fecha_vencimiento': 'fecha_vencimiento_cartera',
-        'dias_vencido': 'dias_vencido_cartera',
-        'saldo': 'saldo_covinoc',
-        'estado': 'estado_covinoc',
-        'estado_norm': 'estado_norm_covinoc',
-        'vencimiento': 'vencimiento_covinoc'
+        'importe': 'importe_cartera', 'nombrecliente': 'nombrecliente_cartera', 'nit': 'nit_cartera',
+        'nomvendedor': 'nomvendedor_cartera', 'fecha_vencimiento': 'fecha_vencimiento_cartera',
+        'dias_vencido': 'dias_vencido_cartera', 'saldo': 'saldo_covinoc', 'estado': 'estado_covinoc',
+        'estado_norm': 'estado_norm_covinoc', 'vencimiento': 'vencimiento_covinoc'
     }
     cols_existentes = df_interseccion.columns
     renombres_aplicables = {k: v for k, v in columnas_a_renombrar.items() if k in cols_existentes}
     df_interseccion.rename(columns=renombres_aplicables, inplace=True)
     
-    # --- Tab 3: Aviso de No Pago ---
-    df_aviso_no_pago_base = df_interseccion[
-        df_interseccion['dias_vencido_cartera'] >= 25
-    ].copy()
-
+    # --- Tab 3 ---
+    df_aviso_no_pago_base = df_interseccion[df_interseccion['dias_vencido_cartera'] >= 25].copy()
     df_aviso_no_pago = df_aviso_no_pago_base[
         (pd.to_numeric(df_aviso_no_pago_base['importe_cartera'], errors='coerce').fillna(0) > 0) &
         (df_aviso_no_pago_base['estado_norm_covinoc'] != 'EXONERADA') &
         (df_aviso_no_pago_base['estado_norm_covinoc'] != 'NEGADA')
     ].copy()
 
-    # --- Tab 5: Ajustes por Abonos ---
+    # --- Tab 5 ---
     df_interseccion['importe_cartera'] = pd.to_numeric(df_interseccion['importe_cartera'], errors='coerce').fillna(0)
     df_interseccion['saldo_covinoc'] = pd.to_numeric(df_interseccion['saldo_covinoc'], errors='coerce').fillna(0)
-    
-    df_ajustes = df_interseccion[
-        (df_interseccion['saldo_covinoc'] > df_interseccion['importe_cartera'])
-    ].copy()
-    
+    df_ajustes = df_interseccion[(df_interseccion['saldo_covinoc'] > df_interseccion['importe_cartera'])].copy()
     df_ajustes['diferencia'] = df_ajustes['saldo_covinoc'] - df_ajustes['importe_cartera']
 
     return df_a_subir, df_a_exonerar, df_aviso_no_pago, df_reclamadas, df_ajustes
@@ -364,41 +319,27 @@ def cargar_y_comparar_datos():
 # ======================================================================================
 
 def get_tipo_doc_from_nit_col(nit_str_raw: str) -> str:
-    """Determina si un documento es NIT ('N') o Cédula ('C')."""
-    if not isinstance(nit_str_raw, str) or pd.isna(nit_str_raw):
-        return 'C' 
+    if not isinstance(nit_str_raw, str) or pd.isna(nit_str_raw): return 'C' 
     nit_str_raw_clean = nit_str_raw.strip().upper()
-    if '-' in nit_str_raw_clean:
-        return 'N'
+    if '-' in nit_str_raw_clean: return 'N'
     nit_norm = re.sub(r'\D', '', nit_str_raw_clean)
-    length = len(nit_norm)
-    if length == 0:
-        return 'C' 
-    if (nit_norm.startswith('8') or nit_norm.startswith('9')):
-        return 'N'
+    if len(nit_norm) == 0: return 'C' 
+    if (nit_norm.startswith('8') or nit_norm.startswith('9')): return 'N'
     return 'C'
 
 def format_date(date_obj) -> str:
-    """Formatea un objeto de fecha a 'YYYY/mm/dd'."""
-    if pd.isna(date_obj):
-        return None
-    try:
-        return pd.to_datetime(date_obj).strftime('%Y/%m/%d')
-    except Exception:
-        return None
+    if pd.isna(date_obj): return None
+    try: return pd.to_datetime(date_obj).strftime('%Y/%m/%d')
+    except Exception: return None
 
 def to_excel(df: pd.DataFrame) -> bytes:
-    """Convierte un DataFrame a un archivo Excel en memoria (Formato Carga)."""
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Facturas')
-    processed_data = output.getvalue()
-    return processed_data
+    return output.getvalue()
 
 def to_excel_informativo(df: pd.DataFrame) -> bytes:
-    """Genera un Excel visualmente profesional, con filtros y formato condicional."""
     output = BytesIO()
-    
     df_export = df.copy()
     mapa_columnas = {
         'nombrecliente': 'Cliente', 'nit': 'NIT', 'serie': 'Serie', 'numero': 'Factura',
@@ -407,272 +348,356 @@ def to_excel_informativo(df: pd.DataFrame) -> bytes:
         'importe': 'Valor Total', 'nomvendedor': 'Vendedor'
     }
     df_export = df_export.rename(columns=mapa_columnas)
-    
-    cols_deseadas = [
-        'Cliente', 'NIT', 'Serie', 'Factura', 'Fecha Emisión', 'Días desde Emisión',
-        'Fecha Vencimiento', 'Días Vencido', 'Valor Total', 'Vendedor'
-    ]
+    cols_deseadas = ['Cliente', 'NIT', 'Serie', 'Factura', 'Fecha Emisión', 'Días desde Emisión', 'Fecha Vencimiento', 'Días Vencido', 'Valor Total', 'Vendedor']
     cols_finales = [c for c in cols_deseadas if c in df_export.columns]
     df_export = df_export[cols_finales]
-    
     if 'Días Vencido' in df_export.columns:
         df_export = df_export.sort_values(by='Días Vencido', ascending=False)
         
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         sheet_name = 'Reporte Detallado'
         df_export.to_excel(writer, index=False, sheet_name=sheet_name)
-        
         workbook = writer.book
         worksheet = writer.sheets[sheet_name]
-        
-        header_format = workbook.add_format({
-            'bold': True, 'text_wrap': True, 'valign': 'top',
-            'fg_color': '#003865', 'font_color': '#FFFFFF', 'border': 1
-        })
+        header_format = workbook.add_format({'bold': True, 'text_wrap': True, 'valign': 'top', 'fg_color': '#003865', 'font_color': '#FFFFFF', 'border': 1})
         money_format = workbook.add_format({'num_format': '$ #,##0'})
         date_format = workbook.add_format({'num_format': 'yyyy-mm-dd'})
         
         for col_num, value in enumerate(df_export.columns.values):
             worksheet.write(0, col_num, value, header_format)
-            if value == 'Cliente':
-                worksheet.set_column(col_num, col_num, 40)
-            elif value in ['NIT', 'Vendedor']:
-                worksheet.set_column(col_num, col_num, 20)
-            elif value in ['Valor Total']:
-                worksheet.set_column(col_num, col_num, 18, money_format)
-            elif 'Fecha' in value:
-                worksheet.set_column(col_num, col_num, 15, date_format)
-            else:
-                worksheet.set_column(col_num, col_num, 15)
-                
+            if value == 'Cliente': worksheet.set_column(col_num, col_num, 40)
+            elif value in ['NIT', 'Vendedor']: worksheet.set_column(col_num, col_num, 20)
+            elif value in ['Valor Total']: worksheet.set_column(col_num, col_num, 18, money_format)
+            elif 'Fecha' in value: worksheet.set_column(col_num, col_num, 15, date_format)
+            else: worksheet.set_column(col_num, col_num, 15)
+        
         max_row = len(df_export)
         worksheet.autofilter(0, 0, max_row, len(df_export.columns) - 1)
-        
         if 'Días Vencido' in df_export.columns:
             idx_vencido = df_export.columns.get_loc('Días Vencido')
             col_letter = chr(ord('A') + idx_vencido) 
             rango_celdas = f"{col_letter}2:{col_letter}{max_row+1}"
-            worksheet.conditional_format(rango_celdas, {
-                'type': '3_color_scale',
-                'min_color': '#63BE7B', 'mid_color': '#FFEB84', 'max_color': '#F8696B'
-            })
+            worksheet.conditional_format(rango_celdas, {'type': '3_color_scale', 'min_color': '#63BE7B', 'mid_color': '#FFEB84', 'max_color': '#F8696B'})
             
     return output.getvalue()
 
 
 # ======================================================================================
-# --- NUEVA FUNCIÓN: GENERACIÓN DE DOCUMENTOS WORD PROFESIONALES ---
+# --- NUEVA LÓGICA: GENERACIÓN DE DOCUMENTOS WORD PROFESIONALES (MEJORADO) ---
 # ======================================================================================
 
-def crear_estilo_parrafo(paragraph, alineacion=WD_ALIGN_PARAGRAPH.JUSTIFY, size=11, bold=False):
-    """Aplica formato básico a un párrafo de Word."""
-    paragraph.alignment = alineacion
-    run = paragraph.runs[0] if paragraph.runs else paragraph.add_run()
-    font = run.font
-    font.name = 'Calibri'
-    font.size = Pt(size)
-    font.bold = bold
+def set_cell_background(cell, color_hex):
+    """Establece el color de fondo de una celda de tabla."""
+    tcPr = cell._element.tcPr
+    shd = OxmlElement('w:shd')
+    shd.set(qn('w:fill'), color_hex)
+    tcPr.append(shd)
+
+def aplicar_estilo_parrafo(p, size=11, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT, space_after=6, color=None):
+    """Aplica formato consistente Arial a un párrafo."""
+    p.alignment = align
+    p.paragraph_format.space_after = Pt(space_after)
+    run = p.runs[0] if p.runs else p.add_run()
+    run.font.name = 'Arial'
+    run.font.size = Pt(size)
+    run.font.bold = bold
+    if color:
+        run.font.color.rgb = color
+
+def crear_encabezado_profesional(doc, titulo_principal=None):
+    """Crea un encabezado visualmente limpio."""
+    section = doc.sections[0]
+    section.top_margin = Cm(2.54)
+    section.bottom_margin = Cm(2.54)
+    section.left_margin = Cm(2.54)
+    section.right_margin = Cm(2.54)
+    
+    # Encabezado "Empresarial" (Texto)
+    p = doc.add_paragraph()
+    run = p.add_run("FERREINOX S.A.S.")
+    run.font.name = 'Arial'
+    run.font.size = Pt(16)
+    run.font.bold = True
+    run.font.color.rgb = RGBColor(0, 56, 101) # Azul oscuro corporativo
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_after = Pt(2)
+    
+    p2 = doc.add_paragraph("NIT: 900.252.189-9")
+    p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run2 = p2.runs[0] if p2.runs else p2.add_run()
+    run2.font.name = 'Arial'
+    run2.font.size = Pt(10)
+    run2.font.color.rgb = RGBColor(100, 100, 100) # Gris
+    p2.paragraph_format.space_after = Pt(20) # Espacio antes del título del doc
+
+    if titulo_principal:
+        p_tit = doc.add_paragraph(titulo_principal)
+        p_tit.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run_tit = p_tit.runs[0] if p_tit.runs else p_tit.add_run()
+        run_tit.font.name = 'Arial'
+        run_tit.font.size = Pt(14)
+        run_tit.font.bold = True
+        run_tit.font.underline = True
+        p_tit.paragraph_format.space_after = Pt(24)
 
 def generar_documentos_reclamacion(cliente_nombre, cliente_nit, cliente_dir, cliente_ciudad, facturas_data):
     """
-    Genera 3 documentos: Endoso, Notificación y Aceptación Tácita.
-    facturas_data: Lista de dicts [{'factura': '...', 'valor': 1000, 'fecha_venc': '...', 'emision': '...'}]
-    Retorna un objeto BytesIO con el ZIP.
+    Genera 3 documentos ZIP optimizados visualmente: Endoso, Notificación, Aceptación.
+    Usa Arial, Tablas Grises, Espaciados Correctos.
     """
     zip_buffer = BytesIO()
-    # Fecha actual en español
     meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
     f_now = datetime.now()
-    fecha_str_esp = f"{f_now.day} de {meses[f_now.month-1]} de {f_now.year}"
+    fecha_larga = f"{f_now.day} de {meses[f_now.month-1]} de {f_now.year}"
+    fecha_ciudad = f"Pereira, {fecha_larga}"
+
+    azul_oscuro = RGBColor(0, 56, 101)
+    gris_claro = "E8E8E8" # Hex para fondo tabla
 
     with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
         
-        # --- 1. DOCUMENTO DE NOTIFICACIÓN DEUDOR ---
-        doc_notif = Document()
-        section = doc_notif.sections[0]
-        section.left_margin = Inches(1)
-        section.right_margin = Inches(1)
+        # --- 1. NOTIFICACIÓN DEUDOR (Mejorada) ---
+        doc = Document()
+        crear_encabezado_profesional(doc, titulo_principal=None) # Sin título centrado, es carta
 
-        # Encabezado Ciudad y Fecha
-        p = doc_notif.add_paragraph(f"Pereira, {fecha_str_esp}")
-        crear_estilo_parrafo(p, WD_ALIGN_PARAGRAPH.LEFT, 11)
-        doc_notif.add_paragraph() # Espacio
+        # Fecha y Datos Destinatario
+        p = doc.add_paragraph(fecha_ciudad)
+        aplicar_estilo_parrafo(p, align=WD_ALIGN_PARAGRAPH.RIGHT, space_after=18)
 
-        # Destinatario
-        p = doc_notif.add_paragraph("Señor(a):")
-        crear_estilo_parrafo(p, WD_ALIGN_PARAGRAPH.LEFT, 11, True)
-        p = doc_notif.add_paragraph(f"{cliente_nombre}")
-        crear_estilo_parrafo(p, WD_ALIGN_PARAGRAPH.LEFT, 11, False)
+        p = doc.add_paragraph("Señor(a):")
+        aplicar_estilo_parrafo(p, bold=True, space_after=2)
+        p = doc.add_paragraph(f"{cliente_nombre}")
+        aplicar_estilo_parrafo(p, space_after=2)
         if cliente_dir and cliente_dir != "Sin Dirección":
-            p = doc_notif.add_paragraph(f"{cliente_dir}")
-            crear_estilo_parrafo(p, WD_ALIGN_PARAGRAPH.LEFT, 11, False)
-        p = doc_notif.add_paragraph(f"{cliente_ciudad if cliente_ciudad else 'Ciudad'}")
-        crear_estilo_parrafo(p, WD_ALIGN_PARAGRAPH.LEFT, 11, False)
-        doc_notif.add_paragraph()
+            p = doc.add_paragraph(f"{cliente_dir}")
+            aplicar_estilo_parrafo(p, space_after=2)
+        p = doc.add_paragraph(f"{cliente_ciudad if cliente_ciudad else 'Ciudad'}")
+        aplicar_estilo_parrafo(p, space_after=18)
+
+        # Asunto
+        p = doc.add_paragraph()
+        run = p.add_run("REF: NOTIFICACIÓN DE ENDOSO DE TÍTULOS VALORES")
+        run.font.bold = True
+        run.font.name = 'Arial'
+        run.font.size = Pt(11)
+        p.paragraph_format.space_after = Pt(18)
 
         # Cuerpo
-        p = doc_notif.add_paragraph("Respetado Señor(a):")
-        crear_estilo_parrafo(p, WD_ALIGN_PARAGRAPH.LEFT, 11)
+        p = doc.add_paragraph("Respetado Señor(a):")
+        aplicar_estilo_parrafo(p, space_after=12)
         
-        p = doc_notif.add_paragraph(
-            "Por medio de la presente queremos comunicarle, que los siguientes Títulos Valores han sido endosados "
-            "en propiedad a favor de NEGOCIACIÓN DE TÍTULOS NET S.A.S:"
+        texto_intro = (
+            "Por medio de la presente queremos comunicarle que los siguientes Títulos Valores "
+            "han sido endosados en propiedad a favor de NEGOCIACIÓN DE TÍTULOS NET S.A.S:"
         )
-        crear_estilo_parrafo(p, WD_ALIGN_PARAGRAPH.JUSTIFY, 11)
+        p = doc.add_paragraph(texto_intro)
+        aplicar_estilo_parrafo(p, align=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after=12)
 
-        # Tabla de Facturas
-        table = doc_notif.add_table(rows=1, cols=4)
+        # Tabla Estilizada
+        table = doc.add_table(rows=1, cols=4)
         table.style = 'Table Grid'
+        table.autofit = False
+        table.allow_autofit = False
+        
+        # Anchos relativos
+        table.columns[0].width = Inches(1.5) # Titulo
+        table.columns[1].width = Inches(1.5) # Valor I
+        table.columns[2].width = Inches(1.5) # Abono
+        table.columns[3].width = Inches(1.5) # Final
+
+        # Encabezados Tabla
         hdr_cells = table.rows[0].cells
         titulos = ['Título Valor', 'Valor Inicial', 'Abono', 'Valor Final']
         for i, t in enumerate(titulos):
             hdr_cells[i].text = t
-            para = hdr_cells[i].paragraphs[0]
-            if para.runs:
-                run = para.runs[0]
-            else:
-                run = para.add_run()
-            run.font.bold = True
-            run.font.size = Pt(10)
-            para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            
+            set_cell_background(hdr_cells[i], gris_claro)
+            p_cell = hdr_cells[i].paragraphs[0]
+            p_cell.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run_cell = p_cell.runs[0]
+            run_cell.font.bold = True
+            run_cell.font.name = 'Arial'
+            run_cell.font.size = Pt(10)
+
+        # Datos Tabla
+        total_deuda = 0
         for fac in facturas_data:
             row_cells = table.add_row().cells
+            # Factura (Centro)
             row_cells[0].text = str(fac['factura'])
-            val_fmt = f"${fac['valor']:,.0f}"
-            row_cells[1].text = val_fmt
-            row_cells[2].text = "$0" # Asumimos abono 0
-            row_cells[3].text = val_fmt
-            for cell in row_cells:
-                cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-                if cell.paragraphs[0].runs:
-                    cell.paragraphs[0].runs[0].font.size = Pt(10)
+            row_cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
+            val = fac['valor']
+            total_deuda += val
+            val_fmt = f"${val:,.0f}"
 
-        doc_notif.add_paragraph()
-        
-        # Texto legal cierre
-        texto_cierre = (
+            # Valores (Derecha)
+            row_cells[1].text = val_fmt
+            row_cells[1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            
+            row_cells[2].text = "$0"
+            row_cells[2].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            
+            row_cells[3].text = val_fmt
+            row_cells[3].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            
+            # Fuente tabla cuerpo
+            for c in row_cells:
+                c.paragraphs[0].runs[0].font.name = 'Arial'
+                c.paragraphs[0].runs[0].font.size = Pt(10)
+
+        doc.add_paragraph().paragraph_format.space_after = Pt(12)
+
+        texto_legal = (
             "Por lo anterior, sus pagos a partir de la fecha deberán realizarse a favor de NEGOCIACIÓN DE TÍTULOS NET S.A.S. "
             "Es importante mencionarle que si sus obligaciones se encuentran al día, contará con los beneficios de mantener su "
-            "buen comportamiento de pago y mantener su cupo activo de compra.\n\n"
+            "buen comportamiento de pago y mantener su cupo activo de compra.\n"
             "Finalmente, le informamos que COVINOC como administrador de la cartera de NEGOCIACIÓN DE TÍTULOS NET S.A.S., "
-            "atenderá cualquier inquietud relacionada con sus obligaciones. Agradecemos solicitar su orden de pago y proceder a cancelar su obligación.\n\n"
+            "atenderá cualquier inquietud relacionada con sus obligaciones. Agradecemos solicitar su orden de pago y proceder a cancelar su obligación."
+        )
+        p = doc.add_paragraph(texto_legal)
+        aplicar_estilo_parrafo(p, align=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after=12)
+
+        texto_contacto = (
             "Para mayor información puede comunicarse en Bogotá llamando a los teléfonos 3534311 o al 3534324, a nivel nacional 018000946969, "
             "o también puede escribir al correo electrónico cobranza.sep@covinoc.com."
         )
-        p = doc_notif.add_paragraph(texto_cierre)
-        crear_estilo_parrafo(p, WD_ALIGN_PARAGRAPH.JUSTIFY, 11)
-        doc_notif.add_paragraph()
+        p = doc.add_paragraph(texto_contacto)
+        aplicar_estilo_parrafo(p, align=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after=30)
 
         # Firma
-        p = doc_notif.add_paragraph("Cordialmente,")
-        crear_estilo_parrafo(p, WD_ALIGN_PARAGRAPH.LEFT, 11)
-        doc_notif.add_paragraph("\n__________________________________________")
-        p = doc_notif.add_paragraph("FIRMA DEL REPRESENTANTE LEGAL DEL AFILIADO")
-        p = doc_notif.add_paragraph("FERREINOX S.A.S.")
-        p = doc_notif.add_paragraph("NIT: 800.224.617-8")
+        p = doc.add_paragraph("Cordialmente,")
+        aplicar_estilo_parrafo(p, space_after=40)
 
-        # Guardar Notificación
-        notif_io = BytesIO()
-        doc_notif.save(notif_io)
-        zip_file.writestr(f"Notificacion_{normalizar_nit_simple(str(cliente_nit))}.docx", notif_io.getvalue())
+        p = doc.add_paragraph("__________________________________________")
+        p.paragraph_format.space_after = Pt(2)
+        p = doc.add_paragraph("FERREINOX S.A.S.")
+        aplicar_estilo_parrafo(p, bold=True, space_after=2)
+        p = doc.add_paragraph("NIT: 900.252.189-9")
+        aplicar_estilo_parrafo(p, size=10)
+
+        # Guardar
+        bio = BytesIO()
+        doc.save(bio)
+        zip_file.writestr(f"Notificacion_{normalizar_nit_simple(str(cliente_nit))}.docx", bio.getvalue())
 
 
-        # --- 2. DOCUMENTO DE ENDOSO ---
-        doc_endoso = Document()
-        section = doc_endoso.sections[0]
-        
-        # Título
-        p = doc_endoso.add_paragraph("ENDOSO")
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        if p.runs:
-            run = p.runs[0]
-        else:
-            run = p.add_run()
-        run.font.bold = True
-        run.font.size = Pt(14)
-        doc_endoso.add_paragraph()
+        # --- 2. DOCUMENTO ENDOSO (Mejorado) ---
+        doc = Document()
+        crear_encabezado_profesional(doc, titulo_principal="ENDOSO EN PROPIEDAD")
 
-        # Texto Legal Endoso
         texto_endoso = (
             f"Yo, REPRESENTANTE LEGAL, mayor de edad, identificado como consta al pie de mi firma, "
-            f"actuando en mi calidad de representante legal de FERREINOX S.A.S BIC, identificada con el NIT 800.224.617-8, "
+            f"actuando en mi calidad de representante legal de FERREINOX S.A.S., identificada con el NIT 900.252.189-9, "
             f"manifiesto que ENDOSO EN PROPIEDAD a la orden de NEGOCIACIÓN DE TÍTULOS NET S.A.S., identificada con NIT 830.051.527-9, "
             f"las siguientes facturas de venta:"
         )
-        p = doc_endoso.add_paragraph(texto_endoso)
-        crear_estilo_parrafo(p, WD_ALIGN_PARAGRAPH.JUSTIFY, 12)
+        p = doc.add_paragraph(texto_endoso)
+        aplicar_estilo_parrafo(p, align=WD_ALIGN_PARAGRAPH.JUSTIFY, size=12, space_after=18)
 
-        # Tabla Facturas Endoso
-        table_e = doc_endoso.add_table(rows=1, cols=3)
-        table_e.style = 'Table Grid'
-        hdr = table_e.rows[0].cells
+        # Tabla Endoso
+        table = doc.add_table(rows=1, cols=3)
+        table.style = 'Table Grid'
+        
         titulos_e = ['No. Factura', 'Fecha Vencimiento', 'Valor']
+        hdr = table.rows[0].cells
         for i, t in enumerate(titulos_e):
             hdr[i].text = t
-            hdr[i].paragraphs[0].runs[0].font.bold = True
-            hdr[i].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-        
+            set_cell_background(hdr[i], gris_claro)
+            p_h = hdr[i].paragraphs[0]
+            p_h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run_h = p_h.runs[0]
+            run_h.font.bold = True
+            run_h.font.name = 'Arial'
+            run_h.font.size = Pt(11)
+
         for fac in facturas_data:
-            row = table_e.add_row().cells
+            row = table.add_row().cells
             row[0].text = str(fac['factura'])
+            row[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
             row[1].text = str(fac['fecha_venc'])
+            row[1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
             row[2].text = f"${fac['valor']:,.0f}"
-            for c in row: c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            row[2].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            
+            for c in row:
+                c.paragraphs[0].runs[0].font.name = 'Arial'
+                c.paragraphs[0].runs[0].font.size = Pt(11)
 
-        doc_endoso.add_paragraph()
-        p = doc_endoso.add_paragraph("Para constancia se firma en la ciudad de Pereira, a los " + fecha_str_esp + ".")
-        crear_estilo_parrafo(p, WD_ALIGN_PARAGRAPH.LEFT, 12)
-        
-        doc_endoso.add_paragraph("\n\n__________________________________________")
-        doc_endoso.add_paragraph("FIRMA DEL REPRESENTANTE LEGAL")
-        doc_endoso.add_paragraph("C.C. _______________________ de ________________")
-        
-        # Guardar Endoso
-        endoso_io = BytesIO()
-        doc_endoso.save(endoso_io)
-        zip_file.writestr(f"Endoso_{normalizar_nit_simple(str(cliente_nit))}.docx", endoso_io.getvalue())
+        doc.add_paragraph().paragraph_format.space_after = Pt(24)
 
-        # --- 3. DOCUMENTO DE ACEPTACIÓN TÁCITA ---
-        doc_tacita = Document()
-        p = doc_tacita.add_paragraph("ACEPTACIÓN TÁCITA")
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        if p.runs:
-            p.runs[0].font.bold = True
-            p.runs[0].font.size = Pt(14)
-        else:
-            r = p.add_run("ACEPTACIÓN TÁCITA")
-            r.font.bold = True
-            r.font.size = Pt(14)
-        doc_tacita.add_paragraph()
+        p = doc.add_paragraph(f"Para constancia se firma en la ciudad de Pereira, el día {fecha_larga}.")
+        aplicar_estilo_parrafo(p, size=12, space_after=50)
 
-        # Texto Aceptación
+        # Firma
+        p = doc.add_paragraph("__________________________________________")
+        p.paragraph_format.space_after = Pt(2)
+        p = doc.add_paragraph("FIRMA DEL REPRESENTANTE LEGAL")
+        aplicar_estilo_parrafo(p, bold=True, space_after=2)
+        p = doc.add_paragraph("C.C. _______________________ de ________________")
+        aplicar_estilo_parrafo(p, size=11)
+
+        bio = BytesIO()
+        doc.save(bio)
+        zip_file.writestr(f"Endoso_{normalizar_nit_simple(str(cliente_nit))}.docx", bio.getvalue())
+
+
+        # --- 3. ACEPTACIÓN TÁCITA (Mejorada) ---
+        doc = Document()
+        crear_encabezado_profesional(doc, titulo_principal="CONSTANCIA DE ACEPTACIÓN TÁCITA")
+
+        p = doc.add_paragraph(fecha_ciudad)
+        aplicar_estilo_parrafo(p, align=WD_ALIGN_PARAGRAPH.RIGHT, space_after=24)
+
         texto_tacita = (
             "Bajo la gravedad de juramento, me permito indicar que las facturas de venta relacionadas a continuación "
             "no han sido aceptadas expresamente; en tal sentido, han sido aceptadas tácitamente y no se ha efectuado "
-            "reclamo o devolución de las mismas."
+            "reclamo o devolución de las mismas de acuerdo a lo estipulado en el Código de Comercio."
         )
-        p = doc_tacita.add_paragraph(texto_tacita)
-        crear_estilo_parrafo(p, WD_ALIGN_PARAGRAPH.JUSTIFY, 12)
+        p = doc.add_paragraph(texto_tacita)
+        aplicar_estilo_parrafo(p, align=WD_ALIGN_PARAGRAPH.JUSTIFY, size=12, space_after=18)
+
+        # Tabla Tácita
+        table = doc.add_table(rows=1, cols=2)
+        table.style = 'Table Grid'
         
-        # Listar facturas nuevamente
-        table_t = doc_tacita.add_table(rows=1, cols=2)
-        table_t.style = 'Table Grid'
-        table_t.rows[0].cells[0].text = "Factura No."
-        table_t.rows[0].cells[1].text = "Valor"
+        # Encabezado
+        hdr = table.rows[0].cells
+        hdr[0].text = "Factura No."
+        hdr[1].text = "Valor Total"
+        for c in hdr:
+            set_cell_background(c, gris_claro)
+            c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            c.paragraphs[0].runs[0].font.bold = True
+            c.paragraphs[0].runs[0].font.name = 'Arial'
+            c.paragraphs[0].runs[0].font.size = Pt(11)
+
         for fac in facturas_data:
-            row = table_t.add_row().cells
+            row = table.add_row().cells
             row[0].text = str(fac['factura'])
+            row[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
             row[1].text = f"${fac['valor']:,.0f}"
+            row[1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            
+            for c in row:
+                c.paragraphs[0].runs[0].font.name = 'Arial'
+                c.paragraphs[0].runs[0].font.size = Pt(11)
 
-        doc_tacita.add_paragraph("\n\n__________________________________________")
-        doc_tacita.add_paragraph("FIRMA DEL REPRESENTANTE LEGAL DEL AFILIADO")
-        doc_tacita.add_paragraph("FERREINOX S.A.S.")
+        doc.add_paragraph().paragraph_format.space_after = Pt(40)
 
-        # Guardar Aceptación
-        tacita_io = BytesIO()
-        doc_tacita.save(tacita_io)
-        zip_file.writestr(f"Aceptacion_Tacita_{normalizar_nit_simple(str(cliente_nit))}.docx", tacita_io.getvalue())
+        # Firma
+        p = doc.add_paragraph("__________________________________________")
+        p.paragraph_format.space_after = Pt(2)
+        p = doc.add_paragraph("FERREINOX S.A.S.")
+        aplicar_estilo_parrafo(p, bold=True, space_after=2)
+        p = doc.add_paragraph("REPRESENTANTE LEGAL")
+        aplicar_estilo_parrafo(p, size=11)
+
+        bio = BytesIO()
+        doc.save(bio)
+        zip_file.writestr(f"Aceptacion_Tacita_{normalizar_nit_simple(str(cliente_nit))}.docx", bio.getvalue())
 
     return zip_buffer
 
@@ -978,7 +1003,7 @@ def main():
                     ~df_aviso_no_pago['estado_kpi_norm'].str.contains("AVISO", na=False)
                 ].copy()
                 
-                # --- NUEVO SUBSET PARA DOCS DE RECLAMACIÓN (>= 70 DÍAS Y ESTADO AVISO) ---
+                # --- SUBSET PARA DOCS DE RECLAMACIÓN (>= 70 DÍAS Y ESTADO AVISO) ---
                 df_docs_reclamacion = df_aviso_no_pago[
                     (df_aviso_no_pago['dias_vencido_cartera'] >= 70) &
                     (df_aviso_no_pago['estado_covinoc'].astype(str).str.upper().str.contains("AVISO"))
@@ -1011,10 +1036,10 @@ def main():
             st.markdown("---")
 
             # ======================================================================================
-            # --- NUEVA SECCIÓN: GENERACIÓN DE DOCUMENTOS (WORD) ---
+            # --- SECCIÓN: GENERACIÓN DE DOCUMENTOS (WORD) ---
             # ======================================================================================
-            st.subheader("📂 Generación de Documentos para Reclamación")
-            st.info("Esta sección permite generar los documentos Word (Endoso, Notificación, Aceptación Tácita) listos para imprimir, filtrados por cliente, para facturas con más de 70 días de vencido.")
+            st.subheader("📂 Generación de Documentos para Reclamación (Diseño Profesional)")
+            st.info("Esta sección genera documentos Word (Endoso, Notificación, Aceptación) listos para imprimir, filtrados por cliente, para facturas con más de 70 días.")
 
             if df_docs_reclamacion.empty:
                 st.warning("No hay facturas que cumplan los criterios para reclamación (>= 70 días y estado Aviso).")
