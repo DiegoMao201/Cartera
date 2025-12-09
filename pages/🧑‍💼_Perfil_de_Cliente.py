@@ -188,7 +188,7 @@ def cargar_datos_automaticos_dropbox():
             nombres_columnas_originales = [
                 'Serie', 'Numero', 'Fecha Documento', 'Fecha Vencimiento', 'Cod Cliente',
                 'NombreCliente', 'Nit', 'Poblacion', 'Provincia', 'Telefono1', 'Telefono2',
-                'NomVendedor', 'Entidad Autoriza', 'E-Mail', 'Importe', 'Descuento',
+                'NomVendedor', 'Entidad Autoriza', 'e-mail', 'Importe', 'Descuento',
                 'Cupo Aprobado', 'Dias Vencido'
             ]
             
