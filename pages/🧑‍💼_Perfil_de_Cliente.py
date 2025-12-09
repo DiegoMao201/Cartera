@@ -1,6 +1,7 @@
 # ======================================================================================
-# ARCHIVO: Tablero_Comando_Ferreinox_PRO.py (v.FINAL UNIFICADA & CORREGIDA)
+# ARCHIVO: Tablero_Comando_Ferreinox_PRO.py (v.FINAL BLINDADA)
 # Descripción: Panel de Control de Cartera PRO con corrección de KeyError en agregación.
+#              Se usa vectorización para asegurar la existencia de columnas calculadas.
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -682,24 +683,22 @@ def main():
     with tab_lider:
         st.subheader("🎯 Módulo de Contacto Directo y Envío de Docs.")
         
-        # Pre-filtrado para gestión
+        # Pre-filtrado para gestión (Solo clientes con saldo > 0)
         df_gestion = df_view[df_view['importe'] > 0].copy()
 
         # --- CORRECCIÓN FINAL APLICADA: MANEJO DE DATAFRAME VACÍO ---
         if df_gestion.empty:
             st.info("ℹ️ No hay clientes con saldo pendiente para gestionar con los filtros actuales.")
         else:
-            # Calcular la columna de soporte 'importe_vencido' solo si hay datos
-            df_gestion['importe_vencido'] = df_gestion.apply(
-                lambda row: row['importe'] if row['dias_vencido'] > 0 else 0,
-                axis=1
-            )
+            # CORRECCIÓN DE KEYERROR: Usamos Vectorización (.where) para crear la columna SIEMPRE.
+            # Esto evita que 'importe_vencido' no exista cuando el dataframe tiene datos pero se filtra raro.
+            # Si dias_vencido > 0 pone el importe, si no pone 0.
+            df_gestion['importe_vencido'] = df_gestion['importe'].where(df_gestion['dias_vencido'] > 0, 0)
 
-            # Agrupar por Cliente para gestión (solo clientes con saldo > 0)
-            # Ahora es seguro hacer la agregación porque 'importe_vencido' existe
+            # Agrupar por Cliente para gestión
             df_agrupado = df_gestion.groupby('nombrecliente').agg(
                 saldo=('importe', 'sum'),
-                saldo_vencido=('importe_vencido', 'sum'),
+                saldo_vencido=('importe_vencido', 'sum'), # Ahora esta columna SIEMPRE existe
                 dias_max=('dias_vencido', 'max'),
                 telefono=('telefono1', 'first'),
                 email=('e-mail', 'first'),
