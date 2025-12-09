@@ -422,7 +422,7 @@ def crear_encabezado_profesional(doc, titulo_principal=None):
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p.paragraph_format.space_after = Pt(2)
     
-    p2 = doc.add_paragraph("NIT: 900.252.189-9")
+    p2 = doc.add_paragraph("NIT: 800.224.617-8")
     p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run2 = p2.runs[0] if p2.runs else p2.add_run()
     run2.font.name = 'Arial'
@@ -572,7 +572,7 @@ def generar_documentos_reclamacion(cliente_nombre, cliente_nit, cliente_dir, cli
         p.paragraph_format.space_after = Pt(2)
         p = doc.add_paragraph("FERREINOX S.A.S.")
         aplicar_estilo_parrafo(p, bold=True, space_after=2)
-        p = doc.add_paragraph("NIT: 900.252.189-9")
+        p = doc.add_paragraph("NIT: 800.224.617-8")
         aplicar_estilo_parrafo(p, size=10)
 
         # Guardar
@@ -587,7 +587,7 @@ def generar_documentos_reclamacion(cliente_nombre, cliente_nit, cliente_dir, cli
 
         texto_endoso = (
             f"Yo, REPRESENTANTE LEGAL, mayor de edad, identificado como consta al pie de mi firma, "
-            f"actuando en mi calidad de representante legal de FERREINOX S.A.S., identificada con el NIT 900.252.189-9, "
+            f"actuando en mi calidad de representante legal de FERREINOX S.A.S., identificada con el NIT 800.224.617-8, "
             f"manifiesto que ENDOSO EN PROPIEDAD a la orden de NEGOCIACIÓN DE TÍTULOS NET S.A.S., identificada con NIT 830.051.527-9, "
             f"las siguientes facturas de venta:"
         )
