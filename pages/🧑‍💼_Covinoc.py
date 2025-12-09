@@ -1,12 +1,10 @@
 # ======================================================================================
-# ARCHIVO: Pagina_Covinoc.py (v14 - Fusión Completa: Reportes + Docs Word PRO)
+# ARCHIVO: Pagina_Covinoc.py (v15 - COMPLETO: Reportes + Docs Word PRO + Alertas 100 Días)
 # MODIFICADO:
-#           (Solicitud Usuario Actual - Mejora Visual Word)
-#           1. FUSIÓN TOTAL: Lógica de filtros, colores y Excel v11 intacta.
-#           2. MEJORA VISUAL WORD: Documentos (Endoso, Notificación, Aceptación)
-#              con diseño corporativo, tipografía Arial, tablas estilizadas con
-#              colores y espaciados optimizados.
-#           3. DEPENDENCIAS: Requiere 'python-docx' y 'zipfile'.
+#           1. FUSIÓN TOTAL: Toda la lógica anterior se mantiene intacta.
+#           2. VISUAL: Paleta institucional (#B21917, #E73537, #F0833A, #F9B016, #FEF4C0).
+#           3. WORD: Fuente 'Quicksand' y estilos corporativos nuevos.
+#           4. TAB 3: Cálculo de 100 días límite para reclamación con alertas visuales.
 #
 # REQUISITOS (requirements.txt):
 #           - streamlit
@@ -26,7 +24,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import unicodedata
 import re
-from datetime import datetime
+from datetime import datetime, timedelta # Agregado timedelta para cálculo de fechas
 import dropbox
 import glob
 import urllib.parse
@@ -50,17 +48,16 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- PALETA DE COLORES Y CSS ---
+# --- PALETA DE COLORES INSTITUCIONAL ---
 PALETA_COLORES = {
-    "primario": "#003865",
-    "secundario": "#0058A7",
-    "acento": "#FFC300",
-    "fondo_claro": "#F0F2F6",
+    "primario": "#B21917",       # Rojo Oscuro Institucional (Títulos, Botones, Bordes Fuertes)
+    "secundario": "#E73537",     # Rojo Claro (Hover, Detalles)
+    "acento": "#F0833A",         # Naranja (Inputs, Bordes suaves)
+    "destacado": "#F9B016",      # Amarillo (Alertas medias)
+    "fondo_claro": "#FAFAFA",    # Fondo Web
+    "fondo_suave": "#FEF4C0",    # Amarillo Pálido (Fondos tablas, selección)
     "texto_claro": "#FFFFFF",
     "texto_oscuro": "#31333F",
-    "alerta_rojo": "#D32F2F",
-    "alerta_naranja": "#F57C00",
-    "alerta_amarillo": "#FBC02D",
     "exito_verde": "#388E3C"
 }
 
@@ -85,13 +82,35 @@ st.markdown(f"""
         background-color: #FFFFFF; 
         border-radius: 10px; 
         padding: 20px; 
-        border: 1px solid #CCCCCC;
+        border-left: 5px solid {PALETA_COLORES['primario']};
         box-shadow: 0 4px 8px rgba(0,0,0,0.05);
     }}
     .stTabs [data-baseweb="tab-list"] {{ gap: 24px; }}
     .stTabs [data-baseweb="tab"] {{ height: 50px; white-space: pre-wrap; background-color: transparent; border-radius: 4px 4px 0px 0px; border-bottom: 2px solid #C0C0C0; }}
-    .stTabs [aria-selected="true"] {{ border-bottom: 2px solid {PALETA_COLORES['primario']}; color: {PALETA_COLORES['primario']}; font-weight: bold; }}
-    div[data-baseweb="input"], div[data-baseweb="select"], div[data-baseweb="text-area"] {{ background-color: #FFFFFF; border: 1.5px solid {PALETA_COLORES['secundario']}; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); padding-left: 5px; }}
+    .stTabs [aria-selected="true"] {{ 
+        border-bottom: 3px solid {PALETA_COLORES['primario']}; 
+        color: {PALETA_COLORES['primario']}; 
+        font-weight: bold; 
+        background-color: {PALETA_COLORES['fondo_suave']};
+    }}
+    div[data-baseweb="input"], div[data-baseweb="select"], div[data-baseweb="text-area"] {{ 
+        background-color: #FFFFFF; 
+        border: 1.5px solid {PALETA_COLORES['acento']}; 
+        border-radius: 8px; 
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+        padding-left: 5px; 
+    }}
+    /* Botones personalizados */
+    div.stButton > button:first-child {{
+        background-color: {PALETA_COLORES['primario']};
+        color: white;
+        border: none;
+        border-radius: 6px;
+    }}
+    div.stButton > button:hover {{
+        background-color: {PALETA_COLORES['secundario']};
+        color: white;
+    }}
     .stDataFrame {{ padding-top: 10px; }}
 </style>
 """, unsafe_allow_html=True)
@@ -359,7 +378,8 @@ def to_excel_informativo(df: pd.DataFrame) -> bytes:
         df_export.to_excel(writer, index=False, sheet_name=sheet_name)
         workbook = writer.book
         worksheet = writer.sheets[sheet_name]
-        header_format = workbook.add_format({'bold': True, 'text_wrap': True, 'valign': 'top', 'fg_color': '#003865', 'font_color': '#FFFFFF', 'border': 1})
+        # COLOR INSTITUCIONAL EN EXCEL (ROJO OSCURO)
+        header_format = workbook.add_format({'bold': True, 'text_wrap': True, 'valign': 'top', 'fg_color': '#B21917', 'font_color': '#FFFFFF', 'border': 1})
         money_format = workbook.add_format({'num_format': '$ #,##0'})
         date_format = workbook.add_format({'num_format': 'yyyy-mm-dd'})
         
@@ -390,15 +410,15 @@ def set_cell_background(cell, color_hex):
     """Establece el color de fondo de una celda de tabla."""
     tcPr = cell._element.tcPr
     shd = OxmlElement('w:shd')
-    shd.set(qn('w:fill'), color_hex)
+    shd.set(qn('w:fill'), color_hex.replace('#', ''))
     tcPr.append(shd)
 
 def aplicar_estilo_parrafo(p, size=11, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT, space_after=6, color=None):
-    """Aplica formato consistente Arial a un párrafo."""
+    """Aplica formato consistente Quicksand a un párrafo."""
     p.alignment = align
     p.paragraph_format.space_after = Pt(space_after)
     run = p.runs[0] if p.runs else p.add_run()
-    run.font.name = 'Arial'
+    run.font.name = 'Quicksand' # CAMBIO DE FUENTE
     run.font.size = Pt(size)
     run.font.bold = bold
     if color:
@@ -415,17 +435,18 @@ def crear_encabezado_profesional(doc, titulo_principal=None):
     # Encabezado "Empresarial" (Texto)
     p = doc.add_paragraph()
     run = p.add_run("FERREINOX S.A.S.")
-    run.font.name = 'Arial'
-    run.font.size = Pt(16)
+    run.font.name = 'Quicksand' # CAMBIO DE FUENTE
+    run.font.size = Pt(18)
     run.font.bold = True
-    run.font.color.rgb = RGBColor(0, 56, 101) # Azul oscuro corporativo
+    # Rojo Institucional B21917 (RGB: 178, 25, 23)
+    run.font.color.rgb = RGBColor(178, 25, 23) 
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p.paragraph_format.space_after = Pt(2)
     
     p2 = doc.add_paragraph("NIT: 800.224.617-8")
     p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run2 = p2.runs[0] if p2.runs else p2.add_run()
-    run2.font.name = 'Arial'
+    run2.font.name = 'Quicksand' # CAMBIO DE FUENTE
     run2.font.size = Pt(10)
     run2.font.color.rgb = RGBColor(100, 100, 100) # Gris
     p2.paragraph_format.space_after = Pt(20) # Espacio antes del título del doc
@@ -434,16 +455,17 @@ def crear_encabezado_profesional(doc, titulo_principal=None):
         p_tit = doc.add_paragraph(titulo_principal)
         p_tit.alignment = WD_ALIGN_PARAGRAPH.CENTER
         run_tit = p_tit.runs[0] if p_tit.runs else p_tit.add_run()
-        run_tit.font.name = 'Arial'
+        run_tit.font.name = 'Quicksand' # CAMBIO DE FUENTE
         run_tit.font.size = Pt(14)
         run_tit.font.bold = True
         run_tit.font.underline = True
+        run_tit.font.color.rgb = RGBColor(178, 25, 23) # Rojo
         p_tit.paragraph_format.space_after = Pt(24)
 
 def generar_documentos_reclamacion(cliente_nombre, cliente_nit, cliente_dir, cliente_ciudad, facturas_data):
     """
-    Genera 3 documentos ZIP optimizados visualmente: Endoso, Notificación, Aceptación.
-    Usa Arial, Tablas Grises, Espaciados Correctos.
+    Genera 3 documentos ZIP optimizados visualmente.
+    Usa Quicksand, Tablas Amarillas Pálidas, Espaciados Correctos.
     """
     zip_buffer = BytesIO()
     meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
@@ -451,8 +473,10 @@ def generar_documentos_reclamacion(cliente_nombre, cliente_nit, cliente_dir, cli
     fecha_larga = f"{f_now.day} de {meses[f_now.month-1]} de {f_now.year}"
     fecha_ciudad = f"Pereira, {fecha_larga}"
 
-    azul_oscuro = RGBColor(0, 56, 101)
-    gris_claro = "E8E8E8" # Hex para fondo tabla
+    # COLORES INSTITUCIONALES PARA WORD
+    rojo_institucional = RGBColor(178, 25, 23) # #B21917
+    fondo_tabla_header = "B21917" # Rojo Oscuro
+    fondo_tabla_body = "FEF4C0"   # Amarillo Pálido Institucional
 
     with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
         
@@ -478,8 +502,9 @@ def generar_documentos_reclamacion(cliente_nombre, cliente_nit, cliente_dir, cli
         p = doc.add_paragraph()
         run = p.add_run("REF: NOTIFICACIÓN DE ENDOSO DE TÍTULOS VALORES")
         run.font.bold = True
-        run.font.name = 'Arial'
+        run.font.name = 'Quicksand'
         run.font.size = Pt(11)
+        run.font.color.rgb = rojo_institucional
         p.paragraph_format.space_after = Pt(18)
 
         # Cuerpo
@@ -510,13 +535,14 @@ def generar_documentos_reclamacion(cliente_nombre, cliente_nit, cliente_dir, cli
         titulos = ['Título Valor', 'Valor Inicial', 'Abono', 'Valor Final']
         for i, t in enumerate(titulos):
             hdr_cells[i].text = t
-            set_cell_background(hdr_cells[i], gris_claro)
+            set_cell_background(hdr_cells[i], fondo_tabla_header)
             p_cell = hdr_cells[i].paragraphs[0]
             p_cell.alignment = WD_ALIGN_PARAGRAPH.CENTER
             run_cell = p_cell.runs[0]
             run_cell.font.bold = True
-            run_cell.font.name = 'Arial'
+            run_cell.font.name = 'Quicksand'
             run_cell.font.size = Pt(10)
+            run_cell.font.color.rgb = RGBColor(255, 255, 255) # Blanco
 
         # Datos Tabla
         total_deuda = 0
@@ -540,9 +566,10 @@ def generar_documentos_reclamacion(cliente_nombre, cliente_nit, cliente_dir, cli
             row_cells[3].text = val_fmt
             row_cells[3].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
             
-            # Fuente tabla cuerpo
+            # Fuente tabla cuerpo y fondo amarillo pálido
             for c in row_cells:
-                c.paragraphs[0].runs[0].font.name = 'Arial'
+                set_cell_background(c, fondo_tabla_body)
+                c.paragraphs[0].runs[0].font.name = 'Quicksand'
                 c.paragraphs[0].runs[0].font.size = Pt(10)
 
         doc.add_paragraph().paragraph_format.space_after = Pt(12)
@@ -571,7 +598,7 @@ def generar_documentos_reclamacion(cliente_nombre, cliente_nit, cliente_dir, cli
         p = doc.add_paragraph("__________________________________________")
         p.paragraph_format.space_after = Pt(2)
         p = doc.add_paragraph("FERREINOX S.A.S.")
-        aplicar_estilo_parrafo(p, bold=True, space_after=2)
+        aplicar_estilo_parrafo(p, bold=True, space_after=2, color=rojo_institucional)
         p = doc.add_paragraph("NIT: 800.224.617-8")
         aplicar_estilo_parrafo(p, size=10)
 
@@ -602,13 +629,14 @@ def generar_documentos_reclamacion(cliente_nombre, cliente_nit, cliente_dir, cli
         hdr = table.rows[0].cells
         for i, t in enumerate(titulos_e):
             hdr[i].text = t
-            set_cell_background(hdr[i], gris_claro)
+            set_cell_background(hdr[i], fondo_tabla_header)
             p_h = hdr[i].paragraphs[0]
             p_h.alignment = WD_ALIGN_PARAGRAPH.CENTER
             run_h = p_h.runs[0]
             run_h.font.bold = True
-            run_h.font.name = 'Arial'
+            run_h.font.name = 'Quicksand'
             run_h.font.size = Pt(11)
+            run_h.font.color.rgb = RGBColor(255, 255, 255)
 
         for fac in facturas_data:
             row = table.add_row().cells
@@ -622,7 +650,8 @@ def generar_documentos_reclamacion(cliente_nombre, cliente_nit, cliente_dir, cli
             row[2].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
             
             for c in row:
-                c.paragraphs[0].runs[0].font.name = 'Arial'
+                set_cell_background(c, fondo_tabla_body)
+                c.paragraphs[0].runs[0].font.name = 'Quicksand'
                 c.paragraphs[0].runs[0].font.size = Pt(11)
 
         doc.add_paragraph().paragraph_format.space_after = Pt(24)
@@ -634,7 +663,7 @@ def generar_documentos_reclamacion(cliente_nombre, cliente_nit, cliente_dir, cli
         p = doc.add_paragraph("__________________________________________")
         p.paragraph_format.space_after = Pt(2)
         p = doc.add_paragraph("FIRMA DEL REPRESENTANTE LEGAL")
-        aplicar_estilo_parrafo(p, bold=True, space_after=2)
+        aplicar_estilo_parrafo(p, bold=True, space_after=2, color=rojo_institucional)
         p = doc.add_paragraph("C.C. _______________________ de ________________")
         aplicar_estilo_parrafo(p, size=11)
 
@@ -667,11 +696,12 @@ def generar_documentos_reclamacion(cliente_nombre, cliente_nit, cliente_dir, cli
         hdr[0].text = "Factura No."
         hdr[1].text = "Valor Total"
         for c in hdr:
-            set_cell_background(c, gris_claro)
+            set_cell_background(c, fondo_tabla_header)
             c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
             c.paragraphs[0].runs[0].font.bold = True
-            c.paragraphs[0].runs[0].font.name = 'Arial'
+            c.paragraphs[0].runs[0].font.name = 'Quicksand'
             c.paragraphs[0].runs[0].font.size = Pt(11)
+            c.paragraphs[0].runs[0].font.color.rgb = RGBColor(255, 255, 255)
 
         for fac in facturas_data:
             row = table.add_row().cells
@@ -682,7 +712,8 @@ def generar_documentos_reclamacion(cliente_nombre, cliente_nit, cliente_dir, cli
             row[1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
             
             for c in row:
-                c.paragraphs[0].runs[0].font.name = 'Arial'
+                set_cell_background(c, fondo_tabla_body)
+                c.paragraphs[0].runs[0].font.name = 'Quicksand'
                 c.paragraphs[0].runs[0].font.size = Pt(11)
 
         doc.add_paragraph().paragraph_format.space_after = Pt(40)
@@ -691,7 +722,7 @@ def generar_documentos_reclamacion(cliente_nombre, cliente_nit, cliente_dir, cli
         p = doc.add_paragraph("__________________________________________")
         p.paragraph_format.space_after = Pt(2)
         p = doc.add_paragraph("FERREINOX S.A.S.")
-        aplicar_estilo_parrafo(p, bold=True, space_after=2)
+        aplicar_estilo_parrafo(p, bold=True, space_after=2, color=rojo_institucional)
         p = doc.add_paragraph("REPRESENTANTE LEGAL")
         aplicar_estilo_parrafo(p, size=11)
 
@@ -986,13 +1017,30 @@ def main():
             )
 
         with tab3:
+            # ======================================================================================
+            # --- MODIFICACIÓN CLAVE: LÓGICA DE ALERTAS 100 DÍAS ---
+            # ======================================================================================
             st.subheader("Facturas para Aviso de No Pago y Reclamación")
-            st.markdown("Facturas que están **en ambos reportes**, tienen **>= 25 días** vencidas, **importe > 0** y no están **Exoneradas** o **Negadas**.")
+            st.markdown("Facturas que están **en ambos reportes**, tienen **>= 25 días** vencidas. Se ha agregado el cálculo de fecha límite para reclamación.")
             
             st.markdown("---")
             st.subheader("Indicadores de Gestión")
             
             if not df_aviso_no_pago.empty:
+                # --- CÁLCULO FECHA LÍMITE (100 DÍAS) ---
+                df_aviso_no_pago['fecha_limite_reclamacion'] = pd.to_datetime(df_aviso_no_pago['fecha_vencimiento_cartera']) + timedelta(days=100)
+                today_ts = pd.Timestamp.now()
+                df_aviso_no_pago['dias_restantes_reclamo'] = (df_aviso_no_pago['fecha_limite_reclamacion'] - today_ts).dt.days
+
+                # Categoría Alerta Visual
+                def categorizar_alerta(dias):
+                    if dias < 0: return "🔴 VENCIDO"
+                    elif dias <= 15: return "🟠 CRÍTICO"
+                    elif dias <= 30: return "🟡 ATENCIÓN"
+                    else: return "🟢 A TIEMPO"
+                
+                df_aviso_no_pago['alerta_estado'] = df_aviso_no_pago['dias_restantes_reclamo'].apply(categorizar_alerta)
+
                 df_aviso_no_pago['estado_kpi_norm'] = df_aviso_no_pago['estado_covinoc'].astype(str).str.upper().str.replace(' ', '')
                 # Facturas YA en Aviso
                 df_para_reclamar = df_aviso_no_pago[
@@ -1008,29 +1056,31 @@ def main():
                     (df_aviso_no_pago['dias_vencido_cartera'] >= 70) &
                     (df_aviso_no_pago['estado_covinoc'].astype(str).str.upper().str.contains("AVISO"))
                 ].copy()
+                
+                criticos_reclamacion = len(df_aviso_no_pago[df_aviso_no_pago['dias_restantes_reclamo'] <= 15])
+
             else:
                 df_para_reclamar = pd.DataFrame(columns=df_aviso_no_pago.columns)
                 df_para_enviar_aviso = pd.DataFrame(columns=df_aviso_no_pago.columns)
                 df_docs_reclamacion = pd.DataFrame(columns=df_aviso_no_pago.columns)
+                criticos_reclamacion = 0
 
             kpi_col1, kpi_col2, kpi_col3 = st.columns(3)
             try:
                 total_facturas_aviso = len(df_aviso_no_pago)
                 monto_total_aviso = pd.to_numeric(df_aviso_no_pago['importe_cartera'], errors='coerce').sum()
-                monto_para_reclamar = pd.to_numeric(df_para_reclamar['importe_cartera'], errors='coerce').sum()
                 monto_docs_reclamacion = pd.to_numeric(df_docs_reclamacion['importe_cartera'], errors='coerce').sum()
             except Exception:
                 monto_total_aviso = 0
                 total_facturas_aviso = 0
-                monto_para_reclamar = 0
                 monto_docs_reclamacion = 0
 
             kpi_col1.metric(label="Nº Facturas Totales en Aviso", value=f"{total_facturas_aviso}")
             kpi_col2.metric(label="Monto Total en Aviso", value=f"${monto_total_aviso:,.0f}")
             kpi_col3.metric(
-                label="⚠️ Aptas Reclamación (>=70 días)", 
-                value=f"{len(df_docs_reclamacion)}", 
-                delta=f"${monto_docs_reclamacion:,.0f}"
+                label="⚠️ Críticos (<15 días para vencer)", 
+                value=f"{criticos_reclamacion}", 
+                delta_color="inverse"
             )
             
             st.markdown("---")
@@ -1094,7 +1144,7 @@ def main():
             st.markdown("---")
             # ======================================================================================
 
-            st.write("Facturas que cumplen los criterios (>= 25 días, > 0, no exoneradas, no negadas):")
+            st.write("Facturas que cumplen los criterios (>= 25 días, > 0, no exoneradas, no negadas). **Ordenadas por urgencia de reclamación.**")
             
             opcion_vista = st.radio(
                 "Seleccione la vista:",
@@ -1114,13 +1164,34 @@ def main():
             else:
                 df_aviso_display = df_aviso_no_pago
 
+            # Ordenar por días restantes para priorizar
+            df_aviso_display = df_aviso_display.sort_values(by='dias_restantes_reclamo', ascending=True)
+
             columnas_mostrar_aviso = [
+                'alerta_estado', 'dias_restantes_reclamo', 'fecha_limite_reclamacion', # Nuevas columnas
                 'nombrecliente_cartera', 'nit_cartera', 'factura_norm_cartera', 'fecha_vencimiento_cartera', 'dias_vencido_cartera', 
-                'importe_cartera', 'nomvendedor_cartera', 'saldo_covinoc', 'estado_covinoc', 'clave_unica'
+                'importe_cartera', 'nomvendedor_cartera', 'saldo_covinoc', 'estado_covinoc'
             ]
             
             columnas_existentes_aviso = [col for col in columnas_mostrar_aviso if col in df_aviso_display.columns]
-            st.dataframe(df_aviso_display[columnas_existentes_aviso], use_container_width=True, hide_index=True)
+            
+            st.dataframe(
+                df_aviso_display[columnas_existentes_aviso], 
+                use_container_width=True, 
+                hide_index=True,
+                column_config={
+                    "alerta_estado": st.column_config.TextColumn("Estado Límite", width="medium"),
+                    "dias_restantes_reclamo": st.column_config.ProgressColumn(
+                        "Días Restantes (100)", 
+                        format="%d días", 
+                        min_value=-20, 
+                        max_value=120,
+                        help="Días que faltan para cumplir los 100 días desde vencimiento (Límite legal)."
+                    ),
+                    "fecha_limite_reclamacion": st.column_config.DateColumn("Fecha Límite", format="YYYY-MM-DD"),
+                    "importe_cartera": st.column_config.NumberColumn("Valor", format="$ %d")
+                }
+            )
 
             # Lógica de Descarga Excel (Tab 3)
             if not df_para_enviar_aviso.empty:
