@@ -1,7 +1,8 @@
 # ======================================================================================
-# ARCHIVO: Tablero_Comando_Ferreinox_PRO.py (v.FINAL GESTIÓN WA EDITABLE)
+# ARCHIVO: Tablero_Comando_Ferreinox_PRO.py (v.FINAL GESTIÓN WA EDITABLE + EXCEL MORA)
 # Descripción: Panel de Control de Cartera PRO.
 #              Corrección: Error OpenPyXL Colors + WA Editable + Fuente Quicksand
+#              NUEVO: Reporte Excel Gerencial de Solo Mora en Tab 1.
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -448,8 +449,7 @@ def crear_pdf(df_cliente, total_vencido_cliente):
 
 def crear_excel_gerencial(df, total, vencido, pct_mora, clientes_mora, csi, antiguedad_prom_vencida):
     """
-    Genera el reporte ejecutivo en Excel.
-    CORRECCIÓN CRÍTICA: OpenPyXL requiere Hex strings SIN '#'.
+    Genera el reporte ejecutivo en Excel (PARA EL TAB 3).
     """
     wb = Workbook()
     ws = wb.active
@@ -513,6 +513,123 @@ def crear_excel_gerencial(df, total, vencido, pct_mora, clientes_mora, csi, anti
     for i in range(1, len(cols) + 1):
         ws.column_dimensions[get_column_letter(i)].width = 22 if i != 1 else 35
         
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue()
+
+def crear_excel_cobranza_vencida(df):
+    """
+    NUEVA FUNCIÓN: Genera un Excel conciso y gerencial solo con la cartera vencida para gestión.
+    Diseñado para ser claro, directo y profesional.
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Gestión Mora"
+    
+    # 1. Preparar Colores (Sin # para OpenPyXL)
+    c_primario = COLOR_PRIMARIO.replace("#", "")     # Rojo
+    c_fondo_suave = COLOR_FONDO_CLARO.replace("#", "") # Crema
+    c_blanco = "FFFFFF"
+    
+    # 2. Definir Estilos
+    font_titulo = Font(name='Quicksand', size=14, bold=True, color=c_primario)
+    font_header = Font(name='Quicksand', size=11, bold=True, color=c_blanco)
+    font_body = Font(name='Quicksand', size=10, color="000000")
+    font_body_bold = Font(name='Quicksand', size=10, bold=True, color="000000")
+    
+    fill_header = PatternFill("solid", fgColor=c_primario)
+    fill_zebra = PatternFill("solid", fgColor=c_fondo_suave)
+    
+    border_thin = Border(left=Side(style='thin', color="DDDDDD"), 
+                         right=Side(style='thin', color="DDDDDD"), 
+                         top=Side(style='thin', color="DDDDDD"), 
+                         bottom=Side(style='thin', color="DDDDDD"))
+
+    # 3. Filtrar Data (Solo Vencidos)
+    df_vencidos = df[df['dias_vencido'] > 0].copy()
+    
+    # Seleccionar columnas clave y ordenar
+    # Ordenamos por Cliente y luego por Días de Mora (Descendente)
+    cols_export = ['nombrecliente', 'nit', 'telefono1', 'numero', 'fecha_vencimiento', 'dias_vencido', 'importe']
+    df_export = df_vencidos[cols_export].sort_values(by=['nombrecliente', 'dias_vencido'], ascending=[True, False])
+    
+    # Renombrar para encabezados bonitos
+    headers = ["CLIENTE", "NIT", "CONTACTO", "FACTURA #", "VENCIMIENTO", "DÍAS MORA", "SALDO PENDIENTE"]
+    
+    # 4. Construcción del Excel
+    
+    # Título del Reporte
+    ws['A1'] = "REPORTE DE COBRANZA - CLIENTES EN MORA"
+    ws['A1'].font = font_titulo
+    ws['A2'] = f"Generado el: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    ws['A2'].font = Font(name='Quicksand', size=9, italic=True)
+    
+    # Encabezados de Tabla (Fila 4)
+    start_row = 4
+    for col_idx, header in enumerate(headers, 1):
+        cell = ws.cell(row=start_row, column=col_idx, value=header)
+        cell.font = font_header
+        cell.fill = fill_header
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = border_thin
+
+    # Datos
+    current_row = start_row + 1
+    current_client = ""
+    
+    for _, row in df_export.iterrows():
+        # Extracción de valores
+        vals = [
+            row['nombrecliente'],
+            row['nit'],
+            str(row['telefono1']),
+            row['numero'],
+            row['fecha_vencimiento'],
+            row['dias_vencido'],
+            row['importe']
+        ]
+        
+        # Estilo de fila
+        is_new_client = (vals[0] != current_client)
+        current_client = vals[0]
+        
+        for col_idx, value in enumerate(vals, 1):
+            cell = ws.cell(row=current_row, column=col_idx, value=value)
+            cell.font = font_body
+            cell.border = border_thin
+            
+            # Formateos específicos
+            if col_idx == 1: # Cliente (Negrita)
+                cell.font = font_body_bold
+            
+            if col_idx == 5 and isinstance(value, datetime): # Fecha
+                 cell.number_format = 'DD/MM/YYYY'
+            
+            if col_idx == 7: # Importe
+                cell.number_format = '$ #,##0'
+                cell.font = font_body_bold # Destacar la deuda
+            
+            if col_idx == 6: # Días Mora (Centrar)
+                cell.alignment = Alignment(horizontal='center')
+
+            # Zebra Striping (Color crema suave para alternar visualmente por cliente no es necesario,
+            # pero podemos resaltar filas críticas).
+            # Vamos a resaltar filas con mora > 60 días
+            if row['dias_vencido'] > 60:
+                 # Un rojo muy muy pálido para alerta visual suave si se desea, 
+                 # pero mantendremos el estilo limpio solicitado.
+                 pass
+
+        current_row += 1
+
+    # Ajuste de Ancho de Columnas
+    widths = [40, 15, 15, 12, 15, 12, 20]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # Filtros Automáticos
+    ws.auto_filter.ref = f"A{start_row}:{get_column_letter(len(headers))}{current_row-1}"
+    
     output = io.BytesIO()
     wb.save(output)
     return output.getvalue()
@@ -736,7 +853,21 @@ def main():
     
     # --- TAB 1: GESTIÓN ---
     with tab1:
-        st.subheader("🎯 Gestión de Cobro Directo")
+        # ---- NUEVO BOTÓN DE EXCEL GERENCIAL SOLO MORA ----
+        col_header_1, col_header_2 = st.columns([3, 1])
+        with col_header_1:
+            st.subheader("🎯 Gestión de Cobro Directo")
+        with col_header_2:
+            excel_mora_bytes = crear_excel_cobranza_vencida(df_view)
+            st.download_button(
+                label="💾 Descargar Listado Mora (Excel)",
+                data=excel_mora_bytes,
+                file_name=f"Gestion_Mora_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="btn_descarga_mora"
+            )
+        # --------------------------------------------------
+
         df_g = df_view[df_view['importe'] > 0].copy()
         
         if df_g.empty:
