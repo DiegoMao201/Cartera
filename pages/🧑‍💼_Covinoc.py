@@ -494,7 +494,7 @@ def crear_encabezado_profesional(doc, titulo_principal=None):
     
     # Encabezado "Empresarial" (Texto)
     p = doc.add_paragraph()
-    run = p.add_run("FERREINOX S.A.S.")
+    run = p.add_run("FERREINOX S.A.S. BIC.")
     run.font.name = 'Quicksand' # CAMBIO DE FUENTE
     run.font.size = Pt(18)
     run.font.bold = True
@@ -657,7 +657,7 @@ def generar_documentos_reclamacion(cliente_nombre, cliente_nit, cliente_dir, cli
 
         p = doc.add_paragraph("__________________________________________")
         p.paragraph_format.space_after = Pt(2)
-        p = doc.add_paragraph("FERREINOX S.A.S.")
+        p = doc.add_paragraph("FERREINOX S.A.S. BIC.")
         aplicar_estilo_parrafo(p, bold=True, space_after=2, color=rojo_institucional)
         p = doc.add_paragraph("NIT: 800.224.617-8")
         aplicar_estilo_parrafo(p, size=10)
@@ -674,7 +674,7 @@ def generar_documentos_reclamacion(cliente_nombre, cliente_nit, cliente_dir, cli
 
         texto_endoso = (
             f"Yo, JORGE IVAN PEREZ ANGEL, mayor de edad, identificado como consta al pie de mi firma, "
-            f"actuando en mi calidad de representante legal de FERREINOX S.A.S., identificada con el NIT 800.224.617-8, "
+            f"actuando en mi calidad de representante legal de FERREINOX S.A.S. BIC, identificada con el NIT 800.224.617-8, "
             f"manifiesto que ENDOSO EN PROPIEDAD a la orden de NEGOCIACIÓN DE TÍTULOS NET S.A.S., identificada con NIT 830.051.527-9, "
             f"las siguientes facturas de venta:"
         )
@@ -781,7 +781,7 @@ def generar_documentos_reclamacion(cliente_nombre, cliente_nit, cliente_dir, cli
         # Firma
         p = doc.add_paragraph("__________________________________________")
         p.paragraph_format.space_after = Pt(2)
-        p = doc.add_paragraph("FERREINOX S.A.S.")
+        p = doc.add_paragraph("FERREINOX S.A.S. BIC.")
         aplicar_estilo_parrafo(p, bold=True, space_after=2, color=rojo_institucional)
         p = doc.add_paragraph("REPRESENTANTE LEGAL")
         aplicar_estilo_parrafo(p, size=11)
