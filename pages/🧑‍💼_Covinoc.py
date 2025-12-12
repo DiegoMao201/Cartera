@@ -673,7 +673,7 @@ def generar_documentos_reclamacion(cliente_nombre, cliente_nit, cliente_dir, cli
         crear_encabezado_profesional(doc, titulo_principal="ENDOSO EN PROPIEDAD")
 
         texto_endoso = (
-            f"Yo, REPRESENTANTE LEGAL, mayor de edad, identificado como consta al pie de mi firma, "
+            f"Yo, JORGE IVAN PEREZ ANGEL, mayor de edad, identificado como consta al pie de mi firma, "
             f"actuando en mi calidad de representante legal de FERREINOX S.A.S., identificada con el NIT 800.224.617-8, "
             f"manifiesto que ENDOSO EN PROPIEDAD a la orden de NEGOCIACIÓN DE TÍTULOS NET S.A.S., identificada con NIT 830.051.527-9, "
             f"las siguientes facturas de venta:"
