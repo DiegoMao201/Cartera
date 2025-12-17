@@ -1142,7 +1142,7 @@ def main():
 
         with tab3:
             # ======================================================================================
-            # --- MODIFICACIÓN CLAVE: LÓGICA DE ALERTAS 100 DÍAS ---
+            # --- MODIFICACIÓN CLAVE: LÓGICA DE ALERTAS 70 DÍAS ---
             # ======================================================================================
             st.subheader("Facturas para Aviso de No Pago y Reclamación")
             st.markdown("Facturas que están **en ambos reportes**, tienen **>= 25 días** vencidas. Se ha agregado el cálculo de fecha límite para reclamación.")
@@ -1151,8 +1151,8 @@ def main():
             st.subheader("Indicadores de Gestión")
             
             if not df_aviso_no_pago.empty:
-                # --- CÁLCULO FECHA LÍMITE (100 DÍAS) ---
-                df_aviso_no_pago['fecha_limite_reclamacion'] = pd.to_datetime(df_aviso_no_pago['fecha_vencimiento_cartera']) + timedelta(days=100)
+                # --- CÁLCULO FECHA LÍMITE (70 DÍAS) ---
+                df_aviso_no_pago['fecha_limite_reclamacion'] = pd.to_datetime(df_aviso_no_pago['fecha_vencimiento_cartera']) + timedelta(days=70)
                 today_ts = pd.Timestamp.now()
                 df_aviso_no_pago['dias_restantes_reclamo'] = (df_aviso_no_pago['fecha_limite_reclamacion'] - today_ts).dt.days
 
@@ -1306,11 +1306,11 @@ def main():
                 column_config={
                     "alerta_estado": st.column_config.TextColumn("Estado Límite", width="medium"),
                     "dias_restantes_reclamo": st.column_config.ProgressColumn(
-                        "Días Restantes (100)", 
+                        "Días Restantes (70)", 
                         format="%d días", 
                         min_value=-20, 
                         max_value=120,
-                        help="Días que faltan para cumplir los 100 días desde vencimiento (Límite legal)."
+                        help="Días que faltan para cumplir los 70 días desde vencimiento (Límite legal)."
                     ),
                     "fecha_limite_reclamacion": st.column_config.DateColumn("Fecha Límite", format="YYYY-MM-DD"),
                     "importe_cartera": st.column_config.NumberColumn("Valor", format="$ %d")
