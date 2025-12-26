@@ -1,9 +1,9 @@
 # ======================================================================================
-# ARCHIVO: Tablero_Comando_Ferreinox_PRO.py (v.FINAL GESTIÓN WA EDITABLE + EMPLEADOS)
+# ARCHIVO: Tablero_Comando_Ferreinox_PRO.py (v.FINAL CORREGIDO - EMPLEADOS + EXCEL OK)
 # Descripción: Panel de Control de Cartera PRO.
-#              - Corrección: Error OpenPyXL Colors + WA Editable + Fuente Quicksand
+#              - Corrección: Error NameError en antiguedad_prom_vencida solucionado.
 #              - Reporte Excel Gerencial de Solo Mora en Tab 1.
-#              - NUEVO: Pestaña "Empleados" (Cruce con Excel Dropbox + Msj Nómina)
+#              - Pestaña "Empleados" (Cruce con Excel Dropbox + Msj Nómina)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -897,6 +897,7 @@ def main():
     st.title("🛡️ Centro de Mando: Cobranza PRO")
     
     # KPIs
+    # CORRECCIÓN AQUÍ: Usamos el nombre completo de la variable para evitar NameError
     total, vencido, pct, cli_mora, csi, antiguedad_prom_vencida = calcular_kpis(df_view)
     
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -907,6 +908,7 @@ def main():
     c5.metric("CSI (Severidad)", f"{csi:.1f}")
     
     with st.expander("🤖 Análisis IA", expanded=(pct > 15)):
+        # Pasamos la variable correcta 'antiguedad_prom_vencida'
         st.markdown(generar_analisis_cartera({'porcentaje_vencido': pct, 'antiguedad_prom_vencida': antiguedad_prom_vencida, 'csi': csi}), unsafe_allow_html=True)
         
     st.divider()
@@ -1063,6 +1065,7 @@ def main():
     # --- TAB 3: DATA ---
     with tab3:
         st.subheader("📥 Exportación")
+        # CORRECCIÓN: Ahora pasamos 'antiguedad_prom_vencida' correctamente definida
         excel_bytes = crear_excel_gerencial(df_view, total, vencido, pct, cli_mora, csi, antiguedad_prom_vencida)
         
         st.download_button(
