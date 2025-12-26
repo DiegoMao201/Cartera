@@ -1,8 +1,9 @@
 # ======================================================================================
-# ARCHIVO: Tablero_Comando_Ferreinox_PRO.py (v.FINAL GESTIÓN WA EDITABLE + EXCEL MORA)
+# ARCHIVO: Tablero_Comando_Ferreinox_PRO.py (v.FINAL GESTIÓN WA EDITABLE + EMPLEADOS)
 # Descripción: Panel de Control de Cartera PRO.
-#              Corrección: Error OpenPyXL Colors + WA Editable + Fuente Quicksand
-#              NUEVO: Reporte Excel Gerencial de Solo Mora en Tab 1.
+#              - Corrección: Error OpenPyXL Colors + WA Editable + Fuente Quicksand
+#              - Reporte Excel Gerencial de Solo Mora en Tab 1.
+#              - NUEVO: Pestaña "Empleados" (Cruce con Excel Dropbox + Msj Nómina)
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -147,9 +148,14 @@ def normalizar_nombre(nombre: str) -> str:
     nombre = ''.join(c for c in unicodedata.normalize('NFD', nombre) if unicodedata.category(c) != 'Mn')
     return ' '.join(nombre.split())
 
+def limpiar_nit(valor):
+    """Deja solo números para cruce de llaves primarias."""
+    if pd.isna(valor): return ""
+    return re.sub(r'\D', '', str(valor))
+
 def procesar_dataframe_robusto(df_raw):
     """
-    Procesa el DataFrame crudo leído de Dropbox.
+    Procesa el DataFrame crudo leído de Dropbox (Cartera).
     """
     df = df_raw.copy()
 
@@ -174,6 +180,9 @@ def procesar_dataframe_robusto(df_raw):
 
     # Normalización de Vendedor
     df['nomvendedor_norm'] = df['nomvendedor'].apply(normalizar_nombre)
+    
+    # Normalizar NIT para cruces
+    df['nit_clean'] = df['nit'].apply(limpiar_nit)
 
     # 3. Asignación de Zonas
     ZONAS_SERIE = { "PEREIRA": [155, 189, 158, 439], "MANIZALES": [157, 238], "ARMENIA": [156] }
@@ -206,7 +215,10 @@ def procesar_dataframe_robusto(df_raw):
 @st.cache_data(ttl=600) 
 def cargar_datos_automaticos_dropbox():
     """
-    Carga los datos desde Dropbox con lógica robusta.
+    Carga:
+    1. Cartera Principal (.csv)
+    2. Datos Empleados (.xlsx)
+    Realiza el cruce y retorna el DF unificado.
     """
     try:
         # Credenciales
@@ -215,26 +227,67 @@ def cargar_datos_automaticos_dropbox():
         REFRESH_TOKEN = st.secrets["dropbox"]["refresh_token"]
 
         with dropbox.Dropbox(app_key=APP_KEY, app_secret=APP_SECRET, oauth2_refresh_token=REFRESH_TOKEN) as dbx:
-            path_archivo_dropbox = '/data/cartera_detalle.csv'
-            metadata, res = dbx.files_download(path=path_archivo_dropbox)
             
-            # Decodificación
-            contenido_csv = res.content.decode('latin-1')
+            # --- 1. CARGA CARTERA (CSV) ---
+            path_cartera = '/data/cartera_detalle.csv'
+            metadata_c, res_c = dbx.files_download(path=path_cartera)
+            contenido_csv = res_c.content.decode('latin-1')
             
-            nombres_columnas_originales = [
+            nombres_cols = [
                 'Serie', 'Numero', 'Fecha Documento', 'Fecha Vencimiento', 'Cod Cliente',
                 'NombreCliente', 'Nit', 'Poblacion', 'Provincia', 'Telefono1', 'Telefono2',
                 'NomVendedor', 'Entidad Autoriza', 'E-Mail', 'Importe', 'Descuento',
                 'Cupo Aprobado', 'Dias Vencido'
             ]
-            
-            # Lectura
-            df_raw = pd.read_csv(StringIO(contenido_csv), header=None, names=nombres_columnas_originales, sep='|', engine='python')
+            df_raw = pd.read_csv(StringIO(contenido_csv), header=None, names=nombres_cols, sep='|', engine='python')
+            df_proc = procesar_dataframe_robusto(df_raw)
 
-        # Procesar
-        df_proc = procesar_dataframe_robusto(df_raw)
+            # --- 2. CARGA EMPLEADOS (EXCEL) ---
+            msg_empleados = ""
+            try:
+                path_empleados = '/data/datos_empleados.xlsx'
+                metadata_e, res_e = dbx.files_download(path=path_empleados)
+                
+                # Leer Excel desde memoria
+                with io.BytesIO(res_e.content) as excel_buffer:
+                    df_empleados = pd.read_excel(excel_buffer)
+                
+                # Limpiar columnas empleados (se espera: NOMBRE, CEDULA, TELEFONO, CORREO)
+                df_empleados.columns = [c.strip().upper() for c in df_empleados.columns]
+                
+                if 'CEDULA' in df_empleados.columns:
+                    df_empleados['cedula_clean'] = df_empleados['CEDULA'].apply(limpiar_nit)
+                    
+                    # --- 3. CRUCE (MERGE) ---
+                    # Hacemos Left Join: Cartera + Info Empleado
+                    df_proc = df_proc.merge(
+                        df_empleados[['CEDULA', 'NOMBRE', 'TELEFONO', 'CORREO', 'cedula_clean']], 
+                        left_on='nit_clean', 
+                        right_on='cedula_clean', 
+                        how='left'
+                    )
+                    
+                    # Flag para identificar empleados
+                    df_proc['es_empleado'] = df_proc['cedula_clean'].notna()
+                    
+                    # Renombrar columnas de empleado para evitar confusión
+                    df_proc.rename(columns={
+                        'TELEFONO': 'tel_empleado',
+                        'CORREO': 'email_empleado',
+                        'NOMBRE': 'nombre_empleado_db'
+                    }, inplace=True)
+                    
+                    msg_empleados = " + 👷 Empleados vinculados"
+                else:
+                    df_proc['es_empleado'] = False
+                    msg_empleados = " (⚠️ Archivo empleados sin col CEDULA)"
+
+            except Exception as e_emp:
+                df_proc['es_empleado'] = False
+                msg_empleados = f" (⚠️ No se cargó empleados: {str(e_emp)})"
+
             
-        return df_proc, f"Conectado a la fuente principal: **Dropbox ({metadata.name})**"
+        return df_proc, f"Conectado: **Dropbox ({metadata_c.name})**{msg_empleados}"
             
     except toml.TomlDecodeError:
         return None, "Error: Credenciales no configuradas en secrets.toml"
@@ -297,7 +350,7 @@ def generar_analisis_cartera(kpis: dict):
     return "<ul>" + "".join(comentarios) + "</ul>"
 
 def generar_link_wa(telefono, cliente, saldo_vencido, dias_max, nit, cod_cliente):
-    """Genera el link de WhatsApp con mensaje pre-cargado."""
+    """Genera el link de WhatsApp con mensaje pre-cargado CLIENTES."""
     tel = re.sub(r'\D', '', str(telefono))
     # Ajuste para números Colombia sin el 57 o con el 3 inicial
     if len(tel) == 10 and tel.startswith('3'): tel = '57' + tel 
@@ -330,6 +383,23 @@ def generar_link_wa(telefono, cliente, saldo_vencido, dias_max, nit, cod_cliente
             f"Por favor confirmar fecha de pago."
         )
             
+    return f"https://wa.me/{tel}?text={quote(msg)}"
+
+def generar_link_wa_empleado(telefono, nombre_empleado, saldo_total, monto_descuento):
+    """Genera link WhatsApp específico para NÓMINA DE EMPLEADOS."""
+    tel = re.sub(r'\D', '', str(telefono))
+    if len(tel) == 10 and tel.startswith('3'): tel = '57' + tel
+    if len(tel) < 10: return None
+    
+    nombre_corto = str(nombre_empleado).split()[0].title()
+    
+    msg = (
+        f"👷 Hola {nombre_corto}, te informamos de Contabilidad Ferreinox.\n\n"
+        f"Actualmente tienes facturas pendientes en cartera por un total de: *${saldo_total:,.0f}*.\n\n"
+        f"⚠️ Se ha programado un descuento de nómina para esta quincena por valor de: *${monto_descuento:,.0f}*.\n\n"
+        f"Si tienes dudas, por favor acércate a cartera. ¡Gracias!"
+    )
+    
     return f"https://wa.me/{tel}?text={quote(msg)}"
 
 # ======================================================================================
@@ -519,15 +589,14 @@ def crear_excel_gerencial(df, total, vencido, pct_mora, clientes_mora, csi, anti
 
 def crear_excel_cobranza_vencida(df):
     """
-    NUEVA FUNCIÓN: Genera un Excel conciso y gerencial solo con la cartera vencida para gestión.
-    Diseñado para ser claro, directo y profesional.
+    Genera un Excel conciso y gerencial solo con la cartera vencida para gestión.
     """
     wb = Workbook()
     ws = wb.active
     ws.title = "Gestión Mora"
     
     # 1. Preparar Colores (Sin # para OpenPyXL)
-    c_primario = COLOR_PRIMARIO.replace("#", "")     # Rojo
+    c_primario = COLOR_PRIMARIO.replace("#", "")      # Rojo
     c_fondo_suave = COLOR_FONDO_CLARO.replace("#", "") # Crema
     c_blanco = "FFFFFF"
     
@@ -541,15 +610,14 @@ def crear_excel_cobranza_vencida(df):
     fill_zebra = PatternFill("solid", fgColor=c_fondo_suave)
     
     border_thin = Border(left=Side(style='thin', color="DDDDDD"), 
-                         right=Side(style='thin', color="DDDDDD"), 
-                         top=Side(style='thin', color="DDDDDD"), 
-                         bottom=Side(style='thin', color="DDDDDD"))
+                           right=Side(style='thin', color="DDDDDD"), 
+                           top=Side(style='thin', color="DDDDDD"), 
+                           bottom=Side(style='thin', color="DDDDDD"))
 
     # 3. Filtrar Data (Solo Vencidos)
     df_vencidos = df[df['dias_vencido'] > 0].copy()
     
     # Seleccionar columnas clave y ordenar
-    # Ordenamos por Cliente y luego por Días de Mora (Descendente)
     cols_export = ['nombrecliente', 'nit', 'telefono1', 'numero', 'fecha_vencimiento', 'dias_vencido', 'importe']
     df_export = df_vencidos[cols_export].sort_values(by=['nombrecliente', 'dias_vencido'], ascending=[True, False])
     
@@ -612,12 +680,7 @@ def crear_excel_cobranza_vencida(df):
             if col_idx == 6: # Días Mora (Centrar)
                 cell.alignment = Alignment(horizontal='center')
 
-            # Zebra Striping (Color crema suave para alternar visualmente por cliente no es necesario,
-            # pero podemos resaltar filas críticas).
-            # Vamos a resaltar filas con mora > 60 días
             if row['dias_vencido'] > 60:
-                 # Un rojo muy muy pálido para alerta visual suave si se desea, 
-                 # pero mantendremos el estilo limpio solicitado.
                  pass
 
         current_row += 1
@@ -848,12 +911,12 @@ def main():
         
     st.divider()
     
-    # TABS
-    tab1, tab2, tab3 = st.tabs(["📞 GESTIÓN 1 a 1", "📊 ESTRATEGIA", "📥 DATA & REPORTES"])
+    # TABS (AÑADIDA TAB 4: EMPLEADOS)
+    tab1, tab2, tab3, tab4 = st.tabs(["📞 GESTIÓN 1 a 1", "📊 ESTRATEGIA", "📥 DATA & REPORTES", "👷 EMPLEADOS"])
     
     # --- TAB 1: GESTIÓN ---
     with tab1:
-        # ---- NUEVO BOTÓN DE EXCEL GERENCIAL SOLO MORA ----
+        # ---- BOTÓN DE EXCEL GERENCIAL SOLO MORA ----
         col_header_1, col_header_2 = st.columns([3, 1])
         with col_header_1:
             st.subheader("🎯 Gestión de Cobro Directo")
@@ -911,14 +974,11 @@ def main():
                     st.caption("Verifica el número antes de enviar:")
                     
                     # --- LÓGICA DE WA EDITABLE ---
-                    # 1. Obtenemos el numero de la base de datos y lo limpiamos
                     raw_tel = str(dat['tel']) if pd.notna(dat['tel']) else ""
                     raw_tel = re.sub(r'\D', '', raw_tel) # Solo dejar dígitos
                     
-                    # 2. Casilla editable para el usuario
                     telefono_destino = st.text_input("📱 Celular (Editable):", value=raw_tel, max_chars=15, help="Puedes escribir cualquier número aquí.")
                     
-                    # 3. Generar link basado en lo que está en la casilla (no solo DB)
                     if telefono_destino:
                         wa_link = generar_link_wa(telefono_destino, sel_cli, dat['vencido'], dat['dias_max'], dat['nit'], dat['cod'])
                         
@@ -1003,7 +1063,7 @@ def main():
     # --- TAB 3: DATA ---
     with tab3:
         st.subheader("📥 Exportación")
-        excel_bytes = crear_excel_gerencial(df_view, total, vencido, pct, cli_mora, csi, ant_prom)
+        excel_bytes = crear_excel_gerencial(df_view, total, vencido, pct, cli_mora, csi, antiguedad_prom_vencida)
         
         st.download_button(
             "💾 Descargar Reporte Gerencial (Excel)", 
@@ -1015,6 +1075,104 @@ def main():
         
         st.subheader("Datos Crudos")
         st.dataframe(df_view, height=300)
+
+    # --- TAB 4: EMPLEADOS (NUEVA PESTAÑA) ---
+    with tab4:
+        st.markdown("## 👷 Gestión de Cobro a Empleados")
+        st.markdown("Este módulo cruza la cartera activa con la base de datos de empleados para gestionar descuentos de nómina.")
+        
+        # Filtrar solo empleados que tengan saldo > 0
+        df_emps = df[df['es_empleado'] == True].copy()
+        
+        if df_emps.empty:
+            st.info("ℹ️ No se encontraron empleados con cartera pendiente en este momento.")
+        else:
+            # Agrupar por empleado
+            grp_emps = df_emps.groupby('nombre_empleado_db').agg(
+                Cedula=('cedula_clean', 'first'),
+                Total_Deuda=('importe', 'sum'),
+                Telefono=('tel_empleado', 'first'),
+                Email=('email_empleado', 'first'),
+                Cant_Facturas=('numero', 'count')
+            ).reset_index()
+            
+            # Filtrar solo los que deben algo (saldo > 0)
+            grp_emps = grp_emps[grp_emps['Total_Deuda'] > 0].sort_values('Total_Deuda', ascending=False)
+            
+            if grp_emps.empty:
+                st.success("✅ ¡Excelente! Todos los empleados identificados están Paz y Salvo.")
+            else:
+                col_izq, col_der = st.columns([1, 2])
+                
+                with col_izq:
+                    st.subheader("👤 Seleccionar Empleado")
+                    sel_empleado = st.selectbox("Lista de Empleados con Deuda:", grp_emps['nombre_empleado_db'].tolist())
+                    
+                    if sel_empleado:
+                        data_emp = grp_emps[grp_emps['nombre_empleado_db'] == sel_empleado].iloc[0]
+                        
+                        st.markdown(f"""
+                        <div style="background-color:{COLOR_FONDO_CLARO}; padding:15px; border-radius:10px; border-left:5px solid {COLOR_PRIMARIO}">
+                            <h3 style="margin:0; color:{COLOR_PRIMARIO}">{sel_empleado}</h3>
+                            <p><strong>CC:</strong> {data_emp['Cedula']}</p>
+                            <p><strong>Deuda Total:</strong> <span style="font-size:1.2em; font-weight:bold">${data_emp['Total_Deuda']:,.0f}</span></p>
+                            <p><strong>Facturas Pendientes:</strong> {data_emp['Cant_Facturas']}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        st.divider()
+                        st.markdown("### 💸 Programar Descuento")
+                        
+                        # Input para valor a descontar
+                        monto_descuento = st.number_input(
+                            "Valor a descontar en quincena ($):", 
+                            min_value=0.0, 
+                            max_value=float(data_emp['Total_Deuda']), 
+                            value=float(data_emp['Total_Deuda']),
+                            step=1000.0,
+                            format="%.0f"
+                        )
+                        
+                        # Generación de Link WhatsApp
+                        tel_emp_raw = str(data_emp['Telefono']) if pd.notna(data_emp['Telefono']) else ""
+                        tel_emp_clean = re.sub(r'\D', '', tel_emp_raw)
+                        
+                        telefono_final = st.text_input("Confirmar Celular:", value=tel_emp_clean)
+                        
+                        if st.button("Generar Mensaje Nómina", type="primary"):
+                            if monto_descuento > 0 and telefono_final:
+                                link_wa_emp = generar_link_wa_empleado(
+                                    telefono_final, 
+                                    sel_empleado, 
+                                    data_emp['Total_Deuda'], 
+                                    monto_descuento
+                                )
+                                if link_wa_emp:
+                                    st.markdown(f"""
+                                    <a href='{link_wa_emp}' target='_blank' class='wa-link'>
+                                    📤 Enviar Notificación de Descuento
+                                    </a>
+                                    """, unsafe_allow_html=True)
+                                else:
+                                    st.error("Número de teléfono inválido.")
+                            else:
+                                st.warning("Verifica el monto y el teléfono.")
+
+                with col_der:
+                    st.subheader("📄 Detalle de Facturas")
+                    detalles_emp = df_emps[df_emps['nombre_empleado_db'] == sel_empleado][
+                        ['numero', 'fecha_documento', 'fecha_vencimiento', 'dias_vencido', 'importe']
+                    ].sort_values('dias_vencido', ascending=False)
+                    
+                    st.dataframe(
+                        detalles_emp.style.format({
+                            'importe': '${:,.0f}', 
+                            'fecha_documento': '{:%Y-%m-%d}',
+                            'fecha_vencimiento': '{:%Y-%m-%d}'
+                        }), 
+                        use_container_width=True,
+                        hide_index=True
+                    )
 
 if __name__ == "__main__":
     main()
