@@ -839,12 +839,12 @@ def crear_excel_empleados_detallado(df):
     row += 1
     ws.merge_cells(f'B{row}:E{row}')
     c_gran_lbl = ws.cell(row=row, column=2, value="GRAN TOTAL CARTERA EMPLEADOS")
-    c_gran_lbl.font = Font(name='Calibri', size=14, bold=True, color=c_white)
+    c_gran_lbl.font = Font(name='Calibri', size=14, bold=True, color=c_blanco)
     c_gran_lbl.fill = PatternFill("solid", fgColor=c_negro)
     c_gran_lbl.alignment = Alignment(horizontal='right')
     
     c_gran_val = ws.cell(row=row, column=6, value=grand_total)
-    c_gran_val.font = Font(name='Calibri', size=14, bold=True, color=c_white)
+    c_gran_val.font = Font(name='Calibri', size=14, bold=True, color=c_blanco)
     c_gran_val.fill = PatternFill("solid", fgColor=c_negro)
     c_gran_val.number_format = '"$"#,##0'
     
