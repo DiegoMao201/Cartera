@@ -897,7 +897,7 @@ def main():
     st.title("🛡️ Centro de Mando: Cobranza PRO")
     
     # KPIs
-    total, vencido, pct, cli_mora, csi, ant_prom = calcular_kpis(df_view)
+    total, vencido, pct, cli_mora, csi, antiguedad_prom_vencida = calcular_kpis(df_view)
     
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Cartera Total", f"${total:,.0f}")
@@ -907,7 +907,7 @@ def main():
     c5.metric("CSI (Severidad)", f"{csi:.1f}")
     
     with st.expander("🤖 Análisis IA", expanded=(pct > 15)):
-        st.markdown(generar_analisis_cartera({'porcentaje_vencido': pct, 'antiguedad_prom_vencida': ant_prom, 'csi': csi}), unsafe_allow_html=True)
+        st.markdown(generar_analisis_cartera({'porcentaje_vencido': pct, 'antiguedad_prom_vencida': antiguedad_prom_vencida, 'csi': csi}), unsafe_allow_html=True)
         
     st.divider()
     
