@@ -1066,7 +1066,7 @@ def main():
     with tab3:
         st.subheader("📥 Exportación")
         # CORRECCIÓN: Ahora pasamos 'antiguedad_prom_vencida' correctamente definida
-        excel_bytes = crear_excel_gerencial(df_view, total, vencido, pct, cli_mora, csi, ant_prom)
+        excel_bytes = crear_excel_gerencial(df_view, total, vencido, pct, cli_mora, csi, antiguedad_prom_vencida)
         
         st.download_button(
             "💾 Descargar Reporte Gerencial (Excel)", 
