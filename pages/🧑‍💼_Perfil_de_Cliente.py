@@ -1,9 +1,9 @@
 # ======================================================================================
-# ARCHIVO: Tablero_Comando_Ferreinox_PRO.py (v.FINAL DEFINITIVA - CORRECCIÓN VARIABLE)
+# ARCHIVO: Tablero_Comando_Ferreinox_PRO.py (v.FINAL DEFINITIVA - CORRECCIÓN VARIABLE + EXCEL NÓMINA)
 # Descripción: Panel de Control de Cartera PRO.
 #              - Solución Error: Unificación de variable 'antiguedad_prom_vencida' en todo el script.
 #              - Reporte Excel Gerencial de Solo Mora en Tab 1.
-#              - Pestaña "Empleados" (Cruce con Excel Dropbox + Msj Nómina)
+#              - Pestaña "Empleados": Cruce con Excel Dropbox + Msj Nómina + NUEVO EXCEL SUBTALIZADO
 # ======================================================================================
 import streamlit as st
 import pandas as pd
@@ -597,7 +597,7 @@ def crear_excel_cobranza_vencida(df):
     ws.title = "Gestión Mora"
     
     # 1. Preparar Colores (Sin # para OpenPyXL)
-    c_primario = COLOR_PRIMARIO.replace("#", "")      # Rojo
+    c_primario = COLOR_PRIMARIO.replace("#", "")       # Rojo
     c_fondo_suave = COLOR_FONDO_CLARO.replace("#", "") # Crema
     c_blanco = "FFFFFF"
     
@@ -694,6 +694,161 @@ def crear_excel_cobranza_vencida(df):
     # Filtros Automáticos
     ws.auto_filter.ref = f"A{start_row}:{get_column_letter(len(headers))}{current_row-1}"
     
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue()
+
+
+# ======================================================================================
+# *** NUEVA FUNCIÓN AÑADIDA: EXCEL EMPLEADOS DETALLADO ***
+# ======================================================================================
+def crear_excel_empleados_detallado(df):
+    """
+    Genera un Excel profesional agrupado por Empleado, con subtotales.
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Deuda Empleados"
+
+    # Preparar Colores y Estilos
+    c_primario = COLOR_PRIMARIO.replace("#", "")
+    c_secundario = COLOR_SECUNDARIO.replace("#", "")
+    c_fondo_claro = COLOR_FONDO_CLARO.replace("#", "")
+    c_blanco = "FFFFFF"
+    c_negro = "000000"
+
+    # Estilos
+    font_titulo = Font(name='Calibri', size=16, bold=True, color=c_primario)
+    font_subtitulo = Font(name='Calibri', size=11, italic=True, color="666666")
+    
+    # Estilo Header de Empleado (Grupo)
+    font_grupo = Font(name='Calibri', size=12, bold=True, color=c_blanco)
+    fill_grupo = PatternFill("solid", fgColor=c_primario)
+    
+    # Estilo Encabezados de Columnas Detalle
+    font_head_det = Font(name='Calibri', size=10, bold=True, color=c_negro)
+    fill_head_det = PatternFill("solid", fgColor=c_fondo_claro)
+    
+    # Estilo Cuerpo
+    font_body = Font(name='Calibri', size=10)
+    
+    # Estilo Subtotal
+    font_subtotal = Font(name='Calibri', size=11, bold=True, color=c_primario)
+    border_top_thick = Border(top=Side(style='medium', color=c_primario))
+
+    # --- Filtrar Data ---
+    # Solo empleados y solo con saldo > 0
+    df_e = df[(df['es_empleado'] == True) & (df['importe'] > 0)].copy()
+    
+    # Ordenar por Nombre Empleado para que el agrupamiento funcione visualmente
+    df_e = df_e.sort_values(by=['nombre_empleado_db', 'dias_vencido'], ascending=[True, False])
+
+    # --- Construcción del Excel ---
+    
+    # 1. Título General
+    ws['A1'] = "REPORTE DETALLADO DE DESCUENTOS DE NÓMINA - FERREINOX"
+    ws['A1'].font = font_titulo
+    ws.merge_cells('A1:F1')
+    ws['A1'].alignment = Alignment(horizontal='center')
+    
+    ws['A2'] = f"Fecha de Corte: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    ws['A2'].font = font_subtitulo
+    ws.merge_cells('A2:F2')
+    ws['A2'].alignment = Alignment(horizontal='center')
+
+    # Configuración de Columnas
+    # Columnas: [A: Spacer, B: Factura, C: Fecha Venc, D: Dias Mora, E: Observación, F: Saldo]
+    ws.column_dimensions['A'].width = 3   # Margen
+    ws.column_dimensions['B'].width = 15  # Factura
+    ws.column_dimensions['C'].width = 15  # Fecha
+    ws.column_dimensions['D'].width = 12  # Días
+    ws.column_dimensions['E'].width = 30  # Info Extra (Vendedor/Zona)
+    ws.column_dimensions['F'].width = 18  # Importe
+    
+    row = 4
+    grand_total = 0
+
+    # Iterar por cada grupo de empleado
+    # Usamos groupby de pandas
+    for nombre_empleado, grupo in df_e.groupby('nombre_empleado_db'):
+        
+        # Datos del empleado (tomamos el primero del grupo)
+        cedula = grupo['cedula_clean'].iloc[0]
+        
+        # --- Cabecera del Empleado ---
+        ws.merge_cells(f'B{row}:F{row}')
+        cell_header = ws.cell(row=row, column=2)
+        cell_header.value = f"👤 {nombre_empleado}  |  CC: {cedula}"
+        cell_header.fill = fill_grupo
+        cell_header.font = font_grupo
+        cell_header.alignment = Alignment(vertical='center')
+        ws.row_dimensions[row].height = 20
+        row += 1
+        
+        # --- Encabezados de la tabla interna ---
+        headers = ["No. Factura", "Fecha Venc.", "Días Mora", "Vendedor / Zona", "Saldo Pendiente"]
+        for i, h in enumerate(headers, start=2):
+            c = ws.cell(row=row, column=i, value=h)
+            c.fill = fill_head_det
+            c.font = font_head_det
+            c.alignment = Alignment(horizontal='center')
+        row += 1
+        
+        # --- Filas de Detalle ---
+        subtotal_empleado = 0
+        for _, item in grupo.iterrows():
+            # Factura
+            ws.cell(row=row, column=2, value=item['numero']).font = font_body
+            ws.cell(row=row, column=2).alignment = Alignment(horizontal='center')
+            
+            # Fecha
+            f_venc = item['fecha_vencimiento'].strftime('%Y-%m-%d') if pd.notna(item['fecha_vencimiento']) else "-"
+            ws.cell(row=row, column=3, value=f_venc).font = font_body
+            ws.cell(row=row, column=3).alignment = Alignment(horizontal='center')
+            
+            # Dias
+            ws.cell(row=row, column=4, value=item['dias_vencido']).font = font_body
+            ws.cell(row=row, column=4).alignment = Alignment(horizontal='center')
+            
+            # Info Extra
+            info = f"{str(item['nomvendedor_norm']).title()} - {item['zona']}"
+            ws.cell(row=row, column=5, value=info).font = font_body
+            
+            # Importe
+            val = item['importe']
+            subtotal_empleado += val
+            c_val = ws.cell(row=row, column=6, value=val)
+            c_val.number_format = '"$"#,##0'
+            c_val.font = font_body
+            
+            row += 1
+            
+        # --- Pie del Grupo (Subtotal) ---
+        ws.cell(row=row, column=5, value="TOTAL A PAGAR:").font = font_subtotal
+        ws.cell(row=row, column=5).alignment = Alignment(horizontal='right')
+        
+        c_sub = ws.cell(row=row, column=6, value=subtotal_empleado)
+        c_sub.font = font_subtotal
+        c_sub.number_format = '"$"#,##0'
+        c_sub.border = border_top_thick
+        
+        grand_total += subtotal_empleado
+        row += 2 # Espacio entre empleados
+
+    # --- Total General Final ---
+    row += 1
+    ws.merge_cells(f'B{row}:E{row}')
+    c_gran_lbl = ws.cell(row=row, column=2, value="GRAN TOTAL CARTERA EMPLEADOS")
+    c_gran_lbl.font = Font(name='Calibri', size=14, bold=True, color=c_white)
+    c_gran_lbl.fill = PatternFill("solid", fgColor=c_negro)
+    c_gran_lbl.alignment = Alignment(horizontal='right')
+    
+    c_gran_val = ws.cell(row=row, column=6, value=grand_total)
+    c_gran_val.font = Font(name='Calibri', size=14, bold=True, color=c_white)
+    c_gran_val.fill = PatternFill("solid", fgColor=c_negro)
+    c_gran_val.number_format = '"$"#,##0'
+    
+    # Retornar Bytes
     output = io.BytesIO()
     wb.save(output)
     return output.getvalue()
@@ -1079,11 +1234,27 @@ def main():
         st.subheader("Datos Crudos")
         st.dataframe(df_view, height=300)
 
-    # --- TAB 4: EMPLEADOS (NUEVA PESTAÑA) ---
+    # --- TAB 4: EMPLEADOS (CON EXCEL DE NÓMINA INTEGRADO) ---
     with tab4:
-        st.markdown("## 👷 Gestión de Cobro a Empleados")
-        st.markdown("Este módulo cruza la cartera activa con la base de datos de empleados para gestionar descuentos de nómina.")
+        # Título y Botón de Descarga alineados
+        col_t4_1, col_t4_2 = st.columns([3, 1])
+        with col_t4_1:
+            st.markdown("## 👷 Gestión de Cobro a Empleados")
+            st.markdown("Este módulo cruza la cartera activa con la base de datos de empleados para gestionar descuentos de nómina.")
+        with col_t4_2:
+            st.write("") # Espaciador
+            # --- NUEVO BOTÓN PARA DESCARGAR EL EXCEL DE EMPLEADOS ---
+            excel_empleados_bytes = crear_excel_empleados_detallado(df)
+            st.download_button(
+                label="💾 Descargar Reporte Nómina (Excel)",
+                data=excel_empleados_bytes,
+                file_name=f"Reporte_Nomina_Empleados_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="btn_descarga_nomina"
+            )
         
+        st.divider()
+
         # Filtrar solo empleados que tengan saldo > 0
         df_emps = df[df['es_empleado'] == True].copy()
         
