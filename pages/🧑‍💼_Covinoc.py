@@ -461,6 +461,276 @@ def to_excel_clientes_revision(df_resumen: pd.DataFrame) -> bytes:
         
     return output.getvalue()
 
+def primer_valor_no_vacio(serie: pd.Series):
+    valores = [valor for valor in serie if pd.notna(valor) and str(valor).strip()]
+    return valores[0] if valores else ""
+
+def unir_valores_unicos(serie: pd.Series) -> str:
+    valores = sorted({str(valor).strip() for valor in serie if pd.notna(valor) and str(valor).strip()})
+    return ' | '.join(valores)
+
+def es_fau_digital_faltante(valor) -> bool:
+    if pd.isna(valor):
+        return True
+    valor_norm = normalizar_nombre(str(valor)).replace(' ', '')
+    return valor_norm in {'', 'NO', 'N', '0', 'SIN', 'NOAPLICA', 'NA', 'N/A', 'NULL', 'NONE', 'FALSE', 'PENDIENTE', 'FALTA'}
+
+def leer_reporte_cupos_excel(origen_excel) -> pd.DataFrame:
+    return pd.read_excel(
+        origen_excel,
+        dtype={
+            'TIPO_DOCUMENTO': str,
+            'DOCUMENTO': str,
+            'FAU_DIGITAL': str,
+            'PAGARE_DIGITAL': str,
+            'USUARIO_SOLICITA': str,
+            'USUARIO_GESTION': str,
+            'SUCURSAL': str
+        }
+    )
+
+@st.cache_data(ttl=600)
+def cargar_reporte_cupos_local():
+    rutas_encontradas = []
+    directorios_busqueda = [
+        os.getcwd(),
+        os.path.dirname(os.path.abspath(__file__)),
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    ]
+    patrones = ['reporteCupos*.xlsx', 'reporteCupos*.xls', 'ReporteCupos*.xlsx', 'ReporteCupos*.xls']
+
+    for directorio in directorios_busqueda:
+        for patron in patrones:
+            rutas_encontradas.extend(glob.glob(os.path.join(directorio, patron)))
+
+    rutas_unicas = []
+    for ruta in rutas_encontradas:
+        if ruta not in rutas_unicas:
+            rutas_unicas.append(ruta)
+
+    for ruta in rutas_unicas:
+        try:
+            return leer_reporte_cupos_excel(ruta), ruta, ""
+        except Exception:
+            continue
+
+    return pd.DataFrame(), "", ""
+
+@st.cache_data(ttl=600)
+def cargar_reporte_cupos_dropbox():
+    try:
+        APP_KEY = st.secrets['dropbox']['app_key']
+        APP_SECRET = st.secrets['dropbox']['app_secret']
+        REFRESH_TOKEN = st.secrets['dropbox']['refresh_token']
+
+        rutas_candidatas = [
+            '/data/reporteCupos.xlsx',
+            '/data/reportecupos.xlsx',
+            '/reporteCupos.xlsx',
+            '/data/reporteCupos.xls',
+            '/reporteCupos.xls'
+        ]
+
+        with dropbox.Dropbox(app_key=APP_KEY, app_secret=APP_SECRET, oauth2_refresh_token=REFRESH_TOKEN) as dbx:
+            for ruta in rutas_candidatas:
+                try:
+                    _, res = dbx.files_download(path=ruta)
+                    return leer_reporte_cupos_excel(BytesIO(res.content)), ruta, ""
+                except Exception:
+                    continue
+
+        return pd.DataFrame(), "", "No se encontró 'reporteCupos' en las rutas esperadas de Dropbox."
+    except Exception as e:
+        return pd.DataFrame(), "", f"Error al buscar 'reporteCupos' en Dropbox: {e}"
+
+def obtener_reporte_cupos_df(uploaded_file=None):
+    if uploaded_file is not None:
+        try:
+            return leer_reporte_cupos_excel(uploaded_file), 'Archivo cargado manualmente', ''
+        except Exception as e:
+            return pd.DataFrame(), '', f"No fue posible leer el archivo cargado: {e}"
+
+    df_local, ruta_local, error_local = cargar_reporte_cupos_local()
+    if not df_local.empty:
+        return df_local, f'Archivo local: {ruta_local}', ''
+
+    df_dropbox, ruta_dropbox, error_dropbox = cargar_reporte_cupos_dropbox()
+    if not df_dropbox.empty:
+        return df_dropbox, f'Dropbox: {ruta_dropbox}', ''
+
+    mensaje = error_dropbox or error_local or "No se encontró el archivo 'reporteCupos'."
+    return pd.DataFrame(), '', mensaje
+
+def preparar_reporte_cupos(df_reporte_cupos: pd.DataFrame) -> pd.DataFrame:
+    if df_reporte_cupos.empty:
+        return pd.DataFrame()
+
+    df = df_reporte_cupos.copy()
+    df.columns = [normalizar_nombre(c).lower().replace(' ', '_') for c in df.columns]
+
+    columnas_presentes = set(df.columns)
+    columnas_esenciales = ['documento', 'nombres', 'fau_digital']
+    columnas_faltantes = [col for col in columnas_esenciales if col not in columnas_presentes]
+    if columnas_faltantes:
+        raise ValueError(f"El archivo reporteCupos no contiene las columnas obligatorias: {', '.join(columnas_faltantes)}")
+
+    columnas_base = [
+        'tipo_documento', 'documento', 'nombres', 'estado', 'cupo_asignado', 'extracupo',
+        'cupo_disponible', 'alerta', 'fecha_apertura', 'usuario_solicita', 'tipo_firma',
+        'fau_digital', 'pagare_digital', 'usuario_gestion', 'sucursal'
+    ]
+    for columna in columnas_base:
+        if columna not in df.columns:
+            df[columna] = pd.NaT if columna == 'fecha_apertura' else ''
+
+    columnas_texto = [
+        'tipo_documento', 'documento', 'nombres', 'estado', 'alerta', 'usuario_solicita',
+        'tipo_firma', 'fau_digital', 'pagare_digital', 'usuario_gestion', 'sucursal'
+    ]
+    for columna in columnas_texto:
+        df[columna] = df[columna].fillna('').astype(str).str.strip()
+
+    for columna in ['cupo_asignado', 'extracupo', 'cupo_disponible']:
+        df[columna] = pd.to_numeric(df[columna], errors='coerce').fillna(0)
+
+    df['fecha_apertura'] = pd.to_datetime(df['fecha_apertura'], errors='coerce')
+    df['documento_norm'] = df['documento'].apply(normalizar_nit_simple)
+    df = df[df['documento_norm'] != ''].copy()
+    df['fau_digital_faltante'] = df['fau_digital'].apply(es_fau_digital_faltante)
+    return df
+
+def construir_reporte_fau_pendiente(df_cartera_full: pd.DataFrame, df_reporte_cupos: pd.DataFrame):
+    if df_cartera_full.empty or df_reporte_cupos.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    df_cartera = df_cartera_full.copy()
+    if 'nit_norm_cartera' not in df_cartera.columns:
+        df_cartera['nit_norm_cartera'] = df_cartera['nit'].apply(normalizar_nit_simple)
+
+    df_cartera['importe'] = pd.to_numeric(df_cartera['importe'], errors='coerce').fillna(0)
+    df_cartera['dias_vencido'] = pd.to_numeric(df_cartera['dias_vencido'], errors='coerce').fillna(0)
+    conteo_facturas_col = 'clave_unica' if 'clave_unica' in df_cartera.columns else 'numero'
+
+    df_cartera_resumen = df_cartera.groupby('nit_norm_cartera').agg(
+        nit=('nit', primer_valor_no_vacio),
+        cliente=('nombrecliente', primer_valor_no_vacio),
+        vendedor=('nomvendedor', primer_valor_no_vacio),
+        facturas_activas=(conteo_facturas_col, 'nunique'),
+        saldo_cartera=('importe', 'sum'),
+        max_dias_vencido=('dias_vencido', 'max'),
+        fecha_ultima_factura=('fecha_documento', 'max')
+    ).reset_index()
+
+    df_fau_faltante = df_reporte_cupos[df_reporte_cupos['fau_digital_faltante']].copy()
+    if df_fau_faltante.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    df_fau_resumen = df_fau_faltante.groupby('documento_norm').agg(
+        documento=('documento', primer_valor_no_vacio),
+        tipo_documento=('tipo_documento', primer_valor_no_vacio),
+        nombres_reporte=('nombres', primer_valor_no_vacio),
+        estado_cupo=('estado', unir_valores_unicos),
+        tipo_firma=('tipo_firma', unir_valores_unicos),
+        fau_digital=('fau_digital', unir_valores_unicos),
+        pagare_digital=('pagare_digital', unir_valores_unicos),
+        alerta=('alerta', unir_valores_unicos),
+        sucursal=('sucursal', unir_valores_unicos),
+        cupo_asignado=('cupo_asignado', 'max'),
+        extracupo=('extracupo', 'max'),
+        cupo_disponible=('cupo_disponible', 'max'),
+        fecha_apertura=('fecha_apertura', 'max'),
+        registros_reporte=('documento_norm', 'size')
+    ).reset_index()
+
+    df_relacionados = pd.merge(
+        df_cartera_resumen,
+        df_fau_resumen,
+        left_on='nit_norm_cartera',
+        right_on='documento_norm',
+        how='inner'
+    )
+
+    df_no_relacionados = df_fau_resumen[
+        ~df_fau_resumen['documento_norm'].isin(df_cartera_resumen['nit_norm_cartera'])
+    ].copy()
+
+    if df_relacionados.empty:
+        return pd.DataFrame(), df_no_relacionados
+
+    df_relacionados['cliente'] = df_relacionados['cliente'].where(
+        df_relacionados['cliente'].astype(str).str.strip() != '',
+        df_relacionados['nombres_reporte']
+    )
+    df_relacionados['vendedor'] = df_relacionados['vendedor'].fillna('').astype(str).str.strip().replace('', 'S/N')
+    df_relacionados['estado_cupo'] = df_relacionados['estado_cupo'].replace('', 'Sin estado reportado')
+    df_relacionados['tipo_firma'] = df_relacionados['tipo_firma'].replace('', 'Sin tipo de firma')
+    df_relacionados['alerta'] = df_relacionados['alerta'].replace('', 'Sin alerta')
+    df_relacionados['fau_digital'] = 'PENDIENTE / VACIO'
+    df_relacionados['vendedor_norm'] = df_relacionados['vendedor'].apply(normalizar_nombre)
+
+    columnas_finales = [
+        'vendedor', 'vendedor_norm', 'cliente', 'nit', 'documento', 'tipo_documento', 'estado_cupo',
+        'tipo_firma', 'fau_digital', 'pagare_digital', 'cupo_asignado', 'extracupo', 'cupo_disponible',
+        'saldo_cartera', 'facturas_activas', 'max_dias_vencido', 'fecha_ultima_factura', 'fecha_apertura',
+        'sucursal', 'alerta', 'registros_reporte'
+    ]
+    df_relacionados = df_relacionados[columnas_finales].copy()
+    df_relacionados.rename(columns={
+        'vendedor': 'Vendedor',
+        'vendedor_norm': 'vendedor_norm',
+        'cliente': 'Cliente',
+        'nit': 'NIT Cartera',
+        'documento': 'Documento Reporte',
+        'tipo_documento': 'Tipo Documento',
+        'estado_cupo': 'Estado Cupo',
+        'tipo_firma': 'Tipo Firma',
+        'fau_digital': 'FAU Digital',
+        'pagare_digital': 'Pagare Digital',
+        'cupo_asignado': 'Cupo Asignado',
+        'extracupo': 'Extracupo',
+        'cupo_disponible': 'Cupo Disponible',
+        'saldo_cartera': 'Saldo Cartera',
+        'facturas_activas': 'Facturas Activas',
+        'max_dias_vencido': 'Max Dias Vencido',
+        'fecha_ultima_factura': 'Fecha Ultima Factura',
+        'fecha_apertura': 'Fecha Apertura Cupo',
+        'sucursal': 'Sucursal',
+        'alerta': 'Alerta',
+        'registros_reporte': 'Registros Reporte'
+    }, inplace=True)
+
+    df_relacionados = df_relacionados.sort_values(by=['Vendedor', 'Cliente'], ascending=[True, True])
+    return df_relacionados, df_no_relacionados
+
+def to_excel_fau_pendiente(df_fau: pd.DataFrame) -> bytes:
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        sheet_name = 'FAU Pendiente'
+        df_fau.to_excel(writer, index=False, sheet_name=sheet_name)
+
+        workbook = writer.book
+        worksheet = writer.sheets[sheet_name]
+        header_format = workbook.add_format({'bold': True, 'text_wrap': True, 'valign': 'top', 'fg_color': '#B21917', 'font_color': '#FFFFFF', 'border': 1})
+        money_format = workbook.add_format({'num_format': '$ #,##0'})
+        date_format = workbook.add_format({'num_format': 'yyyy-mm-dd'})
+
+        for col_num, value in enumerate(df_fau.columns.values):
+            worksheet.write(0, col_num, value, header_format)
+            if value in ['Cliente', 'Sucursal', 'Alerta']:
+                worksheet.set_column(col_num, col_num, 28)
+            elif value in ['Vendedor', 'Estado Cupo', 'Tipo Firma']:
+                worksheet.set_column(col_num, col_num, 24)
+            elif value in ['Saldo Cartera', 'Cupo Asignado', 'Extracupo', 'Cupo Disponible']:
+                worksheet.set_column(col_num, col_num, 18, money_format)
+            elif value in ['Fecha Ultima Factura', 'Fecha Apertura Cupo']:
+                worksheet.set_column(col_num, col_num, 18, date_format)
+            else:
+                worksheet.set_column(col_num, col_num, 18)
+
+        worksheet.autofilter(0, 0, len(df_fau), len(df_fau.columns) - 1)
+
+    return output.getvalue()
+
 
 # ======================================================================================
 # --- NUEVA LÓGICA: GENERACIÓN DE DOCUMENTOS WORD PROFESIONALES (MEJORADO) ---
@@ -868,12 +1138,13 @@ def main():
         # --- Contenedor Principal con Pestañas ---
         st.markdown("---")
         
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
             f"1. Facturas a Subir ({len(df_a_subir)})", 
             f"2. Exoneraciones ({len(df_a_exonerar)})", 
             f"3. Avisos de No Pago ({len(df_aviso_no_pago)})",
             f"4. Reclamadas ({len(df_reclamadas)})",
-            f"5. Ajustes Parciales ({len(df_ajustes)})"
+            f"5. Ajustes Parciales ({len(df_ajustes)})",
+            "6. FAU Digital Pendiente"
         ])
 
         with tab1:
@@ -1503,6 +1774,131 @@ def main():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
                 disabled=df_ajustes.empty
             )
+
+        with tab6:
+            st.subheader("Clientes con FAU Digital Pendiente")
+            st.markdown("Cruce entre la **cartera actual** y el archivo **reporteCupos** para identificar, por vendedor, los clientes que aún no tienen **FAU_DIGITAL** diligenciado.")
+            st.info("Puede subir el archivo manualmente o dejar que el sistema lo busque automáticamente en el entorno local o en Dropbox.")
+
+            uploaded_reporte_cupos = st.file_uploader(
+                "Cargar reporteCupos",
+                type=['xlsx', 'xls'],
+                key='reporte_cupos_uploader',
+                help="Archivo de cupos con las columnas DOCUMENTO, NOMBRES y FAU_DIGITAL, entre otras."
+            )
+
+            df_reporte_cupos_raw, fuente_reporte_cupos, error_reporte_cupos = obtener_reporte_cupos_df(uploaded_reporte_cupos)
+
+            if fuente_reporte_cupos:
+                st.success(f"Fuente detectada: {fuente_reporte_cupos}")
+            elif error_reporte_cupos:
+                st.warning(error_reporte_cupos)
+
+            if df_reporte_cupos_raw.empty:
+                st.info("Cuando el archivo esté disponible, aquí se mostrará automáticamente la gestión por vendedor con los clientes que deben actualizar su FAU_DIGITAL.")
+            else:
+                try:
+                    df_reporte_cupos = preparar_reporte_cupos(df_reporte_cupos_raw)
+                    df_fau_pendiente, df_fau_no_relacionados = construir_reporte_fau_pendiente(df_cartera_full, df_reporte_cupos)
+                except ValueError as e:
+                    st.error(str(e))
+                    df_fau_pendiente = pd.DataFrame()
+                    df_fau_no_relacionados = pd.DataFrame()
+
+                if df_fau_pendiente.empty:
+                    st.warning("No se encontraron clientes de la cartera actual con FAU_DIGITAL pendiente en el archivo reporteCupos.")
+                    if not df_fau_no_relacionados.empty:
+                        st.caption(f"Clientes con FAU pendiente en reporteCupos pero sin cruce con cartera actual: {len(df_fau_no_relacionados)}")
+                else:
+                    if st.session_state.get('acceso_general', False):
+                        vendedores_fau = ['Todos'] + sorted(df_fau_pendiente['Vendedor'].dropna().unique().tolist())
+                        vendedor_seleccionado = st.selectbox(
+                            'Filtrar por vendedor:',
+                            options=vendedores_fau,
+                            index=0,
+                            key='filtro_vendedor_fau'
+                        )
+                        if vendedor_seleccionado == 'Todos':
+                            df_fau_visible = df_fau_pendiente.copy()
+                        else:
+                            df_fau_visible = df_fau_pendiente[df_fau_pendiente['Vendedor'] == vendedor_seleccionado].copy()
+                    else:
+                        vendedor_autenticado_norm = normalizar_nombre(st.session_state.get('vendedor_autenticado', ''))
+                        df_fau_visible = df_fau_pendiente[
+                            df_fau_pendiente['vendedor_norm'] == vendedor_autenticado_norm
+                        ].copy()
+                        st.caption(f"Vista filtrada para el vendedor autenticado: {st.session_state.get('vendedor_autenticado', 'S/N')}")
+
+                    if df_fau_visible.empty:
+                        st.warning("No hay clientes con FAU_DIGITAL pendiente para el filtro seleccionado.")
+                    else:
+                        st.markdown("---")
+                        st.subheader("Indicadores de Gestión")
+                        total_clientes_fau = df_fau_visible['Documento Reporte'].nunique()
+                        total_vendedores_fau = df_fau_visible['Vendedor'].nunique()
+                        saldo_cartera_fau = pd.to_numeric(df_fau_visible['Saldo Cartera'], errors='coerce').sum()
+                        cupo_disponible_fau = pd.to_numeric(df_fau_visible['Cupo Disponible'], errors='coerce').sum()
+
+                        kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
+                        kpi_col1.metric('Clientes Pendientes', f"{total_clientes_fau}")
+                        kpi_col2.metric('Vendedores Involucrados', f"{total_vendedores_fau}")
+                        kpi_col3.metric('Saldo Cartera Relacionado', f"${saldo_cartera_fau:,.0f}")
+                        kpi_col4.metric('Cupo Disponible Reporte', f"${cupo_disponible_fau:,.0f}")
+
+                        st.markdown("---")
+                        st.subheader("Resumen por Vendedor")
+                        df_resumen_vendedor = df_fau_visible.groupby('Vendedor').agg(
+                            Clientes_Pendientes=('Documento Reporte', 'nunique'),
+                            Saldo_Cartera=('Saldo Cartera', 'sum'),
+                            Cupo_Disponible=('Cupo Disponible', 'sum')
+                        ).reset_index().sort_values(by=['Clientes_Pendientes', 'Saldo_Cartera'], ascending=[False, False])
+
+                        st.dataframe(
+                            df_resumen_vendedor,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                'Saldo_Cartera': st.column_config.NumberColumn('Saldo Cartera', format='$ %d'),
+                                'Cupo_Disponible': st.column_config.NumberColumn('Cupo Disponible', format='$ %d')
+                            }
+                        )
+
+                        st.markdown("---")
+                        st.subheader("Detalle de Clientes por Vendedor")
+                        columnas_detalle_fau = [
+                            'Vendedor', 'Cliente', 'NIT Cartera', 'Documento Reporte', 'Estado Cupo', 'Tipo Firma',
+                            'FAU Digital', 'Pagare Digital', 'Cupo Asignado', 'Extracupo', 'Cupo Disponible',
+                            'Saldo Cartera', 'Facturas Activas', 'Max Dias Vencido', 'Sucursal', 'Alerta',
+                            'Fecha Ultima Factura', 'Fecha Apertura Cupo', 'Registros Reporte'
+                        ]
+                        columnas_visibles_fau = [col for col in columnas_detalle_fau if col in df_fau_visible.columns]
+
+                        st.dataframe(
+                            df_fau_visible[columnas_visibles_fau],
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                'Cupo Asignado': st.column_config.NumberColumn('Cupo Asignado', format='$ %d'),
+                                'Extracupo': st.column_config.NumberColumn('Extracupo', format='$ %d'),
+                                'Cupo Disponible': st.column_config.NumberColumn('Cupo Disponible', format='$ %d'),
+                                'Saldo Cartera': st.column_config.NumberColumn('Saldo Cartera', format='$ %d'),
+                                'Fecha Ultima Factura': st.column_config.DateColumn('Fecha Ultima Factura', format='YYYY-MM-DD'),
+                                'Fecha Apertura Cupo': st.column_config.DateColumn('Fecha Apertura Cupo', format='YYYY-MM-DD')
+                            }
+                        )
+
+                        excel_fau_pendiente = to_excel_fau_pendiente(df_fau_visible.drop(columns=['vendedor_norm'], errors='ignore'))
+                        st.download_button(
+                            label='📥 Descargar Reporte FAU Digital Pendiente',
+                            data=excel_fau_pendiente,
+                            file_name='6_fau_digital_pendiente.xlsx',
+                            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                            use_container_width=True
+                        )
+
+                    if not df_fau_no_relacionados.empty:
+                        with st.expander(f"Ver clientes con FAU pendiente que no cruzaron con cartera actual ({len(df_fau_no_relacionados)})"):
+                            st.dataframe(df_fau_no_relacionados, use_container_width=True, hide_index=True)
 
 
 if __name__ == '__main__':
