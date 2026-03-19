@@ -1871,15 +1871,16 @@ def main():
                         st.markdown("---")
                         st.subheader("Detalle de Clientes por Vendedor")
                         columnas_detalle_fau = [
-                            'Vendedor', 'Cliente', 'NIT Cartera', 'Documento Reporte', 'Estado Cupo', 'Tipo Firma',
+                            'Vendedor', 'Cliente', 'NIT Cartera', 'Documento Reporte', 'Tipo Documento', 'Estado Cupo', 'Tipo Firma',
                             'FAU Digital', 'Pagare Digital', 'Cupo Asignado', 'Extracupo', 'Cupo Disponible',
                             'Saldo Cartera', 'Facturas Activas', 'Max Dias Vencido', 'Sucursal', 'Alerta',
                             'Fecha Ultima Factura', 'Fecha Apertura Cupo', 'Registros Reporte'
                         ]
                         columnas_visibles_fau = [col for col in columnas_detalle_fau if col in df_fau_visible.columns]
 
+                        df_fau_export = df_fau_visible[columnas_visibles_fau].copy()
                         st.dataframe(
-                            df_fau_visible[columnas_visibles_fau],
+                            df_fau_export,
                             use_container_width=True,
                             hide_index=True,
                             column_config={
@@ -1892,7 +1893,8 @@ def main():
                             }
                         )
 
-                        excel_fau_pendiente = to_excel_fau_pendiente(df_fau_visible.drop(columns=['vendedor_norm'], errors='ignore'))
+                        # Exportar el Excel con todos los tipos de documento
+                        excel_fau_pendiente = to_excel_fau_pendiente(df_fau_export.drop(columns=['vendedor_norm'], errors='ignore'))
                         st.download_button(
                             label='📥 Descargar Reporte FAU Digital Pendiente',
                             data=excel_fau_pendiente,
