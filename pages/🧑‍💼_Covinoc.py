@@ -595,8 +595,11 @@ def preparar_reporte_cupos(df_reporte_cupos: pd.DataFrame) -> pd.DataFrame:
 
     df['fecha_apertura'] = pd.to_datetime(df['fecha_apertura'], errors='coerce')
     df['documento_norm'] = df['documento'].apply(normalizar_nit_simple)
+    # Normalizar tipo_documento para mostrarlo y evitar errores de minúsculas/mayúsculas
+    df['tipo_documento_norm'] = df['tipo_documento'].str.upper().str.strip().replace({'NIT':'N','CEDULA':'C','CÉDULA':'C'})
     df = df[df['documento_norm'] != ''].copy()
     df['fau_digital_faltante'] = df['fau_digital'].apply(es_fau_digital_faltante)
+    # No filtrar por tipo_documento, incluir todos los tipos (C y N)
     return df
 
 def construir_reporte_fau_pendiente(df_cartera_full: pd.DataFrame, df_reporte_cupos: pd.DataFrame):
@@ -621,13 +624,15 @@ def construir_reporte_fau_pendiente(df_cartera_full: pd.DataFrame, df_reporte_cu
         fecha_ultima_factura=('fecha_documento', 'max')
     ).reset_index()
 
+    # Incluir todos los tipos de documento (C y N) que falten FAU
     df_fau_faltante = df_reporte_cupos[df_reporte_cupos['fau_digital_faltante']].copy()
+    # No filtrar por tipo_documento aquí, incluir todos los que falten FAU
     if df_fau_faltante.empty:
         return pd.DataFrame(), pd.DataFrame()
 
     df_fau_resumen = df_fau_faltante.groupby('documento_norm').agg(
         documento=('documento', primer_valor_no_vacio),
-        tipo_documento=('tipo_documento', primer_valor_no_vacio),
+        tipo_documento=('tipo_documento_norm', primer_valor_no_vacio),
         nombres_reporte=('nombres', primer_valor_no_vacio),
         estado_cupo=('estado', unir_valores_unicos),
         tipo_firma=('tipo_firma', unir_valores_unicos),
