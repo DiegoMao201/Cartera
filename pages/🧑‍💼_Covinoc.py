@@ -618,8 +618,19 @@ def construir_reporte_fau_pendiente(df_cartera_full: pd.DataFrame, df_reporte_cu
 
     df_cartera['importe'] = pd.to_numeric(df_cartera['importe'], errors='coerce').fillna(0)
     df_cartera['dias_vencido'] = pd.to_numeric(df_cartera['dias_vencido'], errors='coerce').fillna(0)
-    df_cartera['nit_base_cartera'] = df_cartera['nit_norm_cartera'].apply(obtener_nit_base)
     conteo_facturas_col = 'clave_unica' if 'clave_unica' in df_cartera.columns else 'numero'
+    set_nits_cartera = set(df_cartera['nit_norm_cartera'].dropna().unique())
+
+    def encontrar_nit_en_cartera_fau(doc_str_reporte):
+        if not isinstance(doc_str_reporte, str):
+            return None
+        doc_norm = normalizar_nit_simple(doc_str_reporte)
+        if doc_norm in set_nits_cartera:
+            return doc_norm
+        doc_norm_base = doc_norm[:-1]
+        if doc_norm_base in set_nits_cartera:
+            return doc_norm_base
+        return None
 
     df_cartera_resumen = df_cartera.groupby('nit_norm_cartera').agg(
         nit=('nit', primer_valor_no_vacio),
@@ -628,16 +639,15 @@ def construir_reporte_fau_pendiente(df_cartera_full: pd.DataFrame, df_reporte_cu
         facturas_activas=(conteo_facturas_col, 'nunique'),
         saldo_cartera=('importe', 'sum'),
         max_dias_vencido=('dias_vencido', 'max'),
-        fecha_ultima_factura=('fecha_documento', 'max'),
-        nit_base_cartera=('nit_base_cartera', primer_valor_no_vacio)
+        fecha_ultima_factura=('fecha_documento', 'max')
     ).reset_index()
 
     df_fau_faltante = df_reporte_cupos[df_reporte_cupos['fau_digital_faltante']].copy()
     if df_fau_faltante.empty:
         return pd.DataFrame(), pd.DataFrame()
 
-    df_fau_faltante['documento_base'] = df_fau_faltante['documento_norm'].apply(obtener_nit_base)
     df_fau_faltante['tipo_documento_norm'] = df_fau_faltante['tipo_documento_norm'].replace('', 'S/D')
+    df_fau_faltante['nit_norm_cartera'] = df_fau_faltante['documento'].apply(encontrar_nit_en_cartera_fau)
 
     df_fau_resumen = df_fau_faltante.groupby('documento_norm').agg(
         documento=('documento', primer_valor_no_vacio),
@@ -654,73 +664,43 @@ def construir_reporte_fau_pendiente(df_cartera_full: pd.DataFrame, df_reporte_cu
         cupo_disponible=('cupo_disponible', 'max'),
         fecha_apertura=('fecha_apertura', 'max'),
         registros_reporte=('documento_norm', 'size'),
-        documento_base=('documento_base', primer_valor_no_vacio),
-        usuario_solicita=('usuario_solicita', unir_valores_unicos),
-        usuario_gestion=('usuario_gestion', unir_valores_unicos)
+        nit_norm_cartera=('nit_norm_cartera', primer_valor_no_vacio)
     ).reset_index()
 
-    df_relacionados_exacto = pd.merge(
+    df_consolidado = pd.merge(
         df_fau_resumen,
         df_cartera_resumen,
-        left_on='documento_norm',
+        left_on='nit_norm_cartera',
         right_on='nit_norm_cartera',
         how='left'
     )
 
-    df_relacionados_ok = df_relacionados_exacto[df_relacionados_exacto['nit_norm_cartera'].notna()].copy()
-    df_pendientes = df_relacionados_exacto[df_relacionados_exacto['nit_norm_cartera'].isna()].copy()
-
-    df_cartera_base = df_cartera_resumen[
-        df_cartera_resumen['nit_base_cartera'].fillna('').astype(str).str.strip() != ''
-    ].copy().drop_duplicates(subset=['nit_base_cartera'])
-
-    df_pendientes_n = df_pendientes[df_pendientes['tipo_documento'].astype(str).str.upper() == 'N'].copy()
-    if not df_pendientes_n.empty:
-        df_relacionados_base = pd.merge(
-            df_pendientes_n.drop(columns=['nit', 'cliente', 'vendedor', 'facturas_activas', 'saldo_cartera', 'max_dias_vencido', 'fecha_ultima_factura', 'nit_norm_cartera', 'nit_base_cartera'], errors='ignore'),
-            df_cartera_base,
-            left_on='documento_base',
-            right_on='nit_base_cartera',
-            how='left'
-        )
-        df_relacionados_base = df_relacionados_base[df_relacionados_base['nit_norm_cartera'].notna()].copy()
-    else:
-        df_relacionados_base = pd.DataFrame(columns=df_relacionados_exacto.columns)
-
-    documentos_relacionados = set(df_relacionados_ok['documento_norm'].dropna().unique())
-    documentos_relacionados.update(df_relacionados_base['documento_norm'].dropna().unique())
-    df_no_relacionados = df_fau_resumen[~df_fau_resumen['documento_norm'].isin(documentos_relacionados)].copy()
-
-    df_relacionados = pd.concat([df_relacionados_ok, df_relacionados_base], ignore_index=True, sort=False)
-
-    if df_relacionados.empty:
-        df_no_relacionados['Vendedor'] = df_no_relacionados['usuario_gestion'].replace('', pd.NA).fillna(df_no_relacionados['usuario_solicita'].replace('', pd.NA)).fillna('S/N')
-        df_no_relacionados['vendedor_norm'] = df_no_relacionados['Vendedor'].apply(normalizar_nombre)
-        df_no_relacionados['Cliente'] = df_no_relacionados['nombres_reporte']
-        df_no_relacionados['Relacion Vendedor'] = 'Sin cruce con cartera actual'
-        return pd.DataFrame(), df_no_relacionados
-
-    df_relacionados['cliente'] = df_relacionados['cliente'].where(
-        df_relacionados['cliente'].astype(str).str.strip() != '',
-        df_relacionados['nombres_reporte']
+    df_consolidado['cliente'] = df_consolidado['cliente'].where(
+        df_consolidado['cliente'].astype(str).str.strip() != '',
+        df_consolidado['nombres_reporte']
     )
-    df_relacionados['vendedor'] = df_relacionados['vendedor'].fillna('').astype(str).str.strip().replace('', 'S/N')
-    df_relacionados['estado_cupo'] = df_relacionados['estado_cupo'].replace('', 'Sin estado reportado')
-    df_relacionados['tipo_firma'] = df_relacionados['tipo_firma'].replace('', 'Sin tipo de firma')
-    df_relacionados['alerta'] = df_relacionados['alerta'].replace('', 'Sin alerta')
-    df_relacionados['fau_digital'] = 'PENDIENTE / VACIO'
-    df_relacionados['vendedor_norm'] = df_relacionados['vendedor'].apply(normalizar_nombre)
-    df_relacionados['relacion_vendedor'] = 'Cartera actual'
-    df_relacionados.loc[df_relacionados['documento_norm'] != df_relacionados['nit_norm_cartera'], 'relacion_vendedor'] = 'Relacionado por NIT base'
+    df_consolidado['vendedor'] = df_consolidado['vendedor'].fillna('').astype(str).str.strip()
+    df_consolidado.loc[df_consolidado['vendedor'] == '', 'vendedor'] = 'GESTION INTERNA'
+    df_consolidado['estado_cupo'] = df_consolidado['estado_cupo'].replace('', 'Sin estado reportado')
+    df_consolidado['tipo_firma'] = df_consolidado['tipo_firma'].replace('', 'Sin tipo de firma')
+    df_consolidado['alerta'] = df_consolidado['alerta'].replace('', 'Sin alerta')
+    df_consolidado['fau_digital'] = 'PENDIENTE / VACIO'
+    df_consolidado['vendedor_norm'] = df_consolidado['vendedor'].apply(normalizar_nombre)
+    df_consolidado['relacion_vendedor'] = 'Cartera actual'
+    df_consolidado.loc[df_consolidado['nit'].isna(), 'relacion_vendedor'] = 'GESTION INTERNA'
+    df_consolidado['nit'] = df_consolidado['nit'].fillna('')
+    df_consolidado['saldo_cartera'] = pd.to_numeric(df_consolidado['saldo_cartera'], errors='coerce').fillna(0)
+    df_consolidado['facturas_activas'] = pd.to_numeric(df_consolidado['facturas_activas'], errors='coerce').fillna(0).astype(int)
+    df_consolidado['max_dias_vencido'] = pd.to_numeric(df_consolidado['max_dias_vencido'], errors='coerce').fillna(0).astype(int)
 
     columnas_finales = [
         'vendedor', 'vendedor_norm', 'cliente', 'nit', 'documento', 'tipo_documento', 'estado_cupo',
         'tipo_firma', 'fau_digital', 'pagare_digital', 'cupo_asignado', 'extracupo', 'cupo_disponible',
         'saldo_cartera', 'facturas_activas', 'max_dias_vencido', 'fecha_ultima_factura', 'fecha_apertura',
-        'sucursal', 'alerta', 'registros_reporte', 'usuario_solicita', 'usuario_gestion', 'relacion_vendedor'
+        'sucursal', 'alerta', 'registros_reporte', 'relacion_vendedor'
     ]
-    df_relacionados = df_relacionados[columnas_finales].copy()
-    df_relacionados.rename(columns={
+    df_consolidado = df_consolidado[columnas_finales].copy()
+    df_consolidado.rename(columns={
         'vendedor': 'Vendedor',
         'vendedor_norm': 'vendedor_norm',
         'cliente': 'Cliente',
@@ -742,43 +722,11 @@ def construir_reporte_fau_pendiente(df_cartera_full: pd.DataFrame, df_reporte_cu
         'sucursal': 'Sucursal',
         'alerta': 'Alerta',
         'registros_reporte': 'Registros Reporte',
-        'usuario_solicita': 'Usuario Solicita',
-        'usuario_gestion': 'Usuario Gestion',
         'relacion_vendedor': 'Relacion Vendedor'
     }, inplace=True)
 
-    df_no_relacionados['Vendedor'] = df_no_relacionados['usuario_gestion'].replace('', pd.NA).fillna(df_no_relacionados['usuario_solicita'].replace('', pd.NA)).fillna('S/N')
-    df_no_relacionados['vendedor_norm'] = df_no_relacionados['Vendedor'].apply(normalizar_nombre)
-    df_no_relacionados['Cliente'] = df_no_relacionados['nombres_reporte']
-    df_no_relacionados['NIT Cartera'] = ''
-    df_no_relacionados['Documento Reporte'] = df_no_relacionados['documento']
-    df_no_relacionados['Tipo Documento'] = df_no_relacionados['tipo_documento']
-    df_no_relacionados['Estado Cupo'] = df_no_relacionados['estado_cupo'].replace('', 'Sin estado reportado')
-    df_no_relacionados['Tipo Firma'] = df_no_relacionados['tipo_firma'].replace('', 'Sin tipo de firma')
-    df_no_relacionados['FAU Digital'] = 'PENDIENTE / VACIO'
-    df_no_relacionados['Pagare Digital'] = df_no_relacionados['pagare_digital']
-    df_no_relacionados['Cupo Asignado'] = df_no_relacionados['cupo_asignado']
-    df_no_relacionados['Extracupo'] = df_no_relacionados['extracupo']
-    df_no_relacionados['Cupo Disponible'] = df_no_relacionados['cupo_disponible']
-    df_no_relacionados['Saldo Cartera'] = 0
-    df_no_relacionados['Facturas Activas'] = 0
-    df_no_relacionados['Max Dias Vencido'] = 0
-    df_no_relacionados['Fecha Ultima Factura'] = pd.NaT
-    df_no_relacionados['Fecha Apertura Cupo'] = df_no_relacionados['fecha_apertura']
-    df_no_relacionados['Sucursal'] = df_no_relacionados['sucursal']
-    df_no_relacionados['Alerta'] = df_no_relacionados['alerta'].replace('', 'Sin alerta')
-    df_no_relacionados['Registros Reporte'] = df_no_relacionados['registros_reporte']
-    df_no_relacionados['Usuario Solicita'] = df_no_relacionados['usuario_solicita']
-    df_no_relacionados['Usuario Gestion'] = df_no_relacionados['usuario_gestion']
-    df_no_relacionados['Relacion Vendedor'] = 'Sin cruce con cartera actual'
-
-    columnas_no_relacionados = [
-        'Vendedor', 'vendedor_norm', 'Cliente', 'NIT Cartera', 'Documento Reporte', 'Tipo Documento', 'Estado Cupo',
-        'Tipo Firma', 'FAU Digital', 'Pagare Digital', 'Cupo Asignado', 'Extracupo', 'Cupo Disponible',
-        'Saldo Cartera', 'Facturas Activas', 'Max Dias Vencido', 'Fecha Ultima Factura', 'Fecha Apertura Cupo',
-        'Sucursal', 'Alerta', 'Registros Reporte', 'Usuario Solicita', 'Usuario Gestion', 'Relacion Vendedor'
-    ]
-    df_no_relacionados = df_no_relacionados[columnas_no_relacionados].copy()
+    df_relacionados = df_consolidado[df_consolidado['Relacion Vendedor'] != 'GESTION INTERNA'].copy()
+    df_no_relacionados = df_consolidado[df_consolidado['Relacion Vendedor'] == 'GESTION INTERNA'].copy()
 
     df_relacionados = df_relacionados.sort_values(by=['Vendedor', 'Cliente'], ascending=[True, True])
     df_no_relacionados = df_no_relacionados.sort_values(by=['Vendedor', 'Cliente'], ascending=[True, True])
@@ -1953,8 +1901,7 @@ def main():
                             'Vendedor', 'Cliente', 'NIT Cartera', 'Documento Reporte', 'Tipo Documento', 'Estado Cupo', 'Tipo Firma',
                             'FAU Digital', 'Pagare Digital', 'Cupo Asignado', 'Extracupo', 'Cupo Disponible',
                             'Saldo Cartera', 'Facturas Activas', 'Max Dias Vencido', 'Sucursal', 'Alerta',
-                            'Fecha Ultima Factura', 'Fecha Apertura Cupo', 'Registros Reporte', 'Usuario Solicita',
-                            'Usuario Gestion', 'Relacion Vendedor'
+                            'Fecha Ultima Factura', 'Fecha Apertura Cupo', 'Registros Reporte', 'Relacion Vendedor'
                         ]
                         columnas_visibles_fau = [col for col in columnas_detalle_fau if col in df_fau_visible.columns]
 
