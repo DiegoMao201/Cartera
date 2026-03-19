@@ -675,10 +675,10 @@ def construir_reporte_fau_pendiente(df_cartera_full: pd.DataFrame, df_reporte_cu
         how='left'
     )
 
-    df_consolidado['cliente'] = df_consolidado['cliente'].where(
-        df_consolidado['cliente'].astype(str).str.strip() != '',
-        df_consolidado['nombres_reporte']
-    )
+    df_consolidado['cliente'] = df_consolidado['cliente'].fillna('').astype(str).str.strip()
+    df_consolidado['nombres_reporte'] = df_consolidado['nombres_reporte'].fillna('').astype(str).str.strip()
+    df_consolidado.loc[df_consolidado['cliente'] == '', 'cliente'] = df_consolidado['nombres_reporte']
+    df_consolidado.loc[df_consolidado['cliente'] == '', 'cliente'] = 'CLIENTE SIN NOMBRE EN REPORTE'
     df_consolidado['vendedor'] = df_consolidado['vendedor'].fillna('').astype(str).str.strip()
     df_consolidado.loc[df_consolidado['vendedor'] == '', 'vendedor'] = 'GESTION INTERNA'
     df_consolidado['estado_cupo'] = df_consolidado['estado_cupo'].replace('', 'Sin estado reportado')
