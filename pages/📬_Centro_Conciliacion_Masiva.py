@@ -240,6 +240,34 @@ def obtener_columna_telefono(df: pd.DataFrame) -> str:
     return ""
 
 
+def asegurar_cliente_key(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df.copy()
+
+    base = df.copy()
+    if "nit_clean" not in base.columns:
+        if "nit" in base.columns:
+            base["nit_clean"] = base["nit"].apply(limpiar_nit)
+        else:
+            base["nit_clean"] = ""
+
+    if "cod_cliente" not in base.columns:
+        base["cod_cliente"] = 0
+
+    if "nombrecliente" not in base.columns:
+        base["nombrecliente"] = "CLIENTE SIN NOMBRE"
+
+    codigos = pd.to_numeric(base["cod_cliente"], errors="coerce").fillna(0).astype(int).astype(str)
+    base["cliente_key"] = (
+        base["nit_clean"].astype(str)
+        + "::"
+        + codigos
+        + "::"
+        + base["nombrecliente"].astype(str)
+    )
+    return base
+
+
 def procesar_dataframe_robusto(df_raw: pd.DataFrame) -> pd.DataFrame:
     df = df_raw.copy()
     df.columns = [normalizar_texto(c).lower().replace(' ', '_') for c in df.columns]
@@ -293,7 +321,7 @@ def procesar_dataframe_robusto(df_raw: pd.DataFrame) -> pd.DataFrame:
     labels = ["Al Dia", "1-15 dias", "16-30 dias", "31-60 dias", "61-90 dias", "+90 dias"]
     df["rango_mora"] = pd.cut(df["dias_vencido"], bins=bins, labels=labels, right=True)
     df = df[df["importe"] != 0].copy()
-    return df
+    return asegurar_cliente_key(df)
 
 
 @st.cache_data(ttl=600)
@@ -336,6 +364,8 @@ def construir_resumen_clientes(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
 
+    df = asegurar_cliente_key(df)
+
     email_col = obtener_columna_email(df)
     tel_col = obtener_columna_telefono(df)
     if not email_col:
@@ -353,14 +383,6 @@ def construir_resumen_clientes(df: pd.DataFrame) -> pd.DataFrame:
     base["telefono_normalizado"] = base[tel_col].astype(str).str.replace(r'\D', '', regex=True)
     base["importe_vencido"] = base["importe"].where(base["dias_vencido"] > 0, 0)
     base["documento_max_vencido"] = base["dias_vencido"].where(base["dias_vencido"] > 0, 0)
-    base["cliente_key"] = (
-        base["nit_clean"].astype(str)
-        + "::"
-        + base["cod_cliente"].fillna(0).astype(int).astype(str)
-        + "::"
-        + base["nombrecliente"].astype(str)
-    )
-
     resumen = base.groupby("cliente_key", dropna=False).agg(
         nombrecliente=("nombrecliente", "first"),
         nit=("nit", "first"),
@@ -1110,6 +1132,8 @@ def render_preview_tab(df_base: pd.DataFrame, resumen: pd.DataFrame, seleccionad
         st.info("No hay clientes disponibles para vista previa.")
         return
 
+    df_base = asegurar_cliente_key(df_base)
+
     opciones = universo["cliente_label"].tolist()
     cliente_label = st.selectbox("Cliente para vista previa", opciones, key="preview_cliente_conciliacion")
     estrategia = st.selectbox(
@@ -1221,6 +1245,8 @@ def render_preview_tab(df_base: pd.DataFrame, resumen: pd.DataFrame, seleccionad
 
 def render_envio_tab(df_base: pd.DataFrame, seleccionados: pd.DataFrame):
     st.markdown('<div class="section-title">Despacho masivo con SendGrid</div>', unsafe_allow_html=True)
+
+    df_base = asegurar_cliente_key(df_base)
 
     if "sendgrid" not in st.secrets:
         st.error(
@@ -1536,6 +1562,8 @@ def main():
     if df_base is None or df_base.empty:
         st.error("No fue posible cargar la cartera. Revisa Dropbox y vuelve a intentar.")
         st.stop()
+
+    df_base = asegurar_cliente_key(df_base)
 
     resumen = construir_resumen_clientes(df_base)
     if resumen.empty:
