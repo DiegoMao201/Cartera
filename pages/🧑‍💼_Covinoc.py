@@ -1450,19 +1450,38 @@ def main():
             
             st.markdown("---")
             st.subheader("Indicadores de Gestión")
+
+            columnas_alerta_aviso = [
+                'fecha_limite_reclamacion',
+                'dias_restantes_reclamo',
+                'alerta_estado',
+                'estado_kpi_norm'
+            ]
+
+            for columna_alerta in columnas_alerta_aviso:
+                if columna_alerta not in df_aviso_no_pago.columns:
+                    df_aviso_no_pago[columna_alerta] = pd.NA
             
             if not df_aviso_no_pago.empty:
                 # --- CÁLCULO FECHA LÍMITE (70 DÍAS) ---
-                df_aviso_no_pago['fecha_limite_reclamacion'] = pd.to_datetime(df_aviso_no_pago['fecha_vencimiento_cartera']) + timedelta(days=70)
+                df_aviso_no_pago['fecha_limite_reclamacion'] = pd.to_datetime(
+                    df_aviso_no_pago['fecha_vencimiento_cartera'], errors='coerce'
+                ) + timedelta(days=70)
                 today_ts = pd.Timestamp.now()
                 df_aviso_no_pago['dias_restantes_reclamo'] = (df_aviso_no_pago['fecha_limite_reclamacion'] - today_ts).dt.days
 
                 # Categoría Alerta Visual
                 def categorizar_alerta(dias):
-                    if dias < 0: return "🔴 VENCIDO"
-                    elif dias <= 15: return "🟠 CRÍTICO"
-                    elif dias <= 30: return "🟡 ATENCIÓN"
-                    else: return "🟢 A TIEMPO"
+                    if pd.isna(dias):
+                        return "Sin fecha"
+                    if dias < 0:
+                        return "🔴 VENCIDO"
+                    elif dias <= 15:
+                        return "🟠 CRÍTICO"
+                    elif dias <= 30:
+                        return "🟡 ATENCIÓN"
+                    else:
+                        return "🟢 A TIEMPO"
                 
                 df_aviso_no_pago['alerta_estado'] = df_aviso_no_pago['dias_restantes_reclamo'].apply(categorizar_alerta)
 
@@ -1590,7 +1609,12 @@ def main():
                 df_aviso_display = df_aviso_no_pago
 
             # Ordenar por días restantes para priorizar
-            df_aviso_display = df_aviso_display.sort_values(by='dias_restantes_reclamo', ascending=True)
+            if 'dias_restantes_reclamo' in df_aviso_display.columns:
+                df_aviso_display = df_aviso_display.sort_values(
+                    by='dias_restantes_reclamo',
+                    ascending=True,
+                    na_position='last'
+                )
 
             columnas_mostrar_aviso = [
                 'alerta_estado', 'dias_restantes_reclamo', 'fecha_limite_reclamacion', # Nuevas columnas
