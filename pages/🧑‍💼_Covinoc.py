@@ -814,6 +814,16 @@ def preparar_analitica_transacciones(df_covinoc: pd.DataFrame) -> pd.DataFrame:
     df['documento_norm'] = df['documento'].apply(normalizar_nit_simple) if 'documento' in df.columns else ''
     df['periodo'] = df['fecha_dt'].dt.to_period('M').astype(str)
     df.loc[df['fecha_dt'].isna(), 'periodo'] = pd.NA
+
+    # --- Comportamiento de pago (estático, no depende de "hoy") ---
+    if 'exoneracion' in df.columns:
+        df['exoneracion_dt'] = pd.to_datetime(df['exoneracion'], errors='coerce')
+    else:
+        df['exoneracion_dt'] = pd.NaT
+    df['exoneracion_dt'] = pd.to_datetime(df['exoneracion_dt'], errors='coerce')
+    df['es_exonerado'] = df['estado_norm'].isin({'EXONERADA', 'EXONERADA PARCIAL'})
+    # Días de pago = días entre el vencimiento y la exoneración (cuando el cliente pagó)
+    df['dias_pago'] = (df['exoneracion_dt'] - df['vencimiento_dt']).dt.days
     return df
 
 
@@ -2453,59 +2463,109 @@ def main():
                                               xaxis_title=None, yaxis_title=None, margin=dict(l=10, r=10, t=10, b=10))
                         st.plotly_chart(fig_top, use_container_width=True)
 
-                    # ---------- Segmentación de clientes por riesgo ----------
+                    # ---------- Segmentación de clientes por riesgo y comportamiento de pago ----------
                     st.markdown("---")
-                    st.markdown("### 🚦 Segmentación de Clientes por Riesgo")
-                    st.caption("Los clientes **con avisos de no pago son de RIESGO** (conviene mantenerlos protegidos con Covinoc). Los que **nunca han tenido avisos son de bajo riesgo**: podrían retirarse de Covinoc para no ocupar bolsa sin necesidad.")
+                    st.markdown("### 🚦 Segmentación de Clientes por Riesgo y Comportamiento de Pago")
+                    st.caption("Los clientes **con avisos de no pago son de RIESGO** (mantener protegidos). Los que **nunca han tenido avisos son de bajo riesgo** (candidatos a retirar de Covinoc). Condición Covinoc: a los **30 días de vencido** el título debe tener aviso de no pago.")
 
-                    clientes_riesgo_set = set(dfa_covinoc.loc[dfa_covinoc['tiene_aviso'], 'cliente'].dropna())
+                    # Marco de trabajo con métricas que dependen de "hoy" (sin mutar la caché)
+                    dfx = dfa_covinoc.copy()
+                    dfx['dias_venc_hoy'] = (hoy_dt - dfx['vencimiento_dt']).dt.days
+                    dfx['aviso_omitido'] = dfx['es_activo'] & (dfx['dias_venc_hoy'] >= 30) & (~dfx['tiene_aviso'])
 
-                    df_riesgo = dfa_covinoc[dfa_covinoc['cliente'].isin(clientes_riesgo_set)].groupby('cliente').agg(
+                    clientes_riesgo_set = set(dfx.loc[dfx['tiene_aviso'], 'cliente'].dropna())
+
+                    # Resumen por cliente (componentes separados -> merge)
+                    resumen_cli = dfx.groupby('cliente').agg(
+                        titulos=('valor_garantizado_num', 'size'),
+                        valor=('valor_garantizado_num', 'sum'),
                         avisos=('tiene_aviso', 'sum'),
-                        titulos=('valor_garantizado_num', 'size'),
-                        valor=('valor_garantizado_num', 'sum'),
-                    ).reset_index()
-                    df_riesgo['avisos'] = df_riesgo['avisos'].astype(int)
-                    df_riesgo = df_riesgo.sort_values('avisos', ascending=False)
-
-                    df_buenos = dfa_covinoc[~dfa_covinoc['cliente'].isin(clientes_riesgo_set)].groupby('cliente').agg(
-                        titulos=('valor_garantizado_num', 'size'),
-                        valor=('valor_garantizado_num', 'sum'),
+                        avisos_omitidos=('aviso_omitido', 'sum'),
                         ultima_txn=('fecha_dt', 'max'),
-                    ).reset_index().sort_values('valor', ascending=False)
+                    ).reset_index()
+                    _dp = dfx[dfx['es_exonerado']].groupby('cliente')['dias_pago'].mean().reset_index().rename(columns={'dias_pago': 'dias_pago_prom'})
+                    _dm = dfx[dfx['es_activo'] & (dfx['dias_venc_hoy'] > 0)].groupby('cliente')['dias_venc_hoy'].mean().reset_index().rename(columns={'dias_venc_hoy': 'dias_mora_prom'})
+                    _so = dfx[dfx['aviso_omitido']].groupby('cliente')['saldo_num'].sum().reset_index().rename(columns={'saldo_num': 'saldo_omitido'})
+                    resumen_cli = resumen_cli.merge(_dp, on='cliente', how='left').merge(_dm, on='cliente', how='left').merge(_so, on='cliente', how='left')
+                    resumen_cli['avisos'] = resumen_cli['avisos'].astype(int)
+                    resumen_cli['avisos_omitidos'] = resumen_cli['avisos_omitidos'].astype(int)
+                    resumen_cli['saldo_omitido'] = resumen_cli['saldo_omitido'].fillna(0)
+                    resumen_cli['dias_pago_prom'] = resumen_cli['dias_pago_prom'].round(0)
+                    resumen_cli['dias_mora_prom'] = resumen_cli['dias_mora_prom'].round(0)
 
-                    seg1, seg2, seg3 = st.columns(3)
-                    seg1.metric("🔴 Clientes de RIESGO (con avisos)", f"{df_riesgo['cliente'].nunique()}")
-                    seg2.metric("🟢 Clientes BUENOS (0 avisos)", f"{df_buenos['cliente'].nunique()}")
-                    seg3.metric("Bolsa ocupada por clientes buenos", f"${df_buenos['valor'].sum():,.0f}",
-                                delta="Potencial a liberar", delta_color="inverse")
+                    df_riesgo = resumen_cli[resumen_cli['cliente'].isin(clientes_riesgo_set)].sort_values('avisos', ascending=False)
+                    df_buenos = resumen_cli[~resumen_cli['cliente'].isin(clientes_riesgo_set)].sort_values(['avisos_omitidos', 'valor'], ascending=[False, False])
 
-                    col_r, col_b = st.columns(2)
-                    with col_r:
-                        st.markdown("**🔴 Clientes de RIESGO — mantener protegidos** (más avisos = más se dejan vencer)")
-                        if not df_riesgo.empty:
-                            df_r_show = df_riesgo.head(15).rename(columns={
-                                'cliente': 'Cliente', 'avisos': 'N° Avisos', 'titulos': 'Títulos', 'valor': 'Valor Garantizado'})
-                            st.dataframe(
-                                df_r_show, use_container_width=True, hide_index=True,
-                                column_config={'Valor Garantizado': st.column_config.NumberColumn(format='$ %d'),
-                                               'N° Avisos': st.column_config.ProgressColumn(
-                                                   'N° Avisos', format='%d', min_value=0, max_value=int(df_riesgo['avisos'].max()))}
-                            )
-                        else:
-                            st.info("No hay clientes con avisos de no pago.")
-                    with col_b:
-                        st.markdown("**🟢 Clientes BUENOS — candidatos a retirar de Covinoc** (nunca han tenido avisos)")
-                        if not df_buenos.empty:
-                            df_b_show = df_buenos.head(15).rename(columns={
-                                'cliente': 'Cliente', 'titulos': 'Títulos', 'valor': 'Valor Garantizado', 'ultima_txn': 'Última Transacción'})
-                            st.dataframe(
-                                df_b_show, use_container_width=True, hide_index=True,
-                                column_config={'Valor Garantizado': st.column_config.NumberColumn(format='$ %d'),
-                                               'Última Transacción': st.column_config.DateColumn(format='YYYY-MM-DD')}
-                            )
-                        else:
-                            st.info("Sin datos.")
+                    dias_pago_global = dfx.loc[dfx['es_exonerado'], 'dias_pago'].mean()
+                    dias_mora_global = dfx.loc[dfx['es_activo'] & (dfx['dias_venc_hoy'] > 0), 'dias_venc_hoy'].mean()
+
+                    seg1, seg2, seg3, seg4 = st.columns(4)
+                    seg1.metric("🔴 Clientes de RIESGO", f"{df_riesgo['cliente'].nunique()}")
+                    seg2.metric("🟢 Clientes BUENOS", f"{df_buenos['cliente'].nunique()}", delta=f"bolsa ${df_buenos['valor'].sum():,.0f}", delta_color="inverse")
+                    seg3.metric("Días de pago promedio", f"{dias_pago_global:.0f} días" if pd.notna(dias_pago_global) else "—", help="Días entre el vencimiento y el pago (exoneración)")
+                    seg4.metric("Días de mora promedio", f"{dias_mora_global:.0f} días" if pd.notna(dias_mora_global) else "—", help="Días vencidos promedio de los títulos activos vencidos")
+
+                    cols_cli = {
+                        'cliente': 'Cliente', 'avisos': 'N° Avisos', 'dias_pago_prom': 'Días Pago Prom',
+                        'dias_mora_prom': 'Días Mora Prom', 'avisos_omitidos': 'Avisos Omitidos',
+                        'saldo_omitido': 'Saldo Omitido', 'titulos': 'Títulos', 'valor': 'Valor Garantizado',
+                        'ultima_txn': 'Última Transacción'
+                    }
+                    cfg_cli = {
+                        'Valor Garantizado': st.column_config.NumberColumn(format='$ %d'),
+                        'Saldo Omitido': st.column_config.NumberColumn(format='$ %d'),
+                        'Días Pago Prom': st.column_config.NumberColumn(format='%d d'),
+                        'Días Mora Prom': st.column_config.NumberColumn(format='%d d'),
+                        'Última Transacción': st.column_config.DateColumn(format='YYYY-MM-DD'),
+                    }
+
+                    st.markdown("**🔴 Clientes de RIESGO — mantener protegidos** (más avisos = más se dejan vencer)")
+                    if not df_riesgo.empty:
+                        st.dataframe(
+                            df_riesgo.head(20)[['cliente', 'avisos', 'dias_pago_prom', 'dias_mora_prom', 'avisos_omitidos', 'titulos', 'valor']].rename(columns=cols_cli),
+                            use_container_width=True, hide_index=True, column_config=cfg_cli
+                        )
+                    else:
+                        st.info("No hay clientes con avisos de no pago.")
+
+                    st.markdown("**🟢 Clientes BUENOS — candidatos a retirar de Covinoc** (nunca han tenido avisos; revisa 'Avisos Omitidos')")
+                    if not df_buenos.empty:
+                        st.dataframe(
+                            df_buenos.head(20)[['cliente', 'dias_pago_prom', 'dias_mora_prom', 'avisos_omitidos', 'saldo_omitido', 'titulos', 'valor', 'ultima_txn']].rename(columns=cols_cli),
+                            use_container_width=True, hide_index=True, column_config=cfg_cli
+                        )
+                    else:
+                        st.info("Sin datos.")
+
+                    # ---------- Avisos de No Pago OMITIDOS (condición Covinoc de 30 días) ----------
+                    st.markdown("---")
+                    st.markdown("### ⚠️ Avisos de No Pago OMITIDOS (condición Covinoc: 30 días)")
+                    st.caption("Títulos **ACTIVOS con 30+ días de vencidos que debían tener aviso de no pago y NO se les hizo**. Prioriza estos para no perder la garantía; suele pasar con clientes buenos a los que se les deja pasar el plazo.")
+                    df_omit = dfx[dfx['aviso_omitido']].copy()
+                    df_omit_show = pd.DataFrame()
+                    o1, o2, o3 = st.columns(3)
+                    o1.metric("Títulos sin aviso (30+ días)", f"{len(df_omit)}")
+                    o2.metric("Clientes afectados", f"{df_omit['cliente'].nunique()}")
+                    o3.metric("Saldo en riesgo", f"${df_omit['saldo_num'].sum():,.0f}")
+                    if not df_omit.empty:
+                        df_omit['tipo_cliente'] = df_omit['cliente'].apply(lambda c: 'RIESGO' if c in clientes_riesgo_set else 'BUENO')
+                        df_omit_show = df_omit.sort_values('dias_venc_hoy', ascending=False)[
+                            ['cliente', 'documento', 'titulo_valor', 'vencimiento_dt', 'dias_venc_hoy', 'saldo_num', 'tipo_cliente', 'usuario']
+                        ].rename(columns={
+                            'cliente': 'Cliente', 'documento': 'Documento', 'titulo_valor': 'Título',
+                            'vencimiento_dt': 'Vencimiento', 'dias_venc_hoy': 'Días Vencido',
+                            'saldo_num': 'Saldo', 'tipo_cliente': 'Tipo Cliente', 'usuario': 'Usuario'
+                        })
+                        st.dataframe(
+                            df_omit_show, use_container_width=True, hide_index=True,
+                            column_config={
+                                'Saldo': st.column_config.NumberColumn(format='$ %d'),
+                                'Vencimiento': st.column_config.DateColumn(format='YYYY-MM-DD'),
+                                'Días Vencido': st.column_config.NumberColumn(format='%d d'),
+                            }
+                        )
+                    else:
+                        st.success("✅ No hay avisos pendientes: todos los títulos vencidos 30+ días tienen su aviso de no pago.")
 
                     # ---------- Descarga análisis completo ----------
                     st.markdown("---")
@@ -2513,8 +2573,9 @@ def main():
                         'Resumen Mensual': df_tabla_mes if not df_res_mes.empty else pd.DataFrame(),
                         'Por Estado': df_estado.rename(columns={'estado_norm': 'Estado', 'titulos': 'Títulos', 'valor': 'Valor'}),
                         'Top Clientes': df_top_cli.rename(columns={'cliente': 'Cliente', 'valor': 'Valor', 'titulos': 'Títulos'}),
-                        'Clientes Riesgo': df_riesgo.rename(columns={'cliente': 'Cliente', 'avisos': 'N Avisos', 'titulos': 'Titulos', 'valor': 'Valor'}),
-                        'Clientes Buenos (Retirar)': df_buenos.rename(columns={'cliente': 'Cliente', 'titulos': 'Titulos', 'valor': 'Valor', 'ultima_txn': 'Ultima Transaccion'}),
+                        'Clientes Riesgo': df_riesgo.rename(columns=cols_cli),
+                        'Clientes Buenos (Retirar)': df_buenos.rename(columns=cols_cli),
+                        'Avisos Omitidos': df_omit_show,
                     })
                     st.download_button(
                         "📥 Descargar análisis completo (Excel)",
