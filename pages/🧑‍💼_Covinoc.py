@@ -2225,474 +2225,505 @@ def main():
         # --- TAB 7: DASHBOARD ESTRATÉGICO DE KPIs (reporteTransacciones) ---
         # ======================================================================
         with tab7:
-            st.subheader("📊 Dashboard Estratégico Covinoc")
-            st.markdown("Análisis integral del archivo **reporteTransacciones**: bolsa de garantía, evolución mensual/anual y radiografía de clientes.")
+            try:
+                st.subheader("📊 Dashboard Estratégico Covinoc")
+                st.markdown("Análisis integral del archivo **reporteTransacciones**: bolsa de garantía, evolución mensual/anual y radiografía de clientes.")
 
-            if dfa_covinoc.empty:
-                st.warning("No hay datos de reporteTransacciones para analizar.")
-            else:
-                # ---------- Cálculos base ----------
-                df_res_mes = resumen_mensual_covinoc(dfa_covinoc)
-                acumulado_bolsa = float(dfa_covinoc.loc[dfa_covinoc['fecha_dt'] >= FECHA_INICIO_BOLSA, 'valor_garantizado_num'].sum())
-                pct_bolsa = (acumulado_bolsa / BOLSA_COVINOC * 100) if BOLSA_COVINOC else 0
-                disponible_bolsa = BOLSA_COVINOC - acumulado_bolsa
-                num_meses = max(len(df_res_mes), 1)
-                ritmo_mensual = acumulado_bolsa / num_meses
-
-                # Selector de mes a analizar
-                meses_disponibles = df_res_mes['periodo'].tolist() if not df_res_mes.empty else []
-                col_sel, col_info = st.columns([1, 2])
-                with col_sel:
-                    if meses_disponibles:
-                        mes_sel = st.selectbox(
-                            "📅 Mes a analizar:",
-                            options=meses_disponibles[::-1],
-                            format_func=_etiqueta_periodo,
-                            key="covinoc_mes_sel"
-                        )
-                    else:
-                        mes_sel = None
-                with col_info:
-                    st.info(f"Bolsa de garantía: **${BOLSA_COVINOC:,.0f}** · Conteo desde **{FECHA_INICIO_BOLSA.strftime('%d-%b-%Y')}** · Datos hasta hoy.")
-
-                # Valor del mes seleccionado y delta vs mes anterior
-                valor_mes = 0.0
-                titulos_mes = 0
-                clientes_mes = 0
-                delta_mes = None
-                if mes_sel and not df_res_mes.empty:
-                    fila_mes = df_res_mes[df_res_mes['periodo'] == mes_sel]
-                    if not fila_mes.empty:
-                        valor_mes = float(fila_mes['valor'].iloc[0])
-                        titulos_mes = int(fila_mes['titulos'].iloc[0])
-                        clientes_mes = int(fila_mes['clientes'].iloc[0])
-                        idx_mes = df_res_mes.index.get_loc(fila_mes.index[0])
-                        if idx_mes > 0:
-                            valor_prev = float(df_res_mes.iloc[idx_mes - 1]['valor'])
-                            delta_mes = valor_mes - valor_prev
-
-                st.markdown("### 🎯 Indicadores de la Bolsa de Garantía")
-                k1, k2, k3, k4 = st.columns(4)
-                k1.metric(
-                    f"Reportado en {_etiqueta_periodo(mes_sel) if mes_sel else 'el mes'}",
-                    f"${valor_mes:,.0f}",
-                    delta=f"${delta_mes:,.0f} vs mes anterior" if delta_mes is not None else None
-                )
-                k2.metric("Acumulado desde 30-Sep-2025", f"${acumulado_bolsa:,.0f}", delta=f"{pct_bolsa:.1f}% de la bolsa")
-                k3.metric(
-                    "Bolsa disponible" if disponible_bolsa >= 0 else "Bolsa sobregirada",
-                    f"${disponible_bolsa:,.0f}",
-                    delta="Dentro del límite" if disponible_bolsa >= 0 else "Supera el límite",
-                    delta_color="normal" if disponible_bolsa >= 0 else "inverse"
-                )
-                k4.metric("Ritmo mensual promedio", f"${ritmo_mensual:,.0f}", delta=f"{num_meses} meses de operación")
-
-                # ---------- Medidor único de ocupación de la bolsa ----------
-                mg1, mg2, mg3 = st.columns([1, 2, 1])
-                with mg2:
-                    fig_gauge = go.Figure(go.Indicator(
-                        mode="gauge+number",
-                        value=acumulado_bolsa,
-                        number={'prefix': "$", 'valueformat': ',.0f', 'font': {'size': 32}},
-                        title={'text': "<b>Ocupación acumulada de la bolsa</b><br><span style='font-size:12px'>desde 30-Sep-2025 · no se libera con pagos</span>"},
-                        gauge={
-                            'axis': {'range': [0, max(BOLSA_COVINOC, acumulado_bolsa)], 'tickformat': ',.0f'},
-                            'bar': {'color': PALETA_COLORES['primario']},
-                            'steps': [
-                                {'range': [0, BOLSA_COVINOC * 0.7], 'color': '#E8F5E9'},
-                                {'range': [BOLSA_COVINOC * 0.7, BOLSA_COVINOC * 0.9], 'color': '#FEF4C0'},
-                                {'range': [BOLSA_COVINOC * 0.9, max(BOLSA_COVINOC, acumulado_bolsa)], 'color': '#FDE0DE'},
-                            ],
-                            'threshold': {'line': {'color': PALETA_COLORES['secundario'], 'width': 4}, 'thickness': 0.85, 'value': BOLSA_COVINOC}
-                        }
-                    ))
-                    fig_gauge.update_layout(height=320, margin=dict(l=20, r=20, t=70, b=10), paper_bgcolor='rgba(0,0,0,0)')
-                    st.plotly_chart(fig_gauge, use_container_width=True)
-                    st.caption(f"🔴 Línea roja = límite de la bolsa (${BOLSA_COVINOC:,.0f}). Ocupación actual: **{pct_bolsa:.1f}%**.")
-
-                # ---------- Evolución mensual ----------
-                st.markdown("---")
-                st.markdown("### 📈 Evolución mensual del valor garantizado")
-                if not df_res_mes.empty:
-                    fig_mes = go.Figure()
-                    fig_mes.add_trace(go.Bar(
-                        x=df_res_mes['mes_label'], y=df_res_mes['valor'],
-                        name="Valor del mes", marker_color=PALETA_COLORES['primario'],
-                        text=[f"${v/1e6:,.0f}M" for v in df_res_mes['valor']], textposition='outside'
-                    ))
-                    fig_mes.add_trace(go.Scatter(
-                        x=df_res_mes['mes_label'], y=df_res_mes['acumulado'],
-                        name="Acumulado", mode='lines+markers', yaxis='y2',
-                        line=dict(color=PALETA_COLORES['acento'], width=3)
-                    ))
-                    fig_mes.add_hline(y=BOLSA_COVINOC, line_dash="dash", line_color=PALETA_COLORES['secundario'],
-                                      annotation_text=f"Bolsa ${BOLSA_COVINOC/1e6:,.0f}M", annotation_position="top left", yref='y2')
-                    fig_mes.update_layout(
-                        height=420, hovermode='x unified', plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
-                        yaxis=dict(title="Valor del mes", tickformat=',.0f'),
-                        yaxis2=dict(title="Acumulado", overlaying='y', side='right', tickformat=',.0f', showgrid=False),
-                        margin=dict(l=20, r=20, t=40, b=20)
-                    )
-                    st.plotly_chart(fig_mes, use_container_width=True)
-
-                    df_tabla_mes = df_res_mes[['mes_label', 'valor', 'titulos', 'clientes', 'acumulado']].copy()
-                    df_tabla_mes.columns = ['Mes', 'Valor Garantizado', 'Títulos', 'Clientes', 'Acumulado Bolsa']
-                    with st.expander("Ver tabla mensual detallada"):
-                        st.dataframe(
-                            df_tabla_mes, use_container_width=True, hide_index=True,
-                            column_config={
-                                'Valor Garantizado': st.column_config.NumberColumn(format='$ %d'),
-                                'Acumulado Bolsa': st.column_config.NumberColumn(format='$ %d'),
-                            }
-                        )
-
-                # ---------- Radiografía de clientes ----------
-                st.markdown("---")
-                st.markdown("### 👥 Radiografía de Clientes")
-
-                clientes_con_facturas = int(dfa_covinoc['documento'].nunique())
-                clientes_con_aviso = int(dfa_covinoc.loc[dfa_covinoc['tiene_aviso'], 'documento'].nunique())
-                # Activos vencidos
-                hoy_dt = pd.to_datetime(datetime.now().date())
-                mask_venc = dfa_covinoc['es_activo'] & dfa_covinoc['vencimiento_dt'].notna() & (dfa_covinoc['vencimiento_dt'] < hoy_dt)
-                clientes_vencidos = int(dfa_covinoc.loc[mask_venc, 'documento'].nunique())
-                titulos_vencidos = int(mask_venc.sum())
-                saldo_vencido = float(dfa_covinoc.loc[mask_venc, 'saldo_num'].sum())
-
-                # Cupos
-                df_cupo_uso = analizar_cupos_clientes(df_cupos_auto, dfa_covinoc)
-                if not df_cupo_uso.empty:
-                    creados_cupo = int(df_cupo_uso['documento_norm'].nunique())
-                    con_cupo_asignado = int(df_cupo_uso.loc[df_cupo_uso['tiene_cupo'], 'documento_norm'].nunique())
-                    usan_cupo = int(df_cupo_uso.loc[df_cupo_uso['usa_cupo'], 'documento_norm'].nunique())
-                    no_usan_cupo = int(df_cupo_uso.loc[df_cupo_uso['tiene_cupo'] & (~df_cupo_uso['usa_cupo']), 'documento_norm'].nunique())
-                    cupo_asignado_total = float(df_cupo_uso['cupo_asignado'].sum())
-                    cupo_disponible_total = float(df_cupo_uso['cupo_disponible'].sum())
+                if dfa_covinoc.empty:
+                    st.warning("No hay datos de reporteTransacciones para analizar.")
                 else:
-                    creados_cupo = con_cupo_asignado = usan_cupo = no_usan_cupo = 0
-                    cupo_asignado_total = cupo_disponible_total = 0.0
+                    # ---------- Cálculos base ----------
+                    df_res_mes = resumen_mensual_covinoc(dfa_covinoc)
+                    acumulado_bolsa = float(dfa_covinoc.loc[dfa_covinoc['fecha_dt'] >= FECHA_INICIO_BOLSA, 'valor_garantizado_num'].sum())
+                    pct_bolsa = (acumulado_bolsa / BOLSA_COVINOC * 100) if BOLSA_COVINOC else 0
+                    disponible_bolsa = BOLSA_COVINOC - acumulado_bolsa
+                    num_meses = max(len(df_res_mes), 1)
+                    ritmo_mensual = acumulado_bolsa / num_meses
 
-                r1, r2, r3, r4 = st.columns(4)
-                r1.metric("Clientes con facturas cargadas", f"{clientes_con_facturas}")
-                r2.metric("Clientes creados con cupo", f"{creados_cupo}" if creados_cupo else "—",
-                          help="Requiere el archivo reporteCupos" if not creados_cupo else None)
-                r3.metric("Clientes que USAN el cupo", f"{usan_cupo}" if creados_cupo else "—")
-                r4.metric("Clientes que NO usan el cupo", f"{no_usan_cupo}" if creados_cupo else "—",
-                          delta="Oportunidad de activación" if no_usan_cupo else None, delta_color="inverse")
+                    # Selector de mes a analizar
+                    meses_disponibles = df_res_mes['periodo'].tolist() if not df_res_mes.empty else []
+                    col_sel, col_info = st.columns([1, 2])
+                    with col_sel:
+                        if meses_disponibles:
+                            mes_sel = st.selectbox(
+                                "📅 Mes a analizar:",
+                                options=meses_disponibles[::-1],
+                                format_func=_etiqueta_periodo,
+                                key="covinoc_mes_sel"
+                            )
+                        else:
+                            mes_sel = None
+                    with col_info:
+                        st.info(f"Bolsa de garantía: **${BOLSA_COVINOC:,.0f}** · Conteo desde **{FECHA_INICIO_BOLSA.strftime('%d-%b-%Y')}** · Datos hasta hoy.")
 
-                r5, r6, r7, r8 = st.columns(4)
-                r5.metric("Clientes con avisos de no pago", f"{clientes_con_aviso}")
-                r6.metric("Clientes con títulos vencidos", f"{clientes_vencidos}")
-                r7.metric("Títulos activos vencidos", f"{titulos_vencidos}", delta=f"saldo ${saldo_vencido:,.0f}", delta_color="inverse")
-                r8.metric("Cupo total disponible", f"${cupo_disponible_total:,.0f}" if creados_cupo else "—",
-                          delta=f"de ${cupo_asignado_total:,.0f} asignado" if creados_cupo else None)
+                    # Valor del mes seleccionado y delta vs mes anterior
+                    valor_mes = 0.0
+                    titulos_mes = 0
+                    clientes_mes = 0
+                    delta_mes = None
+                    if mes_sel and not df_res_mes.empty:
+                        fila_mes = df_res_mes[df_res_mes['periodo'] == mes_sel]
+                        if not fila_mes.empty:
+                            valor_mes = float(fila_mes['valor'].iloc[0])
+                            titulos_mes = int(fila_mes['titulos'].iloc[0])
+                            clientes_mes = int(fila_mes['clientes'].iloc[0])
+                            idx_mes = df_res_mes.index.get_loc(fila_mes.index[0])
+                            if idx_mes > 0:
+                                valor_prev = float(df_res_mes.iloc[idx_mes - 1]['valor'])
+                                delta_mes = valor_mes - valor_prev
 
-                if not creados_cupo:
-                    st.caption("💡 Carga el archivo **reporteCupos** (en la pestaña 6 o en la pestaña 8) para completar los indicadores de cupo.")
+                    st.markdown("### 🎯 Indicadores de la Bolsa de Garantía")
+                    k1, k2, k3, k4 = st.columns(4)
+                    k1.metric(
+                        f"Reportado en {_etiqueta_periodo(mes_sel) if mes_sel else 'el mes'}",
+                        f"${valor_mes:,.0f}",
+                        delta=f"${delta_mes:,.0f} vs mes anterior" if delta_mes is not None else None
+                    )
+                    k2.metric("Acumulado desde 30-Sep-2025", f"${acumulado_bolsa:,.0f}", delta=f"{pct_bolsa:.1f}% de la bolsa")
+                    k3.metric(
+                        "Bolsa disponible" if disponible_bolsa >= 0 else "Bolsa sobregirada",
+                        f"${disponible_bolsa:,.0f}",
+                        delta="Dentro del límite" if disponible_bolsa >= 0 else "Supera el límite",
+                        delta_color="normal" if disponible_bolsa >= 0 else "inverse"
+                    )
+                    k4.metric("Ritmo mensual promedio", f"${ritmo_mensual:,.0f}", delta=f"{num_meses} meses de operación")
 
-                # ---------- Distribuciones y rankings ----------
-                st.markdown("---")
-                st.markdown("### 🔎 Análisis y Rankings")
-                d1, d2 = st.columns(2)
-                with d1:
-                    st.markdown("**Distribución por estado de los títulos**")
-                    df_estado = dfa_covinoc.groupby('estado_norm').agg(
+                    # ---------- Medidor único de ocupación de la bolsa ----------
+                    mg1, mg2, mg3 = st.columns([1, 2, 1])
+                    with mg2:
+                        fig_gauge = go.Figure(go.Indicator(
+                            mode="gauge+number",
+                            value=acumulado_bolsa,
+                            number={'prefix': "$", 'valueformat': ',.0f', 'font': {'size': 32}},
+                            title={'text': "<b>Ocupación acumulada de la bolsa</b><br><span style='font-size:12px'>desde 30-Sep-2025 · no se libera con pagos</span>"},
+                            gauge={
+                                'axis': {'range': [0, max(BOLSA_COVINOC, acumulado_bolsa)], 'tickformat': ',.0f'},
+                                'bar': {'color': PALETA_COLORES['primario']},
+                                'steps': [
+                                    {'range': [0, BOLSA_COVINOC * 0.7], 'color': '#E8F5E9'},
+                                    {'range': [BOLSA_COVINOC * 0.7, BOLSA_COVINOC * 0.9], 'color': '#FEF4C0'},
+                                    {'range': [BOLSA_COVINOC * 0.9, max(BOLSA_COVINOC, acumulado_bolsa)], 'color': '#FDE0DE'},
+                                ],
+                                'threshold': {'line': {'color': PALETA_COLORES['secundario'], 'width': 4}, 'thickness': 0.85, 'value': BOLSA_COVINOC}
+                            }
+                        ))
+                        fig_gauge.update_layout(height=320, margin=dict(l=20, r=20, t=70, b=10), paper_bgcolor='rgba(0,0,0,0)')
+                        st.plotly_chart(fig_gauge, use_container_width=True)
+                        st.caption(f"🔴 Línea roja = límite de la bolsa (${BOLSA_COVINOC:,.0f}). Ocupación actual: **{pct_bolsa:.1f}%**.")
+
+                    # ---------- Evolución mensual ----------
+                    st.markdown("---")
+                    st.markdown("### 📈 Evolución mensual del valor garantizado")
+                    if not df_res_mes.empty:
+                        fig_mes = go.Figure()
+                        fig_mes.add_trace(go.Bar(
+                            x=df_res_mes['mes_label'], y=df_res_mes['valor'],
+                            name="Valor del mes", marker_color=PALETA_COLORES['primario'],
+                            text=[f"${v/1e6:,.0f}M" for v in df_res_mes['valor']], textposition='outside'
+                        ))
+                        fig_mes.add_trace(go.Scatter(
+                            x=df_res_mes['mes_label'], y=df_res_mes['acumulado'],
+                            name="Acumulado", mode='lines+markers', yaxis='y2',
+                            line=dict(color=PALETA_COLORES['acento'], width=3)
+                        ))
+                        fig_mes.add_hline(y=BOLSA_COVINOC, line_dash="dash", line_color=PALETA_COLORES['secundario'],
+                                          annotation_text=f"Bolsa ${BOLSA_COVINOC/1e6:,.0f}M", annotation_position="top left", yref='y2')
+                        fig_mes.update_layout(
+                            height=420, hovermode='x unified', plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+                            yaxis=dict(title="Valor del mes", tickformat=',.0f'),
+                            yaxis2=dict(title="Acumulado", overlaying='y', side='right', tickformat=',.0f', showgrid=False),
+                            margin=dict(l=20, r=20, t=40, b=20)
+                        )
+                        st.plotly_chart(fig_mes, use_container_width=True)
+
+                        df_tabla_mes = df_res_mes[['mes_label', 'valor', 'titulos', 'clientes', 'acumulado']].copy()
+                        df_tabla_mes.columns = ['Mes', 'Valor Garantizado', 'Títulos', 'Clientes', 'Acumulado Bolsa']
+                        with st.expander("Ver tabla mensual detallada"):
+                            st.dataframe(
+                                df_tabla_mes, use_container_width=True, hide_index=True,
+                                column_config={
+                                    'Valor Garantizado': st.column_config.NumberColumn(format='$ %d'),
+                                    'Acumulado Bolsa': st.column_config.NumberColumn(format='$ %d'),
+                                }
+                            )
+
+                    # ---------- Radiografía de clientes ----------
+                    st.markdown("---")
+                    st.markdown("### 👥 Radiografía de Clientes")
+
+                    clientes_con_facturas = int(dfa_covinoc['documento'].nunique())
+                    clientes_con_aviso = int(dfa_covinoc.loc[dfa_covinoc['tiene_aviso'], 'documento'].nunique())
+                    # Activos vencidos
+                    hoy_dt = pd.to_datetime(datetime.now().date())
+                    mask_venc = dfa_covinoc['es_activo'] & dfa_covinoc['vencimiento_dt'].notna() & (dfa_covinoc['vencimiento_dt'] < hoy_dt)
+                    clientes_vencidos = int(dfa_covinoc.loc[mask_venc, 'documento'].nunique())
+                    titulos_vencidos = int(mask_venc.sum())
+                    saldo_vencido = float(dfa_covinoc.loc[mask_venc, 'saldo_num'].sum())
+
+                    # Cupos
+                    df_cupo_uso = analizar_cupos_clientes(df_cupos_auto, dfa_covinoc)
+                    if not df_cupo_uso.empty:
+                        creados_cupo = int(df_cupo_uso['documento_norm'].nunique())
+                        con_cupo_asignado = int(df_cupo_uso.loc[df_cupo_uso['tiene_cupo'], 'documento_norm'].nunique())
+                        usan_cupo = int(df_cupo_uso.loc[df_cupo_uso['usa_cupo'], 'documento_norm'].nunique())
+                        no_usan_cupo = int(df_cupo_uso.loc[df_cupo_uso['tiene_cupo'] & (~df_cupo_uso['usa_cupo']), 'documento_norm'].nunique())
+                        cupo_asignado_total = float(df_cupo_uso['cupo_asignado'].sum())
+                        cupo_disponible_total = float(df_cupo_uso['cupo_disponible'].sum())
+                    else:
+                        creados_cupo = con_cupo_asignado = usan_cupo = no_usan_cupo = 0
+                        cupo_asignado_total = cupo_disponible_total = 0.0
+
+                    r1, r2, r3, r4 = st.columns(4)
+                    r1.metric("Clientes con facturas cargadas", f"{clientes_con_facturas}")
+                    r2.metric("Clientes creados con cupo", f"{creados_cupo}" if creados_cupo else "—",
+                              help="Requiere el archivo reporteCupos" if not creados_cupo else None)
+                    r3.metric("Clientes que USAN el cupo", f"{usan_cupo}" if creados_cupo else "—")
+                    r4.metric("Clientes que NO usan el cupo", f"{no_usan_cupo}" if creados_cupo else "—",
+                              delta="Oportunidad de activación" if no_usan_cupo else None, delta_color="inverse")
+
+                    r5, r6, r7, r8 = st.columns(4)
+                    r5.metric("Clientes con avisos de no pago", f"{clientes_con_aviso}")
+                    r6.metric("Clientes con títulos vencidos", f"{clientes_vencidos}")
+                    r7.metric("Títulos activos vencidos", f"{titulos_vencidos}", delta=f"saldo ${saldo_vencido:,.0f}", delta_color="inverse")
+                    r8.metric("Cupo total disponible", f"${cupo_disponible_total:,.0f}" if creados_cupo else "—",
+                              delta=f"de ${cupo_asignado_total:,.0f} asignado" if creados_cupo else None)
+
+                    if not creados_cupo:
+                        st.caption("💡 Carga el archivo **reporteCupos** (en la pestaña 6 o en la pestaña 8) para completar los indicadores de cupo.")
+
+                    # ---------- Distribuciones y rankings ----------
+                    st.markdown("---")
+                    st.markdown("### 🔎 Análisis y Rankings")
+                    d1, d2 = st.columns(2)
+                    with d1:
+                        st.markdown("**Distribución por estado de los títulos**")
+                        df_estado = dfa_covinoc.groupby('estado_norm').agg(
+                            titulos=('valor_garantizado_num', 'size'),
+                            valor=('valor_garantizado_num', 'sum')
+                        ).reset_index().sort_values('valor', ascending=False)
+                        fig_estado = px.pie(
+                            df_estado, names='estado_norm', values='valor', hole=0.55,
+                            color_discrete_sequence=[PALETA_COLORES['primario'], PALETA_COLORES['secundario'],
+                                                     PALETA_COLORES['acento'], PALETA_COLORES['destacado'],
+                                                     PALETA_COLORES['exito_verde'], '#9E9E9E', '#607D8B']
+                        )
+                        fig_estado.update_traces(textposition='inside', textinfo='percent+label')
+                        fig_estado.update_layout(height=340, showlegend=False, margin=dict(l=10, r=10, t=10, b=10), paper_bgcolor='rgba(0,0,0,0)')
+                        st.plotly_chart(fig_estado, use_container_width=True)
+                    with d2:
+                        st.markdown("**Top 10 clientes por valor garantizado**")
+                        df_top_cli = dfa_covinoc.groupby('cliente').agg(
+                            valor=('valor_garantizado_num', 'sum'), titulos=('valor_garantizado_num', 'size')
+                        ).reset_index().sort_values('valor', ascending=False).head(10)
+                        fig_top = px.bar(
+                            df_top_cli.sort_values('valor'), x='valor', y='cliente', orientation='h',
+                            text=[f"${v/1e6:,.1f}M" for v in df_top_cli.sort_values('valor')['valor']],
+                            color_discrete_sequence=[PALETA_COLORES['primario']]
+                        )
+                        fig_top.update_layout(height=340, plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                                              xaxis_title=None, yaxis_title=None, margin=dict(l=10, r=10, t=10, b=10))
+                        st.plotly_chart(fig_top, use_container_width=True)
+
+                    # ---------- Segmentación de clientes por riesgo ----------
+                    st.markdown("---")
+                    st.markdown("### 🚦 Segmentación de Clientes por Riesgo")
+                    st.caption("Los clientes **con avisos de no pago son de RIESGO** (conviene mantenerlos protegidos con Covinoc). Los que **nunca han tenido avisos son de bajo riesgo**: podrían retirarse de Covinoc para no ocupar bolsa sin necesidad.")
+
+                    clientes_riesgo_set = set(dfa_covinoc.loc[dfa_covinoc['tiene_aviso'], 'cliente'].dropna())
+
+                    df_riesgo = dfa_covinoc[dfa_covinoc['cliente'].isin(clientes_riesgo_set)].groupby('cliente').agg(
+                        avisos=('tiene_aviso', 'sum'),
                         titulos=('valor_garantizado_num', 'size'),
-                        valor=('valor_garantizado_num', 'sum')
+                        valor=('valor_garantizado_num', 'sum'),
+                    ).reset_index()
+                    df_riesgo['avisos'] = df_riesgo['avisos'].astype(int)
+                    df_riesgo = df_riesgo.sort_values('avisos', ascending=False)
+
+                    df_buenos = dfa_covinoc[~dfa_covinoc['cliente'].isin(clientes_riesgo_set)].groupby('cliente').agg(
+                        titulos=('valor_garantizado_num', 'size'),
+                        valor=('valor_garantizado_num', 'sum'),
+                        ultima_txn=('fecha_dt', 'max'),
                     ).reset_index().sort_values('valor', ascending=False)
-                    fig_estado = px.pie(
-                        df_estado, names='estado_norm', values='valor', hole=0.55,
-                        color_discrete_sequence=[PALETA_COLORES['primario'], PALETA_COLORES['secundario'],
-                                                 PALETA_COLORES['acento'], PALETA_COLORES['destacado'],
-                                                 PALETA_COLORES['exito_verde'], '#9E9E9E', '#607D8B']
+
+                    seg1, seg2, seg3 = st.columns(3)
+                    seg1.metric("🔴 Clientes de RIESGO (con avisos)", f"{df_riesgo['cliente'].nunique()}")
+                    seg2.metric("🟢 Clientes BUENOS (0 avisos)", f"{df_buenos['cliente'].nunique()}")
+                    seg3.metric("Bolsa ocupada por clientes buenos", f"${df_buenos['valor'].sum():,.0f}",
+                                delta="Potencial a liberar", delta_color="inverse")
+
+                    col_r, col_b = st.columns(2)
+                    with col_r:
+                        st.markdown("**🔴 Clientes de RIESGO — mantener protegidos** (más avisos = más se dejan vencer)")
+                        if not df_riesgo.empty:
+                            df_r_show = df_riesgo.head(15).rename(columns={
+                                'cliente': 'Cliente', 'avisos': 'N° Avisos', 'titulos': 'Títulos', 'valor': 'Valor Garantizado'})
+                            st.dataframe(
+                                df_r_show, use_container_width=True, hide_index=True,
+                                column_config={'Valor Garantizado': st.column_config.NumberColumn(format='$ %d'),
+                                               'N° Avisos': st.column_config.ProgressColumn(
+                                                   'N° Avisos', format='%d', min_value=0, max_value=int(df_riesgo['avisos'].max()))}
+                            )
+                        else:
+                            st.info("No hay clientes con avisos de no pago.")
+                    with col_b:
+                        st.markdown("**🟢 Clientes BUENOS — candidatos a retirar de Covinoc** (nunca han tenido avisos)")
+                        if not df_buenos.empty:
+                            df_b_show = df_buenos.head(15).rename(columns={
+                                'cliente': 'Cliente', 'titulos': 'Títulos', 'valor': 'Valor Garantizado', 'ultima_txn': 'Última Transacción'})
+                            st.dataframe(
+                                df_b_show, use_container_width=True, hide_index=True,
+                                column_config={'Valor Garantizado': st.column_config.NumberColumn(format='$ %d'),
+                                               'Última Transacción': st.column_config.DateColumn(format='YYYY-MM-DD')}
+                            )
+                        else:
+                            st.info("Sin datos.")
+
+                    # ---------- Descarga análisis completo ----------
+                    st.markdown("---")
+                    excel_analisis = to_excel_generico({
+                        'Resumen Mensual': df_tabla_mes if not df_res_mes.empty else pd.DataFrame(),
+                        'Por Estado': df_estado.rename(columns={'estado_norm': 'Estado', 'titulos': 'Títulos', 'valor': 'Valor'}),
+                        'Top Clientes': df_top_cli.rename(columns={'cliente': 'Cliente', 'valor': 'Valor', 'titulos': 'Títulos'}),
+                        'Clientes Riesgo': df_riesgo.rename(columns={'cliente': 'Cliente', 'avisos': 'N Avisos', 'titulos': 'Titulos', 'valor': 'Valor'}),
+                        'Clientes Buenos (Retirar)': df_buenos.rename(columns={'cliente': 'Cliente', 'titulos': 'Titulos', 'valor': 'Valor', 'ultima_txn': 'Ultima Transaccion'}),
+                    })
+                    st.download_button(
+                        "📥 Descargar análisis completo (Excel)",
+                        data=excel_analisis,
+                        file_name=f"analisis_covinoc_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        use_container_width=True
                     )
-                    fig_estado.update_traces(textposition='inside', textinfo='percent+label')
-                    fig_estado.update_layout(height=340, showlegend=False, margin=dict(l=10, r=10, t=10, b=10), paper_bgcolor='rgba(0,0,0,0)')
-                    st.plotly_chart(fig_estado, use_container_width=True)
-                with d2:
-                    st.markdown("**Top 10 clientes por valor garantizado**")
-                    df_top_cli = dfa_covinoc.groupby('cliente').agg(
-                        valor=('valor_garantizado_num', 'sum'), titulos=('valor_garantizado_num', 'size')
-                    ).reset_index().sort_values('valor', ascending=False).head(10)
-                    fig_top = px.bar(
-                        df_top_cli.sort_values('valor'), x='valor', y='cliente', orientation='h',
-                        text=[f"${v/1e6:,.1f}M" for v in df_top_cli.sort_values('valor')['valor']],
-                        color_discrete_sequence=[PALETA_COLORES['primario']]
-                    )
-                    fig_top.update_layout(height=340, plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                                          xaxis_title=None, yaxis_title=None, margin=dict(l=10, r=10, t=10, b=10))
-                    st.plotly_chart(fig_top, use_container_width=True)
 
-                # ---------- Segmentación de clientes por riesgo ----------
-                st.markdown("---")
-                st.markdown("### 🚦 Segmentación de Clientes por Riesgo")
-                st.caption("Los clientes **con avisos de no pago son de RIESGO** (conviene mantenerlos protegidos con Covinoc). Los que **nunca han tenido avisos son de bajo riesgo**: podrían retirarse de Covinoc para no ocupar bolsa sin necesidad.")
-
-                clientes_riesgo_set = set(dfa_covinoc.loc[dfa_covinoc['tiene_aviso'], 'cliente'].dropna())
-
-                df_riesgo = dfa_covinoc[dfa_covinoc['cliente'].isin(clientes_riesgo_set)].groupby('cliente').agg(
-                    avisos=('tiene_aviso', 'sum'),
-                    titulos=('valor_garantizado_num', 'size'),
-                    valor=('valor_garantizado_num', 'sum'),
-                ).reset_index()
-                df_riesgo['avisos'] = df_riesgo['avisos'].astype(int)
-                df_riesgo = df_riesgo.sort_values('avisos', ascending=False)
-
-                df_buenos = dfa_covinoc[~dfa_covinoc['cliente'].isin(clientes_riesgo_set)].groupby('cliente').agg(
-                    titulos=('valor_garantizado_num', 'size'),
-                    valor=('valor_garantizado_num', 'sum'),
-                    ultima_txn=('fecha_dt', 'max'),
-                ).reset_index().sort_values('valor', ascending=False)
-
-                seg1, seg2, seg3 = st.columns(3)
-                seg1.metric("🔴 Clientes de RIESGO (con avisos)", f"{df_riesgo['cliente'].nunique()}")
-                seg2.metric("🟢 Clientes BUENOS (0 avisos)", f"{df_buenos['cliente'].nunique()}")
-                seg3.metric("Bolsa ocupada por clientes buenos", f"${df_buenos['valor'].sum():,.0f}",
-                            delta="Potencial a liberar", delta_color="inverse")
-
-                col_r, col_b = st.columns(2)
-                with col_r:
-                    st.markdown("**🔴 Clientes de RIESGO — mantener protegidos** (más avisos = más se dejan vencer)")
-                    if not df_riesgo.empty:
-                        df_r_show = df_riesgo.head(15).rename(columns={
-                            'cliente': 'Cliente', 'avisos': 'N° Avisos', 'titulos': 'Títulos', 'valor': 'Valor Garantizado'})
-                        st.dataframe(
-                            df_r_show, use_container_width=True, hide_index=True,
-                            column_config={'Valor Garantizado': st.column_config.NumberColumn(format='$ %d'),
-                                           'N° Avisos': st.column_config.ProgressColumn(
-                                               'N° Avisos', format='%d', min_value=0, max_value=int(df_riesgo['avisos'].max()))}
-                        )
-                    else:
-                        st.info("No hay clientes con avisos de no pago.")
-                with col_b:
-                    st.markdown("**🟢 Clientes BUENOS — candidatos a retirar de Covinoc** (nunca han tenido avisos)")
-                    if not df_buenos.empty:
-                        df_b_show = df_buenos.head(15).rename(columns={
-                            'cliente': 'Cliente', 'titulos': 'Títulos', 'valor': 'Valor Garantizado', 'ultima_txn': 'Última Transacción'})
-                        st.dataframe(
-                            df_b_show, use_container_width=True, hide_index=True,
-                            column_config={'Valor Garantizado': st.column_config.NumberColumn(format='$ %d'),
-                                           'Última Transacción': st.column_config.DateColumn(format='YYYY-MM-DD')}
-                        )
-                    else:
-                        st.info("Sin datos.")
-
-                # ---------- Descarga análisis completo ----------
-                st.markdown("---")
-                excel_analisis = to_excel_generico({
-                    'Resumen Mensual': df_tabla_mes if not df_res_mes.empty else pd.DataFrame(),
-                    'Por Estado': df_estado.rename(columns={'estado_norm': 'Estado', 'titulos': 'Títulos', 'valor': 'Valor'}),
-                    'Top Clientes': df_top_cli.rename(columns={'cliente': 'Cliente', 'valor': 'Valor', 'titulos': 'Títulos'}),
-                    'Clientes Riesgo': df_riesgo.rename(columns={'cliente': 'Cliente', 'avisos': 'N Avisos', 'titulos': 'Titulos', 'valor': 'Valor'}),
-                    'Clientes Buenos (Retirar)': df_buenos.rename(columns={'cliente': 'Cliente', 'titulos': 'Titulos', 'valor': 'Valor', 'ultima_txn': 'Ultima Transaccion'}),
-                })
-                st.download_button(
-                    "📥 Descargar análisis completo (Excel)",
-                    data=excel_analisis,
-                    file_name=f"analisis_covinoc_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                    use_container_width=True
-                )
+            except Exception as _err_seccion:
+                st.error("⚠️ No se pudo construir esta sección. Las demás pestañas siguen funcionando. Detalle del error:")
+                st.exception(_err_seccion)
 
         # ======================================================================
         # --- TAB 8: ACTIVACIÓN DE CLIENTES (WhatsApp + Correo SendGrid) ---
         # ======================================================================
         with tab8:
-            st.subheader("🚀 Activación de Clientes con Cupo sin Usar")
-            st.markdown("Identifica clientes con **cupo aprobado pero sin uso** y lanza campañas de activación por **WhatsApp** (link directo) y **correo masivo** (SendGrid).")
+            try:
+                st.subheader("🚀 Activación de Clientes con Cupo sin Usar")
+                st.markdown("Identifica clientes con **cupo aprobado pero sin uso** y lanza campañas de activación por **WhatsApp** (link directo) y **correo masivo** (SendGrid).")
 
-            uploaded_cupos_tab8 = st.file_uploader(
-                "Cargar reporteCupos (opcional, si no se detecta automáticamente)",
-                type=['xlsx', 'xls'], key='reporte_cupos_uploader_tab8'
-            )
-            if uploaded_cupos_tab8 is not None:
-                try:
-                    df_cupos_tab8 = preparar_reporte_cupos(leer_reporte_cupos_excel(uploaded_cupos_tab8))
-                    st.success("Archivo reporteCupos cargado manualmente.")
-                except Exception as e:
-                    st.error(f"No fue posible leer el archivo: {e}")
+                uploaded_cupos_tab8 = st.file_uploader(
+                    "Cargar reporteCupos (opcional, si no se detecta automáticamente)",
+                    type=['xlsx', 'xls'], key='reporte_cupos_uploader_tab8'
+                )
+                if uploaded_cupos_tab8 is not None:
+                    try:
+                        df_cupos_tab8 = preparar_reporte_cupos(leer_reporte_cupos_excel(uploaded_cupos_tab8))
+                        st.success("Archivo reporteCupos cargado manualmente.")
+                    except Exception as e:
+                        st.error(f"No fue posible leer el archivo: {e}")
+                        df_cupos_tab8 = df_cupos_auto
+                else:
                     df_cupos_tab8 = df_cupos_auto
-            else:
-                df_cupos_tab8 = df_cupos_auto
-                if fuente_cupos_auto:
-                    st.caption(f"Fuente detectada automáticamente: {fuente_cupos_auto}")
+                    if fuente_cupos_auto:
+                        st.caption(f"Fuente detectada automáticamente: {fuente_cupos_auto}")
 
-            df_cupo_uso8 = analizar_cupos_clientes(df_cupos_tab8, dfa_covinoc)
+                df_cupo_uso8 = analizar_cupos_clientes(df_cupos_tab8, dfa_covinoc)
 
-            if df_cupo_uso8.empty:
-                st.warning("No hay datos de reporteCupos disponibles. Cárgalo arriba para construir la campaña de activación.")
-            else:
-                # Clientes con cupo asignado que NO lo usan
-                df_no_usan = df_cupo_uso8[df_cupo_uso8['tiene_cupo'] & (~df_cupo_uso8['usa_cupo'])].copy()
+                if df_cupo_uso8.empty:
+                    st.warning("No hay datos de reporteCupos disponibles. Cárgalo arriba para construir la campaña de activación.")
+                else:
+                    # Clientes con cupo asignado que NO lo usan
+                    df_no_usan = df_cupo_uso8[df_cupo_uso8['tiene_cupo'] & (~df_cupo_uso8['usa_cupo'])].copy()
 
-                # Enriquecer con contacto de la cartera
-                contacto = resumen_contacto_cartera(df_cartera_full)
-                if not contacto.empty:
-                    set_nits = set(contacto['nit_norm_cartera'])
-                    def _match_nit(doc):
-                        if not isinstance(doc, str) or not doc:
+                    # Enriquecer con contacto de la cartera
+                    contacto = resumen_contacto_cartera(df_cartera_full)
+                    if not contacto.empty:
+                        set_nits = set(contacto['nit_norm_cartera'])
+                        def _match_nit(doc):
+                            if not isinstance(doc, str) or not doc:
+                                return None
+                            if doc in set_nits:
+                                return doc
+                            if doc[:-1] in set_nits:
+                                return doc[:-1]
                             return None
-                        if doc in set_nits:
-                            return doc
-                        if doc[:-1] in set_nits:
-                            return doc[:-1]
-                        return None
-                    df_no_usan['nit_match'] = df_no_usan['documento_norm'].apply(_match_nit)
-                    df_camp = df_no_usan.merge(contacto, left_on='nit_match', right_on='nit_norm_cartera', how='left')
-                else:
-                    df_camp = df_no_usan.copy()
-                    for c in ['cliente_cartera', 'telefono', 'email', 'vendedor_cartera', 'cod_cliente']:
-                        df_camp[c] = ''
-
-                # Nombre y vendedor consolidados
-                df_camp['cliente_final'] = df_camp['cliente_cartera'].fillna('').replace('', pd.NA)
-                df_camp['cliente_final'] = df_camp['cliente_final'].fillna(df_camp['nombres'])
-                df_camp['vendedor_final'] = df_camp['vendedor_cartera'].fillna('').replace('', pd.NA)
-                df_camp['vendedor_final'] = df_camp['vendedor_final'].fillna('GESTION INTERNA')
-                df_camp['email'] = df_camp['email'].fillna('').astype(str).str.strip()
-                df_camp['telefono'] = df_camp['telefono'].fillna('').astype(str).str.strip()
-                df_camp['email_valido'] = df_camp['email'].str.contains('@', na=False)
-                df_camp['wa_link'] = df_camp.apply(
-                    lambda r: generar_link_wa_activacion(r['telefono'], r['cliente_final'], r['cupo_disponible']), axis=1
-                )
-
-                # KPIs de la campaña
-                total_no_usan = int(df_camp['documento_norm'].nunique())
-                con_wa = int(df_camp['wa_link'].notna().sum())
-                con_email = int(df_camp['email_valido'].sum())
-                cupo_ocioso = float(df_camp['cupo_disponible'].sum())
-
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Clientes con cupo sin usar", f"{total_no_usan}")
-                c2.metric("Con celular (WhatsApp)", f"{con_wa}")
-                c3.metric("Con correo válido", f"{con_email}")
-                c4.metric("Cupo ocioso (sin activar)", f"${cupo_ocioso:,.0f}")
-
-                # Filtro por vendedor
-                st.markdown("---")
-                vendedores_camp = ['Todos'] + sorted([v for v in df_camp['vendedor_final'].dropna().unique() if str(v).strip()])
-                vend_sel = st.selectbox("Filtrar por vendedor:", options=vendedores_camp, key="camp_vendedor")
-                df_vista = df_camp if vend_sel == 'Todos' else df_camp[df_camp['vendedor_final'] == vend_sel]
-
-                canal = st.radio(
-                    "Canal de activación:",
-                    ["💬 WhatsApp (links directos)", "📧 Correo masivo (SendGrid)"],
-                    horizontal=True, key="camp_canal"
-                )
-
-                # ----- WhatsApp -----
-                if canal.startswith("💬"):
-                    st.markdown("Cada cliente tiene un **link de WhatsApp con el mensaje de activación ya redactado**. Haz clic en 'Abrir' para enviarlo desde tu WhatsApp.")
-                    df_wa = df_vista[df_vista['wa_link'].notna()][
-                        ['cliente_final', 'documento', 'telefono', 'cupo_disponible', 'vendedor_final', 'wa_link']
-                    ].copy()
-                    df_wa.columns = ['Cliente', 'Documento', 'Teléfono', 'Cupo Disponible', 'Vendedor', 'WhatsApp']
-                    if df_wa.empty:
-                        st.info("No hay clientes con celular válido para este filtro.")
+                        df_no_usan['nit_match'] = df_no_usan['documento_norm'].apply(_match_nit)
+                        df_camp = df_no_usan.merge(contacto, left_on='nit_match', right_on='nit_norm_cartera', how='left')
                     else:
-                        st.dataframe(
-                            df_wa, use_container_width=True, hide_index=True,
-                            column_config={
-                                'Cupo Disponible': st.column_config.NumberColumn(format='$ %d'),
-                                'WhatsApp': st.column_config.LinkColumn('WhatsApp', display_text="💬 Abrir chat")
-                            }
-                        )
-                        st.download_button(
-                            "📥 Descargar lista WhatsApp (Excel)",
-                            data=to_excel_generico({'WhatsApp Activacion': df_wa}),
-                            file_name=f"activacion_whatsapp_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                            use_container_width=True
-                        )
+                        df_camp = df_no_usan.copy()
+                        for c in ['cliente_cartera', 'telefono', 'email', 'vendedor_cartera', 'cod_cliente']:
+                            df_camp[c] = ''
 
-                # ----- Correo masivo SendGrid -----
-                else:
-                    df_mail = df_vista[df_vista['email_valido']][
-                        ['cliente_final', 'documento', 'email', 'cupo_disponible', 'vendedor_final']
-                    ].copy().drop_duplicates(subset=['email'])
-                    st.markdown(f"Se enviará **un correo de activación** con diseño institucional a **{len(df_mail)} clientes** con correo válido.")
-
-                    if st.checkbox("👁️ Previsualizar el correo (ejemplo)", key="camp_preview"):
-                        ejemplo = df_mail.iloc[0] if not df_mail.empty else None
-                        html_prev = plantilla_activacion_html(
-                            ejemplo['cliente_final'] if ejemplo is not None else "Cliente Ejemplo",
-                            ejemplo['cupo_disponible'] if ejemplo is not None else 1500000,
-                            ejemplo['vendedor_final'] if ejemplo is not None else "Ferreinox"
-                        )
-                        components.html(html_prev, height=620, scrolling=True)
-
-                    asunto_mail = st.text_input(
-                        "Asunto del correo:",
-                        value="🎉 Tu cupo de crédito Ferreinox está listo para usar",
-                        key="camp_asunto"
+                    # Nombre y vendedor consolidados
+                    df_camp['cliente_final'] = df_camp['cliente_cartera'].fillna('').replace('', pd.NA)
+                    df_camp['cliente_final'] = df_camp['cliente_final'].fillna(df_camp['nombres'])
+                    df_camp['vendedor_final'] = df_camp['vendedor_cartera'].fillna('').replace('', pd.NA)
+                    df_camp['vendedor_final'] = df_camp['vendedor_final'].fillna('GESTION INTERNA')
+                    df_camp['email'] = df_camp['email'].fillna('').astype(str).str.strip()
+                    df_camp['telefono'] = df_camp['telefono'].fillna('').astype(str).str.strip()
+                    df_camp['email_valido'] = df_camp['email'].str.contains('@', na=False)
+                    df_camp['wa_link'] = df_camp.apply(
+                        lambda r: generar_link_wa_activacion(r['telefono'], r['cliente_final'], r['cupo_disponible']), axis=1
                     )
 
-                    if "sendgrid" not in st.secrets:
-                        st.warning("⚠️ No está configurada la sección **[sendgrid]** en secrets. Agrega: api_key, from_email y from_name para poder enviar.")
-                    elif df_mail.empty:
-                        st.info("No hay clientes con correo válido para este filtro.")
+                    # KPIs de la campaña
+                    total_no_usan = int(df_camp['documento_norm'].nunique())
+                    con_wa = int(df_camp['wa_link'].notna().sum())
+                    con_email = int(df_camp['email_valido'].sum())
+                    cupo_ocioso = float(df_camp['cupo_disponible'].sum())
+
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("Clientes con cupo sin usar", f"{total_no_usan}")
+                    c2.metric("Con celular (WhatsApp)", f"{con_wa}")
+                    c3.metric("Con correo válido", f"{con_email}")
+                    c4.metric("Cupo ocioso (sin activar)", f"${cupo_ocioso:,.0f}")
+
+                    # Filtro por vendedor
+                    st.markdown("---")
+                    vendedores_camp = ['Todos'] + sorted([v for v in df_camp['vendedor_final'].dropna().unique() if str(v).strip()])
+                    vend_sel = st.selectbox("Filtrar por vendedor:", options=vendedores_camp, key="camp_vendedor")
+                    df_vista = df_camp if vend_sel == 'Todos' else df_camp[df_camp['vendedor_final'] == vend_sel]
+
+                    canal = st.radio(
+                        "Canal de activación:",
+                        ["💬 WhatsApp (links directos)", "📧 Correo masivo (SendGrid)"],
+                        horizontal=True, key="camp_canal"
+                    )
+
+                    # ----- WhatsApp -----
+                    if canal.startswith("💬"):
+                        st.markdown("Cada cliente tiene un **link de WhatsApp con el mensaje de activación ya redactado**. Haz clic en 'Abrir' para enviarlo desde tu WhatsApp.")
+                        df_wa = df_vista[df_vista['wa_link'].notna()][
+                            ['cliente_final', 'documento', 'telefono', 'cupo_disponible', 'vendedor_final', 'wa_link']
+                        ].copy()
+                        df_wa.columns = ['Cliente', 'Documento', 'Teléfono', 'Cupo Disponible', 'Vendedor', 'WhatsApp']
+                        if df_wa.empty:
+                            st.info("No hay clientes con celular válido para este filtro.")
+                        else:
+                            st.dataframe(
+                                df_wa, use_container_width=True, hide_index=True,
+                                column_config={
+                                    'Cupo Disponible': st.column_config.NumberColumn(format='$ %d'),
+                                    'WhatsApp': st.column_config.LinkColumn('WhatsApp', display_text="💬 Abrir chat")
+                                }
+                            )
+                            st.download_button(
+                                "📥 Descargar lista WhatsApp (Excel)",
+                                data=to_excel_generico({'WhatsApp Activacion': df_wa}),
+                                file_name=f"activacion_whatsapp_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                use_container_width=True
+                            )
+
+                    # ----- Correo masivo SendGrid -----
                     else:
-                        api_key = st.secrets["sendgrid"].get("api_key", "")
-                        from_email = st.secrets["sendgrid"].get("from_email", "")
-                        from_name = st.secrets["sendgrid"].get("from_name", "Ferreinox S.A.S. BIC")
+                        df_mail = df_vista[df_vista['email_valido']][
+                            ['cliente_final', 'documento', 'email', 'cupo_disponible', 'vendedor_final']
+                        ].copy().drop_duplicates(subset=['email'])
+                        st.markdown(f"Se enviará **un correo de activación** con diseño institucional a **{len(df_mail)} clientes** con correo válido.")
 
-                        col_test, col_send = st.columns(2)
-                        with col_test:
-                            correo_prueba = st.text_input("Enviar prueba a (opcional):", key="camp_prueba")
-                            if st.button("✉️ Enviar prueba", use_container_width=True):
-                                if correo_prueba and '@' in correo_prueba:
-                                    ej = df_mail.iloc[0]
-                                    html_test = plantilla_activacion_html(ej['cliente_final'], ej['cupo_disponible'], ej['vendedor_final'])
-                                    ok, det = enviar_correo_activacion_sendgrid(
-                                        api_key, from_email, from_name, correo_prueba.strip(),
-                                        ej['cliente_final'], asunto_mail,
-                                        html_test, "Tu cupo de crédito Ferreinox está listo para usar."
-                                    )
-                                    st.success(f"Prueba enviada a {correo_prueba} ({det})") if ok else st.error(f"Error: {det}")
-                                else:
-                                    st.error("Ingresa un correo válido para la prueba.")
-                        with col_send:
-                            confirmar = st.checkbox(f"Confirmo el envío masivo a {len(df_mail)} clientes", key="camp_confirmar")
-                            if st.button("🚀 Enviar campaña masiva", type="primary", use_container_width=True, disabled=not confirmar):
-                                barra = st.progress(0.0)
-                                estado_envio = st.empty()
-                                enviados, fallidos = 0, 0
-                                errores = []
-                                total = len(df_mail)
-                                for i, (_, fila) in enumerate(df_mail.iterrows()):
-                                    html_c = plantilla_activacion_html(fila['cliente_final'], fila['cupo_disponible'], fila['vendedor_final'])
-                                    ok, det = enviar_correo_activacion_sendgrid(
-                                        api_key, from_email, from_name, fila['email'],
-                                        fila['cliente_final'], asunto_mail,
-                                        html_c, "Tu cupo de crédito Ferreinox está listo para usar."
-                                    )
-                                    if ok:
-                                        enviados += 1
-                                    else:
-                                        fallidos += 1
-                                        errores.append({'Cliente': fila['cliente_final'], 'Correo': fila['email'], 'Error': det})
-                                    barra.progress((i + 1) / total)
-                                    estado_envio.caption(f"Enviando... {i + 1}/{total} · ✅ {enviados} · ❌ {fallidos}")
-                                if enviados:
-                                    st.success(f"✅ Campaña finalizada: {enviados} correos enviados.")
-                                if fallidos:
-                                    st.error(f"❌ {fallidos} correos fallaron.")
-                                    st.dataframe(pd.DataFrame(errores), use_container_width=True, hide_index=True)
+                        if st.checkbox("👁️ Previsualizar el correo (ejemplo)", key="camp_preview"):
+                            ejemplo = df_mail.iloc[0] if not df_mail.empty else None
+                            html_prev = plantilla_activacion_html(
+                                ejemplo['cliente_final'] if ejemplo is not None else "Cliente Ejemplo",
+                                ejemplo['cupo_disponible'] if ejemplo is not None else 1500000,
+                                ejemplo['vendedor_final'] if ejemplo is not None else "Ferreinox"
+                            )
+                            components.html(html_prev, height=620, scrolling=True)
 
-                    if not df_mail.empty:
-                        df_mail_dl = df_mail.rename(columns={
-                            'cliente_final': 'Cliente', 'documento': 'Documento', 'email': 'Correo',
-                            'cupo_disponible': 'Cupo Disponible', 'vendedor_final': 'Vendedor'
-                        })
-                        st.download_button(
-                            "📥 Descargar lista de correos (Excel)",
-                            data=to_excel_generico({'Correos Activacion': df_mail_dl}),
-                            file_name=f"activacion_correos_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                            use_container_width=True
+                        asunto_mail = st.text_input(
+                            "Asunto del correo:",
+                            value="🎉 Tu cupo de crédito Ferreinox está listo para usar",
+                            key="camp_asunto"
                         )
 
+                        if "sendgrid" not in st.secrets:
+                            st.warning("⚠️ No está configurada la sección **[sendgrid]** en secrets (api_key, from_email, from_name). Sin esto no se puede enviar correo.")
+                        else:
+                            api_key = st.secrets["sendgrid"].get("api_key", "")
+                            from_email = st.secrets["sendgrid"].get("from_email", "")
+                            from_name = st.secrets["sendgrid"].get("from_name", "Ferreinox S.A.S. BIC")
+
+                            # ---- ENVÍO DE PRUEBA (siempre disponible) ----
+                            st.markdown("---")
+                            st.markdown("#### ✉️ 1) Envíate un correo de PRUEBA")
+                            col_tp1, col_tp2 = st.columns([3, 1])
+                            with col_tp1:
+                                correo_prueba = st.text_input(
+                                    "Escribe TU correo para recibir la prueba:",
+                                    key="camp_prueba", placeholder="tucorreo@ferreinox.co"
+                                )
+                            with col_tp2:
+                                st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                                enviar_prueba = st.button("✉️ Enviar prueba", use_container_width=True)
+                            if enviar_prueba:
+                                if correo_prueba and '@' in correo_prueba:
+                                    if not df_mail.empty:
+                                        ej = df_mail.iloc[0]
+                                        ej_cli, ej_cupo, ej_vend = ej['cliente_final'], ej['cupo_disponible'], ej['vendedor_final']
+                                    else:
+                                        ej_cli, ej_cupo, ej_vend = "Cliente Ejemplo", 1500000, "Cartera Ferreinox"
+                                    html_test = plantilla_activacion_html(ej_cli, ej_cupo, ej_vend)
+                                    with st.spinner(f"Enviando prueba a {correo_prueba}..."):
+                                        ok, det = enviar_correo_activacion_sendgrid(
+                                            api_key, from_email, from_name, correo_prueba.strip(),
+                                            ej_cli, asunto_mail, html_test,
+                                            "Tu cupo de crédito Ferreinox está listo para usar."
+                                        )
+                                    if ok:
+                                        st.success(f"✅ Prueba enviada a {correo_prueba}. Revisa tu bandeja (y la carpeta de spam).")
+                                    else:
+                                        st.error(f"❌ No se pudo enviar: {det}")
+                                else:
+                                    st.error("Ingresa un correo válido (que tenga @).")
+
+                            # ---- ENVÍO MASIVO ----
+                            st.markdown("---")
+                            st.markdown("#### 🚀 2) Envío masivo a los clientes")
+                            if df_mail.empty:
+                                st.info("No hay clientes con correo válido en este filtro para el envío masivo.")
+                            else:
+                                confirmar = st.checkbox(f"Confirmo el envío masivo a {len(df_mail)} clientes", key="camp_confirmar")
+                                if st.button("🚀 Enviar campaña masiva", type="primary", use_container_width=True, disabled=not confirmar):
+                                    barra = st.progress(0.0)
+                                    estado_envio = st.empty()
+                                    enviados, fallidos = 0, 0
+                                    errores = []
+                                    total = len(df_mail)
+                                    for i, (_, fila) in enumerate(df_mail.iterrows()):
+                                        html_c = plantilla_activacion_html(fila['cliente_final'], fila['cupo_disponible'], fila['vendedor_final'])
+                                        ok, det = enviar_correo_activacion_sendgrid(
+                                            api_key, from_email, from_name, fila['email'],
+                                            fila['cliente_final'], asunto_mail,
+                                            html_c, "Tu cupo de crédito Ferreinox está listo para usar."
+                                        )
+                                        if ok:
+                                            enviados += 1
+                                        else:
+                                            fallidos += 1
+                                            errores.append({'Cliente': fila['cliente_final'], 'Correo': fila['email'], 'Error': det})
+                                        barra.progress((i + 1) / total)
+                                        estado_envio.caption(f"Enviando... {i + 1}/{total} · ✅ {enviados} · ❌ {fallidos}")
+                                    if enviados:
+                                        st.success(f"✅ Campaña finalizada: {enviados} correos enviados.")
+                                    if fallidos:
+                                        st.error(f"❌ {fallidos} correos fallaron.")
+                                        st.dataframe(pd.DataFrame(errores), use_container_width=True, hide_index=True)
+
+                        if not df_mail.empty:
+                            df_mail_dl = df_mail.rename(columns={
+                                'cliente_final': 'Cliente', 'documento': 'Documento', 'email': 'Correo',
+                                'cupo_disponible': 'Cupo Disponible', 'vendedor_final': 'Vendedor'
+                            })
+                            st.download_button(
+                                "📥 Descargar lista de correos (Excel)",
+                                data=to_excel_generico({'Correos Activacion': df_mail_dl}),
+                                file_name=f"activacion_correos_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                use_container_width=True
+                            )
+
+
+            except Exception as _err_seccion:
+                st.error("⚠️ No se pudo construir esta sección. Las demás pestañas siguen funcionando. Detalle del error:")
+                st.exception(_err_seccion)
 
 if __name__ == '__main__':
     main()
