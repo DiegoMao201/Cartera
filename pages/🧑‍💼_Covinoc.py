@@ -771,9 +771,10 @@ def to_excel_fau_pendiente(df_fau: pd.DataFrame) -> bytes:
 # ======================================================================================
 
 BOLSA_COVINOC = 6_000_000_000                 # Bolsa total de garantía Covinoc: $6.000 millones
-FECHA_INICIO_BOLSA = datetime(2025, 9, 1)     # Inicio del conteo de la bolsa (1-sep-2025)
-ESTADOS_ACTIVOS_COVINOC = {'AL DIA', 'AVISO NO PAGO'}  # Títulos vivos (ocupan cupo hoy)
+FECHA_INICIO_BOLSA = datetime(2025, 9, 30)    # Inicio del conteo de la bolsa (30-sep-2025)
+ESTADOS_ACTIVOS_COVINOC = {'AL DIA', 'AVISO NO PAGO'}  # Títulos vigentes
 PORTAL_PAGO = "https://ferreinoxtiendapintuco.epayco.me/recaudo/ferreinoxrecaudoenlinea/"
+WHATSAPP_CARTERA = "573142087169"             # Línea de Cartera para activar cupo (+57 314 2087169)
 
 MESES_ES = {1: 'Ene', 2: 'Feb', 3: 'Mar', 4: 'Abr', 5: 'May', 6: 'Jun',
             7: 'Jul', 8: 'Ago', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dic'}
@@ -938,14 +939,17 @@ def plantilla_activacion_html(cliente, cupo_disponible, vendedor) -> str:
             <tr><td style="padding:6px 0;font-size:15px;color:#444;">🚚 &nbsp;Compra ahora y paga después, sin trámites</td></tr>
           </table>
           <div style="text-align:center;margin:30px 0 8px 0;">
-            <a href="https://wa.me/573205046277?text={urllib.parse.quote('Hola, quiero activar mi cupo de crédito Ferreinox')}"
+            <a href="https://wa.me/{WHATSAPP_CARTERA}?text={urllib.parse.quote('Hola Cartera Ferreinox, quiero activar mi cupo de crédito. Mi empresa es: ' + str(cliente))}"
                style="background:#388E3C;color:#FFFFFF;text-decoration:none;font-size:16px;font-weight:700;padding:15px 40px;border-radius:30px;display:inline-block;">
-               💬 Activar mi cupo ahora
+               💬 Activar mi cupo con Cartera
             </a>
           </div>
+          <p style="text-align:center;font-size:13px;color:#777;margin:14px 0 0 0;">
+            O escríbenos a <strong>WhatsApp +57 314 2087169</strong> (línea de Cartera) y activamos tu cupo de inmediato.
+          </p>
         </td></tr>
         <tr><td style="padding:18px 40px 34px 40px;border-top:1px solid #eee;text-align:center;">
-          <p style="font-size:13px;color:#999;margin:14px 0 0 0;">Te atiende: <strong>{vendedor_txt}</strong></p>
+          <p style="font-size:13px;color:#999;margin:14px 0 0 0;">Te atiende: <strong>{vendedor_txt}</strong> · Cartera Ferreinox</p>
           <p style="font-size:12px;color:#bbb;margin:6px 0 0 0;">Ferreinox SAS BIC · Este es un mensaje comercial de tu proveedor de confianza.</p>
         </td></tr>
       </table>
@@ -2230,11 +2234,10 @@ def main():
                 # ---------- Cálculos base ----------
                 df_res_mes = resumen_mensual_covinoc(dfa_covinoc)
                 acumulado_bolsa = float(dfa_covinoc.loc[dfa_covinoc['fecha_dt'] >= FECHA_INICIO_BOLSA, 'valor_garantizado_num'].sum())
-                exposicion_viva = float(dfa_covinoc.loc[dfa_covinoc['es_activo'], 'valor_garantizado_num'].sum())
-                saldo_vivo = float(dfa_covinoc.loc[dfa_covinoc['es_activo'], 'saldo_num'].sum())
                 pct_bolsa = (acumulado_bolsa / BOLSA_COVINOC * 100) if BOLSA_COVINOC else 0
                 disponible_bolsa = BOLSA_COVINOC - acumulado_bolsa
-                pct_vivo = (exposicion_viva / BOLSA_COVINOC * 100) if BOLSA_COVINOC else 0
+                num_meses = max(len(df_res_mes), 1)
+                ritmo_mensual = acumulado_bolsa / num_meses
 
                 # Selector de mes a analizar
                 meses_disponibles = df_res_mes['periodo'].tolist() if not df_res_mes.empty else []
@@ -2275,23 +2278,23 @@ def main():
                     f"${valor_mes:,.0f}",
                     delta=f"${delta_mes:,.0f} vs mes anterior" if delta_mes is not None else None
                 )
-                k2.metric("Acumulado desde Sep-2025", f"${acumulado_bolsa:,.0f}", delta=f"{pct_bolsa:.1f}% de la bolsa")
+                k2.metric("Acumulado desde 30-Sep-2025", f"${acumulado_bolsa:,.0f}", delta=f"{pct_bolsa:.1f}% de la bolsa")
                 k3.metric(
                     "Bolsa disponible" if disponible_bolsa >= 0 else "Bolsa sobregirada",
                     f"${disponible_bolsa:,.0f}",
                     delta="Dentro del límite" if disponible_bolsa >= 0 else "Supera el límite",
                     delta_color="normal" if disponible_bolsa >= 0 else "inverse"
                 )
-                k4.metric("Exposición viva (activos hoy)", f"${exposicion_viva:,.0f}", delta=f"{pct_vivo:.1f}% comprometido · saldo ${saldo_vivo:,.0f}")
+                k4.metric("Ritmo mensual promedio", f"${ritmo_mensual:,.0f}", delta=f"{num_meses} meses de operación")
 
-                # ---------- Medidores (gauges) ----------
-                g_col1, g_col2 = st.columns(2)
-                with g_col1:
+                # ---------- Medidor único de ocupación de la bolsa ----------
+                mg1, mg2, mg3 = st.columns([1, 2, 1])
+                with mg2:
                     fig_gauge = go.Figure(go.Indicator(
                         mode="gauge+number",
                         value=acumulado_bolsa,
-                        number={'prefix': "$", 'valueformat': ',.0f', 'font': {'size': 30}},
-                        title={'text': "<b>Ocupación acumulada de la bolsa</b><br><span style='font-size:12px'>desde 1-Sep-2025</span>"},
+                        number={'prefix': "$", 'valueformat': ',.0f', 'font': {'size': 32}},
+                        title={'text': "<b>Ocupación acumulada de la bolsa</b><br><span style='font-size:12px'>desde 30-Sep-2025 · no se libera con pagos</span>"},
                         gauge={
                             'axis': {'range': [0, max(BOLSA_COVINOC, acumulado_bolsa)], 'tickformat': ',.0f'},
                             'bar': {'color': PALETA_COLORES['primario']},
@@ -2303,24 +2306,9 @@ def main():
                             'threshold': {'line': {'color': PALETA_COLORES['secundario'], 'width': 4}, 'thickness': 0.85, 'value': BOLSA_COVINOC}
                         }
                     ))
-                    fig_gauge.update_layout(height=300, margin=dict(l=20, r=20, t=60, b=10), paper_bgcolor='rgba(0,0,0,0)')
+                    fig_gauge.update_layout(height=320, margin=dict(l=20, r=20, t=70, b=10), paper_bgcolor='rgba(0,0,0,0)')
                     st.plotly_chart(fig_gauge, use_container_width=True)
-                    st.caption(f"🔴 Línea roja = límite de la bolsa (${BOLSA_COVINOC:,.0f}). Actual: **{pct_bolsa:.1f}%**.")
-                with g_col2:
-                    fig_gauge2 = go.Figure(go.Indicator(
-                        mode="gauge+number",
-                        value=exposicion_viva,
-                        number={'prefix': "$", 'valueformat': ',.0f', 'font': {'size': 30}},
-                        title={'text': "<b>Exposición viva (cupo comprometido hoy)</b><br><span style='font-size:12px'>títulos Al Día + Aviso No Pago</span>"},
-                        gauge={
-                            'axis': {'range': [0, BOLSA_COVINOC], 'tickformat': ',.0f'},
-                            'bar': {'color': PALETA_COLORES['acento']},
-                            'steps': [{'range': [0, BOLSA_COVINOC], 'color': '#F5F5F5'}],
-                        }
-                    ))
-                    fig_gauge2.update_layout(height=300, margin=dict(l=20, r=20, t=60, b=10), paper_bgcolor='rgba(0,0,0,0)')
-                    st.plotly_chart(fig_gauge2, use_container_width=True)
-                    st.caption("La bolsa 'rota': al pagar el cliente, se libera cupo. Este es el compromiso real vigente.")
+                    st.caption(f"🔴 Línea roja = límite de la bolsa (${BOLSA_COVINOC:,.0f}). Ocupación actual: **{pct_bolsa:.1f}%**.")
 
                 # ---------- Evolución mensual ----------
                 st.markdown("---")
@@ -2436,22 +2424,59 @@ def main():
                                           xaxis_title=None, yaxis_title=None, margin=dict(l=10, r=10, t=10, b=10))
                     st.plotly_chart(fig_top, use_container_width=True)
 
-                st.markdown("**⚠️ Clientes que más se dejan vencer (mayor número de avisos de no pago)**")
-                df_avisos = dfa_covinoc[dfa_covinoc['tiene_aviso']].groupby('cliente').agg(
-                    avisos=('tiene_aviso', 'size'),
-                    valor=('valor_garantizado_num', 'sum')
-                ).reset_index().sort_values('avisos', ascending=False).head(15)
-                if not df_avisos.empty:
-                    df_avisos.columns = ['Cliente', 'N° Avisos No Pago', 'Valor Garantizado']
-                    st.dataframe(
-                        df_avisos, use_container_width=True, hide_index=True,
-                        column_config={'Valor Garantizado': st.column_config.NumberColumn(format='$ %d'),
-                                       'N° Avisos No Pago': st.column_config.ProgressColumn(
-                                           'N° Avisos No Pago', format='%d',
-                                           min_value=0, max_value=int(df_avisos['N° Avisos No Pago'].max()))}
-                    )
-                else:
-                    st.info("No se registran avisos de no pago en el período.")
+                # ---------- Segmentación de clientes por riesgo ----------
+                st.markdown("---")
+                st.markdown("### 🚦 Segmentación de Clientes por Riesgo")
+                st.caption("Los clientes **con avisos de no pago son de RIESGO** (conviene mantenerlos protegidos con Covinoc). Los que **nunca han tenido avisos son de bajo riesgo**: podrían retirarse de Covinoc para no ocupar bolsa sin necesidad.")
+
+                clientes_riesgo_set = set(dfa_covinoc.loc[dfa_covinoc['tiene_aviso'], 'cliente'].dropna())
+
+                df_riesgo = dfa_covinoc[dfa_covinoc['cliente'].isin(clientes_riesgo_set)].groupby('cliente').agg(
+                    avisos=('tiene_aviso', 'sum'),
+                    titulos=('valor_garantizado_num', 'size'),
+                    valor=('valor_garantizado_num', 'sum'),
+                ).reset_index()
+                df_riesgo['avisos'] = df_riesgo['avisos'].astype(int)
+                df_riesgo = df_riesgo.sort_values('avisos', ascending=False)
+
+                df_buenos = dfa_covinoc[~dfa_covinoc['cliente'].isin(clientes_riesgo_set)].groupby('cliente').agg(
+                    titulos=('valor_garantizado_num', 'size'),
+                    valor=('valor_garantizado_num', 'sum'),
+                    ultima_txn=('fecha_dt', 'max'),
+                ).reset_index().sort_values('valor', ascending=False)
+
+                seg1, seg2, seg3 = st.columns(3)
+                seg1.metric("🔴 Clientes de RIESGO (con avisos)", f"{df_riesgo['cliente'].nunique()}")
+                seg2.metric("🟢 Clientes BUENOS (0 avisos)", f"{df_buenos['cliente'].nunique()}")
+                seg3.metric("Bolsa ocupada por clientes buenos", f"${df_buenos['valor'].sum():,.0f}",
+                            delta="Potencial a liberar", delta_color="inverse")
+
+                col_r, col_b = st.columns(2)
+                with col_r:
+                    st.markdown("**🔴 Clientes de RIESGO — mantener protegidos** (más avisos = más se dejan vencer)")
+                    if not df_riesgo.empty:
+                        df_r_show = df_riesgo.head(15).rename(columns={
+                            'cliente': 'Cliente', 'avisos': 'N° Avisos', 'titulos': 'Títulos', 'valor': 'Valor Garantizado'})
+                        st.dataframe(
+                            df_r_show, use_container_width=True, hide_index=True,
+                            column_config={'Valor Garantizado': st.column_config.NumberColumn(format='$ %d'),
+                                           'N° Avisos': st.column_config.ProgressColumn(
+                                               'N° Avisos', format='%d', min_value=0, max_value=int(df_riesgo['avisos'].max()))}
+                        )
+                    else:
+                        st.info("No hay clientes con avisos de no pago.")
+                with col_b:
+                    st.markdown("**🟢 Clientes BUENOS — candidatos a retirar de Covinoc** (nunca han tenido avisos)")
+                    if not df_buenos.empty:
+                        df_b_show = df_buenos.head(15).rename(columns={
+                            'cliente': 'Cliente', 'titulos': 'Títulos', 'valor': 'Valor Garantizado', 'ultima_txn': 'Última Transacción'})
+                        st.dataframe(
+                            df_b_show, use_container_width=True, hide_index=True,
+                            column_config={'Valor Garantizado': st.column_config.NumberColumn(format='$ %d'),
+                                           'Última Transacción': st.column_config.DateColumn(format='YYYY-MM-DD')}
+                        )
+                    else:
+                        st.info("Sin datos.")
 
                 # ---------- Descarga análisis completo ----------
                 st.markdown("---")
@@ -2459,7 +2484,8 @@ def main():
                     'Resumen Mensual': df_tabla_mes if not df_res_mes.empty else pd.DataFrame(),
                     'Por Estado': df_estado.rename(columns={'estado_norm': 'Estado', 'titulos': 'Títulos', 'valor': 'Valor'}),
                     'Top Clientes': df_top_cli.rename(columns={'cliente': 'Cliente', 'valor': 'Valor', 'titulos': 'Títulos'}),
-                    'Mas Vencidos': df_avisos if not df_avisos.empty else pd.DataFrame(),
+                    'Clientes Riesgo': df_riesgo.rename(columns={'cliente': 'Cliente', 'avisos': 'N Avisos', 'titulos': 'Titulos', 'valor': 'Valor'}),
+                    'Clientes Buenos (Retirar)': df_buenos.rename(columns={'cliente': 'Cliente', 'titulos': 'Titulos', 'valor': 'Valor', 'ultima_txn': 'Ultima Transaccion'}),
                 })
                 st.download_button(
                     "📥 Descargar análisis completo (Excel)",
@@ -2549,10 +2575,14 @@ def main():
                 vend_sel = st.selectbox("Filtrar por vendedor:", options=vendedores_camp, key="camp_vendedor")
                 df_vista = df_camp if vend_sel == 'Todos' else df_camp[df_camp['vendedor_final'] == vend_sel]
 
-                sub_wa, sub_mail = st.tabs(["💬 WhatsApp (links directos)", "📧 Correo masivo (SendGrid)"])
+                canal = st.radio(
+                    "Canal de activación:",
+                    ["💬 WhatsApp (links directos)", "📧 Correo masivo (SendGrid)"],
+                    horizontal=True, key="camp_canal"
+                )
 
                 # ----- WhatsApp -----
-                with sub_wa:
+                if canal.startswith("💬"):
                     st.markdown("Cada cliente tiene un **link de WhatsApp con el mensaje de activación ya redactado**. Haz clic en 'Abrir' para enviarlo desde tu WhatsApp.")
                     df_wa = df_vista[df_vista['wa_link'].notna()][
                         ['cliente_final', 'documento', 'telefono', 'cupo_disponible', 'vendedor_final', 'wa_link']
@@ -2577,13 +2607,13 @@ def main():
                         )
 
                 # ----- Correo masivo SendGrid -----
-                with sub_mail:
+                else:
                     df_mail = df_vista[df_vista['email_valido']][
                         ['cliente_final', 'documento', 'email', 'cupo_disponible', 'vendedor_final']
                     ].copy().drop_duplicates(subset=['email'])
                     st.markdown(f"Se enviará **un correo de activación** con diseño institucional a **{len(df_mail)} clientes** con correo válido.")
 
-                    with st.expander("👁️ Previsualizar el correo (ejemplo)"):
+                    if st.checkbox("👁️ Previsualizar el correo (ejemplo)", key="camp_preview"):
                         ejemplo = df_mail.iloc[0] if not df_mail.empty else None
                         html_prev = plantilla_activacion_html(
                             ejemplo['cliente_final'] if ejemplo is not None else "Cliente Ejemplo",
