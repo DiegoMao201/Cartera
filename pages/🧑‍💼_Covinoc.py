@@ -1426,21 +1426,49 @@ def main():
         except Exception:
             df_cupos_auto, fuente_cupos_auto, error_cupos_auto = pd.DataFrame(), '', ''
 
-        # --- Contenedor Principal con Pestañas ---
+        # --- Navegación Principal (basada en session_state para conservar la pestaña activa) ---
         st.markdown("---")
 
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
-            f"1. Facturas a Subir ({len(df_a_subir)})",
-            f"2. Exoneraciones ({len(df_a_exonerar)})",
-            f"3. Avisos de No Pago ({len(df_aviso_no_pago)})",
-            f"4. Reclamadas ({len(df_reclamadas)})",
-            f"5. Ajustes Parciales ({len(df_ajustes)})",
-            "6. FAU Digital Pendiente",
-            "📊 7. Dashboard KPIs",
-            "🚀 8. Activación Clientes"
-        ])
+        # Estilo de la barra de navegación (se ve como pestañas, pero conserva el estado)
+        st.markdown(f"""
+        <style>
+            div[role="radiogroup"] {{ gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }}
+            div[role="radiogroup"] > label {{
+                background: #FFFFFF; border: 1px solid #E0E0E0; border-bottom: 2px solid #C0C0C0;
+                border-radius: 6px 6px 0 0; padding: 8px 16px; margin: 0; cursor: pointer;
+                transition: all .15s ease;
+            }}
+            div[role="radiogroup"] > label:hover {{ background: {PALETA_COLORES['fondo_suave']}; }}
+            div[role="radiogroup"] > label > div:first-child {{ display: none; }}
+            div[role="radiogroup"] > label:has(input:checked) {{
+                border-bottom: 3px solid {PALETA_COLORES['primario']};
+                background: {PALETA_COLORES['fondo_suave']};
+                color: {PALETA_COLORES['primario']}; font-weight: 700;
+            }}
+        </style>
+        """, unsafe_allow_html=True)
 
-        with tab1:
+        NAV_LABELS = {
+            "tab1": f"1. Facturas a Subir ({len(df_a_subir)})",
+            "tab2": f"2. Exoneraciones ({len(df_a_exonerar)})",
+            "tab3": f"3. Avisos de No Pago ({len(df_aviso_no_pago)})",
+            "tab4": f"4. Reclamadas ({len(df_reclamadas)})",
+            "tab5": f"5. Ajustes Parciales ({len(df_ajustes)})",
+            "tab6": "6. FAU Digital Pendiente",
+            "tab7": "📊 7. Dashboard KPIs",
+            "tab8": "🚀 8. Activación Clientes",
+        }
+        seccion = st.radio(
+            "Navegación Covinoc",
+            options=list(NAV_LABELS.keys()),
+            format_func=lambda k: NAV_LABELS.get(k, k),
+            horizontal=True,
+            key="covinoc_nav",
+            label_visibility="collapsed",
+        )
+        st.markdown("---")
+
+        if seccion == "tab1":
             st.subheader("Facturas a Subir a Covinoc")
             st.markdown("Facturas de **clientes protegidos** que están en **Cartera Ferreinox** pero **NO** en Covinoc.")
             st.warning("🚩 **Importante:** Esta lista ya está pre-filtrada para mostrar **ÚNICAMENTE** facturas con 1 a 5 días desde su fecha de emisión.")
@@ -1660,7 +1688,7 @@ def main():
                         use_container_width=True
                     )
 
-        with tab2:
+        if seccion == "tab2":
             st.subheader("Facturas a Exonerar de Covinoc")
             st.markdown("Facturas en **Covinoc** (que no están 'Efectiva', 'Negada' o 'Exonerada') pero **NO** en la Cartera Ferreinox.")
             
@@ -1704,7 +1732,7 @@ def main():
                 disabled=df_a_exonerar.empty 
             )
 
-        with tab3:
+        if seccion == "tab3":
             # ======================================================================================
             # --- MODIFICACIÓN CLAVE: LÓGICA DE ALERTAS 70 DÍAS ---
             # ======================================================================================
@@ -2015,7 +2043,7 @@ def main():
                                     disabled=True
                                 )
 
-        with tab4:
+        if seccion == "tab4":
             st.subheader("Facturas en Reclamación (Informativo)")
             st.markdown("Facturas que figuran en Covinoc con estado **'Reclamada'**.")
 
@@ -2040,7 +2068,7 @@ def main():
             
             st.dataframe(df_reclamadas[columnas_existentes_reclamadas], use_container_width=True, hide_index=True)
 
-        with tab5:
+        if seccion == "tab5":
             st.subheader("Ajustes por Abonos Parciales")
             st.markdown("Facturas en **ambos reportes** donde el **Saldo Covinoc es MAYOR** al **Importe Cartera** (implica un abono no reportado).")
             
@@ -2092,7 +2120,7 @@ def main():
                 disabled=df_ajustes.empty
             )
 
-        with tab6:
+        if seccion == "tab6":
             st.subheader("Clientes con FAU Digital Pendiente")
             st.markdown("Cruce entre la **cartera actual** y el archivo **reporteCupos** para identificar, por vendedor, los clientes que aún no tienen **FAU_DIGITAL** diligenciado.")
             st.info("Puede subir el archivo manualmente o dejar que el sistema lo busque automáticamente en el entorno local o en Dropbox.")
@@ -2224,7 +2252,7 @@ def main():
         # ======================================================================
         # --- TAB 7: DASHBOARD ESTRATÉGICO DE KPIs (reporteTransacciones) ---
         # ======================================================================
-        with tab7:
+        if seccion == "tab7":
             try:
                 st.subheader("📊 Dashboard Estratégico Covinoc")
                 st.markdown("Análisis integral del archivo **reporteTransacciones**: bolsa de garantía, evolución mensual/anual y radiografía de clientes.")
@@ -2503,7 +2531,7 @@ def main():
         # ======================================================================
         # --- TAB 8: ACTIVACIÓN DE CLIENTES (WhatsApp + Correo SendGrid) ---
         # ======================================================================
-        with tab8:
+        if seccion == "tab8":
             try:
                 st.subheader("🚀 Activación de Clientes con Cupo sin Usar")
                 st.markdown("Identifica clientes con **cupo aprobado pero sin uso** y lanza campañas de activación por **WhatsApp** (link directo) y **correo masivo** (SendGrid).")
