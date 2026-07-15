@@ -2481,10 +2481,22 @@ def main():
                     # De esos, los que AÚN están vigentes se pueden accionar hoy
                     dfx['omit_vigente'] = dfx['aviso_omitido'] & dfx['es_activo']
 
+                    # Vendedor de cada cliente (mapeado desde la cartera por NIT; vacío si no tiene)
+                    _contacto_vend = resumen_contacto_cartera(df_cartera_full)
+                    if not _contacto_vend.empty and 'nit_norm_cartera' in dfx.columns:
+                        dfx = dfx.merge(
+                            _contacto_vend[['nit_norm_cartera', 'vendedor_cartera']],
+                            on='nit_norm_cartera', how='left'
+                        )
+                        dfx['vendedor'] = dfx['vendedor_cartera'].fillna('').astype(str).str.strip()
+                    else:
+                        dfx['vendedor'] = ''
+
                     clientes_riesgo_set = set(dfx.loc[dfx['tiene_aviso'], 'cliente'].dropna())
 
                     # Resumen por cliente (componentes separados -> merge)
                     resumen_cli = dfx.groupby('cliente').agg(
+                        vendedor=('vendedor', primer_valor_no_vacio),
                         titulos=('valor_garantizado_num', 'size'),
                         valor=('valor_garantizado_num', 'sum'),
                         avisos=('tiene_aviso', 'sum'),
@@ -2514,9 +2526,10 @@ def main():
                     seg4.metric("Días de mora promedio", f"{dias_mora_global:.0f} días" if pd.notna(dias_mora_global) else "—", help="Días de mora alcanzados en promedio por los títulos que se vencieron (todo el reporte)")
 
                     cols_cli = {
-                        'cliente': 'Cliente', 'avisos': 'N° Avisos', 'dias_pago_prom': 'Días Pago Prom',
-                        'dias_mora_prom': 'Días Mora Prom', 'avisos_omitidos': 'Avisos Omitidos',
-                        'valor_omitido': 'Valor Omitido', 'titulos': 'Títulos', 'valor': 'Valor Garantizado',
+                        'cliente': 'Cliente', 'vendedor': 'Vendedor', 'avisos': 'N° Avisos',
+                        'dias_pago_prom': 'Días Pago Prom', 'dias_mora_prom': 'Días Mora Prom',
+                        'avisos_omitidos': 'Avisos Omitidos', 'valor_omitido': 'Valor Omitido',
+                        'titulos': 'Títulos', 'valor': 'Valor Garantizado',
                         'ultima_txn': 'Última Transacción'
                     }
                     cfg_cli = {
@@ -2530,7 +2543,7 @@ def main():
                     st.markdown("**🔴 Clientes de RIESGO — mantener protegidos** (más avisos = más se dejan vencer)")
                     if not df_riesgo.empty:
                         st.dataframe(
-                            df_riesgo.head(20)[['cliente', 'avisos', 'dias_pago_prom', 'dias_mora_prom', 'avisos_omitidos', 'valor_omitido', 'titulos', 'valor']].rename(columns=cols_cli),
+                            df_riesgo.head(20)[['cliente', 'vendedor', 'avisos', 'dias_pago_prom', 'dias_mora_prom', 'avisos_omitidos', 'valor_omitido', 'titulos', 'valor']].rename(columns=cols_cli),
                             use_container_width=True, hide_index=True, column_config=cfg_cli
                         )
                     else:
@@ -2539,7 +2552,7 @@ def main():
                     st.markdown("**🟢 Clientes BUENOS — candidatos a retirar de Covinoc** (nunca han tenido avisos; revisa 'Avisos Omitidos')")
                     if not df_buenos.empty:
                         st.dataframe(
-                            df_buenos.head(20)[['cliente', 'dias_pago_prom', 'dias_mora_prom', 'avisos_omitidos', 'valor_omitido', 'titulos', 'valor', 'ultima_txn']].rename(columns=cols_cli),
+                            df_buenos.head(20)[['cliente', 'vendedor', 'dias_pago_prom', 'dias_mora_prom', 'avisos_omitidos', 'valor_omitido', 'titulos', 'valor', 'ultima_txn']].rename(columns=cols_cli),
                             use_container_width=True, hide_index=True, column_config=cfg_cli
                         )
                     else:
@@ -2560,10 +2573,11 @@ def main():
                     o4.metric("Aún vigentes (accionables hoy)", f"{len(vigentes_omit)}", delta=f"saldo ${vigentes_omit['saldo_num'].sum():,.0f}", delta_color="inverse")
                     if not df_omit.empty:
                         cols_omit = {
-                            'cliente': 'Cliente', 'documento': 'Documento', 'titulo_valor': 'Título',
-                            'estado_norm': 'Estado', 'vencimiento_dt': 'Vencimiento', 'mora_alcanzada': 'Días Mora',
-                            'vigente_txt': 'Vigente', 'valor_garantizado_num': 'Valor Garantizado',
-                            'saldo_num': 'Saldo', 'tipo_cliente': 'Tipo Cliente', 'usuario': 'Usuario'
+                            'cliente': 'Cliente', 'vendedor': 'Vendedor', 'documento': 'Documento',
+                            'titulo_valor': 'Título', 'estado_norm': 'Estado', 'vencimiento_dt': 'Vencimiento',
+                            'mora_alcanzada': 'Días Mora', 'vigente_txt': 'Vigente',
+                            'valor_garantizado_num': 'Valor Garantizado', 'saldo_num': 'Saldo',
+                            'tipo_cliente': 'Tipo Cliente', 'usuario': 'Usuario'
                         }
                         cfg_omit = {
                             'Valor Garantizado': st.column_config.NumberColumn(format='$ %d'),
@@ -2573,7 +2587,7 @@ def main():
                         }
                         df_omit['tipo_cliente'] = df_omit['cliente'].apply(lambda c: 'RIESGO' if c in clientes_riesgo_set else 'BUENO')
                         df_omit['vigente_txt'] = df_omit['omit_vigente'].map({True: 'Sí (accionable)', False: 'No (cerrado)'})
-                        orden_cols = ['cliente', 'documento', 'titulo_valor', 'estado_norm', 'vencimiento_dt', 'mora_alcanzada', 'vigente_txt', 'valor_garantizado_num', 'saldo_num', 'tipo_cliente', 'usuario']
+                        orden_cols = ['cliente', 'vendedor', 'documento', 'titulo_valor', 'estado_norm', 'vencimiento_dt', 'mora_alcanzada', 'vigente_txt', 'valor_garantizado_num', 'saldo_num', 'tipo_cliente', 'usuario']
                         df_omit_export = df_omit.sort_values(['omit_vigente', 'mora_alcanzada'], ascending=[False, False])[orden_cols].rename(columns=cols_omit)
 
                         solo_vig = st.checkbox("Mostrar solo los aún vigentes (accionables hoy)", key="omit_solo_vigentes")
@@ -2588,7 +2602,8 @@ def main():
                     excel_analisis = to_excel_generico({
                         'Resumen Mensual': df_tabla_mes if not df_res_mes.empty else pd.DataFrame(),
                         'Por Estado': df_estado.rename(columns={'estado_norm': 'Estado', 'titulos': 'Títulos', 'valor': 'Valor'}),
-                        'Top Clientes': df_top_cli.rename(columns={'cliente': 'Cliente', 'valor': 'Valor', 'titulos': 'Títulos'}),
+                        'Top Clientes': df_top_cli.merge(resumen_cli[['cliente', 'vendedor']], on='cliente', how='left').rename(
+                            columns={'cliente': 'Cliente', 'vendedor': 'Vendedor', 'valor': 'Valor', 'titulos': 'Títulos'}),
                         'Clientes Riesgo': df_riesgo.rename(columns=cols_cli),
                         'Clientes Buenos (Retirar)': df_buenos.rename(columns=cols_cli),
                         'Avisos Omitidos': df_omit_export,
