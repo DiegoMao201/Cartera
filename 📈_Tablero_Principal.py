@@ -248,11 +248,6 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame, total_vencido_cliente
     info_cliente = datos_cliente_ordenados.iloc[0]
 
     total_importe = float(datos_cliente['importe'].sum())
-    try:
-        dias_max = int(max(0, datos_cliente['dias_vencido'].max()))
-    except (ValueError, TypeError):
-        dias_max = 0
-    num_facturas = len(datos_cliente)
 
     # --- Datos del cliente ---
     cod_cliente_str = str(int(info_cliente['cod_cliente'])) if pd.notna(info_cliente['cod_cliente']) else "N/A"
@@ -263,23 +258,7 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame, total_vencido_cliente
     pdf.set_font('Arial', '', 11); pdf.set_text_color(0, 0, 0); pdf.cell(60, 8, nit_str, 0, 0)
     pdf.set_font('Arial', 'B', 11); pdf.set_text_color(*NAVY); pdf.cell(40, 8, 'Codigo de Cliente:', 0, 0)
     pdf.set_font('Arial', '', 11); pdf.set_text_color(0, 0, 0); pdf.cell(0, 8, cod_cliente_str, 0, 1)
-    pdf.ln(3)
-
-    # --- Panel de resumen (3 tarjetas) ---
-    y0 = pdf.get_y()
-    box_w, gap, x = 58, 8, 15
-    tarjetas = [
-        ("CARTERA TOTAL", f"${total_importe:,.0f}", NAVY),
-        ("TOTAL VENCIDO", f"${total_vencido_cliente:,.0f}", ROJO if total_vencido_cliente > 0 else (56, 142, 60)),
-        ("DIAS MAX. MORA", f"{dias_max} dias", AMBAR if dias_max > 0 else (56, 142, 60)),
-    ]
-    for label, valor, color in tarjetas:
-        pdf.set_fill_color(*color); pdf.rect(x, y0, box_w, 20, 'F')
-        pdf.set_xy(x, y0 + 3.5); pdf.set_font('Arial', 'B', 8); pdf.set_text_color(255, 255, 255)
-        pdf.cell(box_w, 4, label, 0, 0, 'C')
-        pdf.set_xy(x, y0 + 9.5); pdf.set_font('Arial', 'B', 15); pdf.cell(box_w, 8, valor, 0, 0, 'C')
-        x += box_w + gap
-    pdf.set_y(y0 + 20 + 6)
+    pdf.ln(6)
 
     # --- Mensaje ---
     pdf.set_font('Arial', '', 10)
@@ -330,11 +309,10 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame, total_vencido_cliente
         # Celda Días Vencido con color por severidad
         cd = color_dias(dias)
         if cd is not None:
-            pdf.set_fill_color(*cd); pdf.set_text_color(*ROJO); pdf.set_font('Arial', 'B', 10)
+            pdf.set_fill_color(*cd); pdf.set_text_color(0, 0, 0)
             pdf.cell(w_dias, 8, str(dias), 1, 0, 'C', 1)
-            pdf.set_font('Arial', '', 10); pdf.set_text_color(0, 0, 0)
         else:
-            pdf.set_fill_color(*fila_fill)
+            pdf.set_fill_color(*fila_fill); pdf.set_text_color(0, 0, 0)
             pdf.cell(w_dias, 8, 'Al dia', 1, 0, 'C', 1)
         pdf.set_fill_color(*fila_fill)
         pdf.cell(w_imp, 8, f"${row['importe']:,.0f}", 1, 1, 'R', 1)
