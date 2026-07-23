@@ -236,50 +236,122 @@ def generar_pdf_estado_cuenta(datos_cliente: pd.DataFrame, total_vencido_cliente
         pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, 'No se encontraron facturas para este cliente.', 0, 1, 'C')
         return bytes(pdf.output())
 
-    datos_cliente_ordenados = datos_cliente.sort_values(by='fecha_vencimiento', ascending=True)
+    # --- Paleta institucional del documento ---
+    NAVY = (0, 56, 101)
+    ROJO = (192, 0, 0)
+    AMBAR = (216, 120, 40)
+    GRIS_TX = (110, 110, 110)
+    GRIS_ZEBRA = (245, 247, 250)
+
+    # Ordenamos por días vencido (primero lo más crítico)
+    datos_cliente_ordenados = datos_cliente.sort_values(by='dias_vencido', ascending=False)
     info_cliente = datos_cliente_ordenados.iloc[0]
 
-    pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Cliente:', 0, 0); pdf.set_font('Arial', '', 11); pdf.cell(0, 10, info_cliente['nombrecliente'], 0, 1)
-    pdf.set_font('Arial', 'B', 11); pdf.cell(40, 10, 'Codigo de Cliente:', 0, 0); pdf.set_font('Arial', '', 11)
-    cod_cliente_str = str(int(info_cliente['cod_cliente'])) if pd.notna(info_cliente['cod_cliente']) else "N/A"
-    pdf.cell(0, 10, cod_cliente_str, 0, 1); pdf.ln(5)
+    total_importe = float(datos_cliente['importe'].sum())
+    try:
+        dias_max = int(max(0, datos_cliente['dias_vencido'].max()))
+    except (ValueError, TypeError):
+        dias_max = 0
+    num_facturas = len(datos_cliente)
 
+    # --- Datos del cliente ---
+    cod_cliente_str = str(int(info_cliente['cod_cliente'])) if pd.notna(info_cliente['cod_cliente']) else "N/A"
+    nit_str = str(info_cliente.get('nit', 'N/A')) if pd.notna(info_cliente.get('nit', None)) else "N/A"
+    pdf.set_font('Arial', 'B', 11); pdf.set_text_color(*NAVY); pdf.cell(40, 8, 'Cliente:', 0, 0)
+    pdf.set_font('Arial', '', 11); pdf.set_text_color(0, 0, 0); pdf.cell(0, 8, str(info_cliente['nombrecliente']), 0, 1)
+    pdf.set_font('Arial', 'B', 11); pdf.set_text_color(*NAVY); pdf.cell(40, 8, 'NIT:', 0, 0)
+    pdf.set_font('Arial', '', 11); pdf.set_text_color(0, 0, 0); pdf.cell(60, 8, nit_str, 0, 0)
+    pdf.set_font('Arial', 'B', 11); pdf.set_text_color(*NAVY); pdf.cell(40, 8, 'Codigo de Cliente:', 0, 0)
+    pdf.set_font('Arial', '', 11); pdf.set_text_color(0, 0, 0); pdf.cell(0, 8, cod_cliente_str, 0, 1)
+    pdf.ln(3)
+
+    # --- Panel de resumen (3 tarjetas) ---
+    y0 = pdf.get_y()
+    box_w, gap, x = 58, 8, 15
+    tarjetas = [
+        ("CARTERA TOTAL", f"${total_importe:,.0f}", NAVY),
+        ("TOTAL VENCIDO", f"${total_vencido_cliente:,.0f}", ROJO if total_vencido_cliente > 0 else (56, 142, 60)),
+        ("DIAS MAX. MORA", f"{dias_max} dias", AMBAR if dias_max > 0 else (56, 142, 60)),
+    ]
+    for label, valor, color in tarjetas:
+        pdf.set_fill_color(*color); pdf.rect(x, y0, box_w, 20, 'F')
+        pdf.set_xy(x, y0 + 3.5); pdf.set_font('Arial', 'B', 8); pdf.set_text_color(255, 255, 255)
+        pdf.cell(box_w, 4, label, 0, 0, 'C')
+        pdf.set_xy(x, y0 + 9.5); pdf.set_font('Arial', 'B', 15); pdf.cell(box_w, 8, valor, 0, 0, 'C')
+        x += box_w + gap
+    pdf.set_y(y0 + 20 + 6)
+
+    # --- Mensaje ---
     pdf.set_font('Arial', '', 10)
     mensaje = ("Apreciado cliente, a continuación encontrará el detalle de su estado de cuenta a la fecha. "
-               "Le invitamos a realizar su revisión y proceder con el pago de los valores vencidos. "
-               "Puede realizar su pago de forma fácil y segura a través de nuestro PORTAL DE PAGOS en línea, "
-               "cuyo enlace encontrará al final de este documento.")
-    pdf.set_text_color(128, 128, 128); pdf.multi_cell(0, 5, mensaje, 0, 'J'); pdf.set_text_color(0, 0, 0); pdf.ln(10)
+               "Le invitamos a revisar los valores y proceder con el pago de las facturas vencidas. "
+               "Puede pagar de forma fácil y segura en nuestro PORTAL DE PAGOS en línea (enlace al final del documento).")
+    pdf.set_text_color(*GRIS_TX); pdf.multi_cell(0, 5, mensaje, 0, 'J'); pdf.set_text_color(0, 0, 0); pdf.ln(4)
 
-    pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(0, 56, 101); pdf.set_text_color(255, 255, 255)
-    pdf.cell(30, 10, 'Factura', 1, 0, 'C', 1); pdf.cell(40, 10, 'Fecha Factura', 1, 0, 'C', 1)
-    pdf.cell(40, 10, 'Fecha Vencimiento', 1, 0, 'C', 1); pdf.cell(40, 10, 'Importe', 1, 1, 'C', 1)
+    # --- Encabezado de tabla ---
+    w_fact, w_fdoc, w_fven, w_dias, w_imp = 28, 34, 34, 28, 56
+    x_tabla = 15
+
+    def encabezado_tabla():
+        pdf.set_x(x_tabla)
+        pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(*NAVY); pdf.set_text_color(255, 255, 255)
+        pdf.cell(w_fact, 9, 'Factura', 1, 0, 'C', 1)
+        pdf.cell(w_fdoc, 9, 'Fecha Factura', 1, 0, 'C', 1)
+        pdf.cell(w_fven, 9, 'Fecha Venc.', 1, 0, 'C', 1)
+        pdf.cell(w_dias, 9, 'Dias Vencido', 1, 0, 'C', 1)
+        pdf.cell(w_imp, 9, 'Importe', 1, 1, 'C', 1)
+
+    encabezado_tabla()
+
+    def color_dias(d):
+        if d > 60: return (255, 205, 205)
+        if d > 30: return (255, 224, 178)
+        if d > 0:  return (255, 249, 196)
+        return None
 
     pdf.set_font('Arial', '', 10)
-    total_importe = 0
-    for _, row in datos_cliente_ordenados.iterrows():
-        pdf.set_text_color(0, 0, 0)
-        if row['dias_vencido'] > 0: pdf.set_fill_color(255, 235, 238)
-        else: pdf.set_fill_color(255, 255, 255)
-        total_importe += row['importe']
+    for idx, (_, row) in enumerate(datos_cliente_ordenados.iterrows()):
+        # Repite el encabezado si salta de página
+        if pdf.get_y() > 245:
+            pdf.add_page(); encabezado_tabla(); pdf.set_font('Arial', '', 10)
+
+        dias = int(row['dias_vencido']) if pd.notna(row['dias_vencido']) else 0
+        vencida = dias > 0
+        fila_fill = (255, 240, 240) if vencida else ((255, 255, 255) if idx % 2 == 0 else GRIS_ZEBRA)
         numero_factura_str = str(int(row['numero'])) if pd.notna(row['numero']) else "N/A"
         fecha_doc_str = row['fecha_documento'].strftime('%d/%m/%Y') if pd.notna(row['fecha_documento']) else ''
         fecha_ven_str = row['fecha_vencimiento'].strftime('%d/%m/%Y') if pd.notna(row['fecha_vencimiento']) else ''
-        pdf.cell(30, 10, numero_factura_str, 1, 0, 'C', 1)
-        pdf.cell(40, 10, fecha_doc_str, 1, 0, 'C', 1)
-        pdf.cell(40, 10, fecha_ven_str, 1, 0, 'C', 1)
-        pdf.cell(40, 10, f"${row['importe']:,.0f}", 1, 1, 'R', 1)
 
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(224, 224, 224); pdf.set_text_color(0, 0, 0)
-    pdf.cell(110, 10, 'TOTAL ADEUDADO', 1, 0, 'R', 1)
-    pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(240, 240, 240);
-    pdf.cell(40, 10, f"${total_importe:,.0f}", 1, 1, 'R', 1)
+        pdf.set_x(x_tabla); pdf.set_text_color(0, 0, 0)
+        pdf.set_fill_color(*fila_fill)
+        pdf.cell(w_fact, 8, numero_factura_str, 1, 0, 'C', 1)
+        pdf.cell(w_fdoc, 8, fecha_doc_str, 1, 0, 'C', 1)
+        pdf.cell(w_fven, 8, fecha_ven_str, 1, 0, 'C', 1)
+        # Celda Días Vencido con color por severidad
+        cd = color_dias(dias)
+        if cd is not None:
+            pdf.set_fill_color(*cd); pdf.set_text_color(*ROJO); pdf.set_font('Arial', 'B', 10)
+            pdf.cell(w_dias, 8, str(dias), 1, 0, 'C', 1)
+            pdf.set_font('Arial', '', 10); pdf.set_text_color(0, 0, 0)
+        else:
+            pdf.set_fill_color(*fila_fill)
+            pdf.cell(w_dias, 8, 'Al dia', 1, 0, 'C', 1)
+        pdf.set_fill_color(*fila_fill)
+        pdf.cell(w_imp, 8, f"${row['importe']:,.0f}", 1, 1, 'R', 1)
+
+    # --- Totales ---
+    w_label = w_fact + w_fdoc + w_fven + w_dias
+    pdf.set_x(x_tabla); pdf.set_text_color(0, 0, 0)
+    pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(224, 224, 224)
+    pdf.cell(w_label, 9, 'TOTAL ADEUDADO', 1, 0, 'R', 1)
+    pdf.set_fill_color(240, 240, 240)
+    pdf.cell(w_imp, 9, f"${total_importe:,.0f}", 1, 1, 'R', 1)
 
     if total_vencido_cliente > 0:
-        pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(255, 204, 204); pdf.set_text_color(192, 0, 0)
-        pdf.cell(110, 10, 'VALOR TOTAL VENCIDO', 1, 0, 'R', 1)
-        pdf.cell(40, 10, f"${total_vencido_cliente:,.0f}", 1, 1, 'R', 1)
+        pdf.set_x(x_tabla)
+        pdf.set_font('Arial', 'B', 10); pdf.set_fill_color(*ROJO); pdf.set_text_color(255, 255, 255)
+        pdf.cell(w_label, 9, 'VALOR TOTAL VENCIDO', 1, 0, 'R', 1)
+        pdf.cell(w_imp, 9, f"${total_vencido_cliente:,.0f}", 1, 1, 'R', 1)
 
     return bytes(pdf.output())
 
